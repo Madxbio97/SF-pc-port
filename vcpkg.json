@@ -1,0 +1,20 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "syphon-filter-pc",
+  "version-semver": "0.1.0",
+  "builtin-baseline": "f87344cac03158cbf1467264565f1fd36b382a24",
+  "dependencies": [
+    {
+      "name": "ffmpeg",
+      "default-features": false,
+      "features": [
+        "avcodec",
+        "avformat",
+        "swresample",
+        "swscale"
+      ]
+    },
+    "openal-soft",
+    "sdl2"
+  ]
+}

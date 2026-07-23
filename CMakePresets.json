@@ -1,0 +1,83 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 24,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "windows-msvc",
+      "displayName": "Windows x64 / Visual Studio 2026",
+      "generator": "Visual Studio 18 2026",
+      "binaryDir": "${sourceDir}/build/windows-msvc",
+      "architecture": "x64",
+      "cacheVariables": {
+        "CMAKE_CONFIGURATION_TYPES": "Debug;Release",
+        "SF_BUILD_TESTS": "ON"
+      }
+    },
+    {
+      "name": "windows-psycross",
+      "displayName": "Windows x64 / Visual Studio 2026 / PsyCross",
+      "inherits": "windows-msvc",
+      "binaryDir": "${sourceDir}/build/windows-psycross",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_TARGET_TRIPLET": "x64-windows",
+        "SF_ENABLE_PSYCROSS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "windows-debug",
+      "configurePreset": "windows-msvc",
+      "configuration": "Debug"
+    },
+    {
+      "name": "windows-release",
+      "configurePreset": "windows-msvc",
+      "configuration": "Release"
+    },
+    {
+      "name": "windows-psycross-release",
+      "configurePreset": "windows-psycross",
+      "configuration": "Release"
+    },
+    {
+      "name": "windows-core-release",
+      "displayName": "Windows Release / core game only",
+      "configurePreset": "windows-msvc",
+      "configuration": "Release",
+      "targets": ["sf_game"]
+    },
+    {
+      "name": "windows-psycross-app-release",
+      "displayName": "Windows Release / playable app only",
+      "configurePreset": "windows-psycross",
+      "configuration": "Release",
+      "targets": ["syphon_filter"]
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "windows-debug",
+      "configurePreset": "windows-msvc",
+      "configuration": "Debug",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "windows-release",
+      "configurePreset": "windows-msvc",
+      "configuration": "Release",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "windows-psycross-release",
+      "configurePreset": "windows-psycross",
+      "configuration": "Release",
+      "output": { "outputOnFailure": true }
+    }
+  ]
+}
