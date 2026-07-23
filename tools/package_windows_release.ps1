@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "0.1.0-public-test.5",
+    [string]$Version = "0.1.0-public-test.6",
     [string]$Configuration = "Release"
 )
 
@@ -119,7 +119,7 @@ foreach ($entry in $licenseSources.GetEnumerator()) {
 }
 
 $readme = @"
-SYPHON FILTER PC — PUBLIC TEST 0.1.0-PT5
+SYPHON FILTER PC — PUBLIC TEST 0.1.0-PT6
 Windows x64, 24 July 2026
 
 ВАЖНО
@@ -165,7 +165,7 @@ affiliated with or endorsed by Sony Interactive Entertainment.
 "@
 
 $notes = @"
-PUBLIC TEST 0.1.0-PT5
+PUBLIC TEST 0.1.0-PT6
 =====================
 
 - Встроенный лаунчер с выбором CUE, иконкой и единым оформлением окон.
@@ -183,6 +183,7 @@ PUBLIC TEST 0.1.0-PT5
 - Исправлено восстановление разрушаемых объектов после провала миссии.
 - Убран отладочный счётчик FPS из игрового изображения.
 - Исправлены освещение оружейных ящиков и ряд ошибок текстур/моделей уровней.
+- Устранён вылет renderer/UI bridge при потоковой загрузке секций складов PHARCOM.
 
 Архив не содержит образ игры, сохранения, настройки или syphon_filter_cheats.
 "@

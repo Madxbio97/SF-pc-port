@@ -2910,12 +2910,11 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
   const auto descriptor_bytes =
       static_cast<std::uint64_t>(state.world_model_count) *
       profile.world_model_descriptor_stride;
-  if (!runtime_.read32(profile.world_model_descriptors, world_descriptors) ||
-      descriptor_bytes > std::numeric_limits<std::size_t>::max() ||
-      !readable_ram_pointer(world_descriptors,
-                            static_cast<std::size_t>(descriptor_bytes))) {
-    return std::nullopt;
-  }
+  const auto world_descriptors_available =
+      runtime_.read32(profile.world_model_descriptors, world_descriptors) &&
+      descriptor_bytes <= std::numeric_limits<std::size_t>::max() &&
+      readable_ram_pointer(world_descriptors,
+                           static_cast<std::size_t>(descriptor_bytes));
   auto captured_vertex_colors = std::size_t{};
   const auto ram = runtime_.ram();
   const auto read_ram16 = [&ram](std::uint32_t source,
@@ -2935,8 +2934,7 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
          << 8U));
     return true;
   };
-  const auto capture_world_model = [&](std::uint16_t model_index,
-                                       bool required) {
+  const auto capture_world_model = [&](std::uint16_t model_index) {
     const auto descriptor =
         address(world_descriptors, static_cast<std::uint64_t>(model_index) *
                                        profile.world_model_descriptor_stride);
@@ -2944,24 +2942,24 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
     std::uint32_t model_resource{};
     std::uint32_t payload{};
     if (!descriptor || !runtime_.read32(*descriptor, model)) {
-      return false;
+      return;
     }
     // The descriptor array covers the whole mission; streamed-out models have
     // a null object and simply contribute no colors to this immutable frame.
     if (model == 0U) {
-      return true;
+      return;
     }
     if (!readable_ram_pointer(model, 0x14U) ||
         !runtime_.read32(model + 0x10U, model_resource) ||
         !readable_ram_pointer(model_resource, 0x24U) ||
         !runtime_.read32(model_resource + 0x20U, payload)) {
-      return !required;
+      return;
     }
     // A visibility/residency byte can lead the asynchronous retail streamer.
     // Its model descriptor then exists while +0x20 still carries the unloaded
     // sentinel. No guest vertex colors exist yet, so retain authored colors.
     if (payload == 0U || payload == std::numeric_limits<std::uint32_t>::max()) {
-      return true;
+      return;
     }
     // BUNKER keeps this relocated resource through the uncached physical RAM
     // alias while the other overlays use KSEG0. R3000 maps both to the same
@@ -2970,7 +2968,7 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
       payload |= 0x80000000U;
     }
     if (!readable_ram_pointer(payload, 0x88U)) {
-      return !required;
+      return;
     }
     std::vector<LegacyWorldSectionColorsBridgeState> model_colors;
     model_colors.reserve(profile.maximum_world_sections);
@@ -2979,7 +2977,7 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
          section_index < profile.maximum_world_sections; ++section_index) {
       std::uint32_t section{};
       if (!runtime_.read32(payload + 4U + section_index * 4U, section)) {
-        return !required;
+        return;
       }
       if (section == std::numeric_limits<std::uint32_t>::max()) {
         break;
@@ -2993,7 +2991,7 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
           !runtime_.read16(section + 6U, vertex_count) || vertex_count == 0U ||
           vertex_count > profile.maximum_world_section_vertices ||
           !runtime_.read32(section + 0x24U, vertex_relative_offset)) {
-        return !required;
+        return;
       }
       const auto vertex_base = address(section, vertex_relative_offset);
       const auto vertex_bytes = static_cast<std::uint64_t>(vertex_count) * 8U;
@@ -3004,7 +3002,7 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
           vertex_count > profile.maximum_world_vertex_colors ||
           model_vertex_colors >
               profile.maximum_world_vertex_colors - vertex_count) {
-        return !required;
+        return;
       }
       LegacyWorldSectionColorsBridgeState colors;
       colors.model = model_index;
@@ -3013,7 +3011,7 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
       for (std::uint32_t vertex = 0U; vertex < vertex_count; ++vertex) {
         if (!read_ram16(*vertex_base + vertex * 8U + 6U,
                         colors.colors[vertex])) {
-          return !required;
+          return;
         }
       }
       model_vertex_colors += vertex_count;
@@ -3024,27 +3022,29 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
     // bounded immutable frame or partially replace their previous cache.
     if (captured_vertex_colors >
         profile.maximum_world_vertex_colors - model_vertex_colors) {
-      return !required;
+      return;
     }
     captured_vertex_colors += model_vertex_colors;
     for (auto &colors : model_colors) {
       state.world_vertex_colors.push_back(std::move(colors));
     }
-    return true;
   };
-  for (const auto model_index : *validated_world_models) {
-    if (!capture_world_model(model_index, true)) {
-      return std::nullopt;
+  // World visibility and residency above are authoritative. Live per-vertex
+  // colors are an auxiliary presentation cache: the retail streamer can keep
+  // a model visible while recycling its relocated color payload. Skipping that
+  // transient payload preserves the last immutable host colors and must not
+  // invalidate the complete guest renderer/UI snapshot.
+  if (world_descriptors_available) {
+    for (const auto model_index : *validated_world_models) {
+      capture_world_model(model_index);
     }
-  }
-  for (std::uint16_t model_index = 0U; model_index < state.world_model_count;
-       ++model_index) {
-    if (std::ranges::find(*validated_world_models, model_index) !=
-        validated_world_models->end()) {
-      continue;
-    }
-    if (!capture_world_model(model_index, false)) {
-      return std::nullopt;
+    for (std::uint16_t model_index = 0U; model_index < state.world_model_count;
+         ++model_index) {
+      if (std::ranges::find(*validated_world_models, model_index) !=
+          validated_world_models->end()) {
+        continue;
+      }
+      capture_world_model(model_index);
     }
   }
   last_bridge_read_stage_ = LegacyGameplayBridgeReadStage::dropped_items;

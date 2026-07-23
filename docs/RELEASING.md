@@ -28,16 +28,16 @@ run the interactive game as part of automated packaging.
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File tools/package_windows_release.ps1 `
-  -Version 0.1.0-public-test.5 `
+  -Version 0.1.0-public-test.6 `
   -Configuration Release
 ```
 
 Expected outputs:
 
 ```text
-dist/SyphonFilterPC-0.1.0-public-test.5-win64/
-dist/SyphonFilterPC-0.1.0-public-test.5-win64.zip
-dist/SyphonFilterPC-0.1.0-public-test.5-win64.zip.sha256
+dist/SyphonFilterPC-0.1.0-public-test.6-win64/
+dist/SyphonFilterPC-0.1.0-public-test.6-win64.zip
+dist/SyphonFilterPC-0.1.0-public-test.6-win64.zip.sha256
 ```
 
 The script fails instead of overwriting any existing output.

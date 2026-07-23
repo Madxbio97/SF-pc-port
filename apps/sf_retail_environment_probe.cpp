@@ -1298,7 +1298,7 @@ int main(int argc, char **argv) {
     auto frames = default_probe_frames;
     if (argc >= 4) {
       const auto parsed = parseUnsigned(argv[3]);
-      if (!parsed || *parsed == 0U || *parsed > 1200U) {
+      if (!parsed || *parsed == 0U || *parsed > 2400U) {
         std::cerr << "Invalid frame count\n";
         return 1;
       }

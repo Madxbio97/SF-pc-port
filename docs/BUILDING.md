@@ -125,7 +125,7 @@ Build `syphon_filter` first, then run:
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File tools/package_windows_release.ps1 `
-  -Version 0.1.0-public-test.5 `
+  -Version 0.1.0-public-test.6 `
   -Configuration Release
 ```
 

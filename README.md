@@ -11,25 +11,26 @@ a native Windows host for rendering, input, menus, audio and FMV playback.
 ## Public test
 
 The current build is
-[Public Test 0.1.0-PT5](https://github.com/Madxbio97/SF-pc-port/releases/tag/v0.1.0-public-test.5).
+[Public Test 0.1.0-PT6](https://github.com/Madxbio97/SF-pc-port/releases/tag/v0.1.0-public-test.6).
 Download the Windows x64 ZIP from the release page and verify it against the
 published `.sha256` file before extracting it.
 
-PT5 includes the integrated launcher, full-resolution internal rendering,
+PT6 includes the integrated launcher, full-resolution internal rendering,
 seam-safe bilinear filtering, optional anisotropic filtering and MSAA, improved
 FMV presentation, the restored PS1-style pause menu and maps, persistent campaign
 progress, corrected weapon/particle/depth behavior, restored destructible glass,
-and the four-page DOSSIERS bonus gallery.
+the four-page DOSSIERS bonus gallery, and a renderer-bridge streaming fix for
+the PHARCOM warehouse missions.
 
 See [CHANGELOG.md](CHANGELOG.md) for the complete release summary.
 
 ## Quick start
 
-1. Download `SyphonFilterPC-0.1.0-public-test.5-win64.zip` from the release page.
+1. Download `SyphonFilterPC-0.1.0-public-test.6-win64.zip` from the release page.
 2. Verify its SHA-256 checksum:
 
    ```powershell
-   Get-FileHash .\SyphonFilterPC-0.1.0-public-test.5-win64.zip -Algorithm SHA256
+   Get-FileHash .\SyphonFilterPC-0.1.0-public-test.6-win64.zip -Algorithm SHA256
    ```
 
 3. Extract the ZIP into a new folder.

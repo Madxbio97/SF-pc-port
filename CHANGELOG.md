@@ -5,7 +5,24 @@ pre-release tags rather than a stable semantic-versioning promise.
 
 ## Unreleased
 
-- No changes after Public Test 0.1.0-PT5.
+- No changes after Public Test 0.1.0-PT6.
+
+## 0.1.0-public-test.6 - 2026-07-24
+
+### Stability
+
+- Fixed a renderer/UI bridge fault in the PHARCOM warehouse missions when the
+  retail streamer recycled an active world's relocated vertex-color payload.
+- Kept guest world visibility and geometry authoritative while treating the
+  transient per-vertex lighting payload as an optional presentation cache.
+- Extended the headless retail environment probe and validated all three
+  warehouse missions past the reported failure frame.
+
+### Release artifact
+
+- File: `SyphonFilterPC-0.1.0-public-test.6-win64.zip`
+- Checksum: supplied in the accompanying `.zip.sha256` file.
+- Supported disc: *Syphon Filter* USA v1.1 (`SCUS-94240`), BIN/CUE.
 
 ## 0.1.0-public-test.5 - 2026-07-24
 

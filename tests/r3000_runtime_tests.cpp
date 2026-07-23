@@ -3860,8 +3860,14 @@ void testLegacyGameplayVmBoundary() {
   require(
       vm.runtime().write32(world_descriptors + 1U * 0x3cU, guest_world_model),
       "Could not restore the required world descriptor");
-  require(!malformed_required,
-          "Legacy bridge accepted a malformed active world model");
+  require(malformed_required &&
+              std::ranges::none_of(
+                  malformed_required->world_vertex_colors,
+                  [](const auto &colors) { return colors.model == 1U; }) &&
+              malformed_required->active_world_models ==
+                  std::vector<std::uint16_t>({1U, 3U}),
+          "Legacy bridge invalidated guest visibility while an active world's "
+          "auxiliary color payload was being recycled");
 
   auto bounded_world_colors_profile = bridge_profile;
   bounded_world_colors_profile.maximum_world_vertex_colors = 13U;
