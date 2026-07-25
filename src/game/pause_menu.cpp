@@ -1,5 +1,7 @@
 #include "sf/game/pause_menu.hpp"
 
+#include "sf/game/hud.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -11,7 +13,21 @@ namespace {
 // Release-menu topology and labels recovered from BIN/MENU.OVL (USA v1.1).
 // The six-entry callback table at 0x8014691c dispatches Map, Objectives,
 // Parameters, Briefing, Weapons and Options in this exact order.
-constexpr std::size_t root_item_count = 6;
+struct RetailRootSection {
+  std::string_view label;
+  PauseScreen detail_screen;
+  bool opens_detail;
+};
+
+constexpr std::array retail_root_sections{
+    RetailRootSection{"Map", PauseScreen::map, true},
+    RetailRootSection{"Objectives", PauseScreen::objectives, false},
+    RetailRootSection{"Parameters", PauseScreen::parameters, false},
+    RetailRootSection{"Briefing", PauseScreen::briefing, true},
+    RetailRootSection{"Weapons", PauseScreen::weapons, true},
+    RetailRootSection{"Options", PauseScreen::options, true},
+};
+constexpr auto root_item_count = retail_root_sections.size();
 constexpr std::size_t option_item_count = 8;
 constexpr std::size_t sound_item_count = 3;
 constexpr std::size_t controller_item_count = 7;
@@ -149,6 +165,36 @@ PauseColorRole entryColor(MissionEntryState state) {
 
 std::string retailListItem(std::string_view text) {
   return text.starts_with('-') ? std::string{text} : "- " + std::string{text};
+}
+
+std::size_t retailWrappedLineCount(std::string_view text, int maximum_width) {
+  auto lines = std::size_t{1U};
+  auto width = 0;
+  auto cursor = std::size_t{};
+  while (cursor < text.size()) {
+    if (text[cursor] == '\n') {
+      ++lines;
+      width = 0;
+      ++cursor;
+      continue;
+    }
+    while (cursor < text.size() && text[cursor] == ' ') {
+      width += 4;
+      ++cursor;
+    }
+    const auto word_end = text.find_first_of(" \n", cursor);
+    const auto end =
+        word_end == std::string_view::npos ? text.size() : word_end;
+    const auto word = text.substr(cursor, end - cursor);
+    const auto word_width = originalHudTextWidth(word);
+    if (width > 0 && width + word_width > maximum_width) {
+      ++lines;
+      width = 0;
+    }
+    width += word_width;
+    cursor = end;
+  }
+  return lines;
 }
 
 struct RetailMapLine {
@@ -457,35 +503,39 @@ PauseMenuCommand PauseMenu::updateRoot(const PauseMenuInput &input) {
   if (input.cancel) {
     return resumeCommand();
   }
+  const auto previous_section = current().selection;
   moveSelection(current(), root_item_count, input);
+  if (current().selection != previous_section) {
+    current().page = 0;
+  }
+  if (current().selection == 1 || current().selection == 2) {
+    const auto &entries = current().selection == 1 ? data_.mission.objectives
+                                                   : data_.mission.parameters;
+    const auto count = visibleEntryCount(entries);
+    if (input.left && current().page > 0) {
+      --current().page;
+    } else if (input.right && current().page + 1 < count) {
+      ++current().page;
+    }
+  }
   if (!input.confirm) {
     return {};
   }
 
-  // Retail FUN_MENU_OVL__8013f714 deliberately leaves selectors 1 and 2
-  // (Objectives/Parameters) in the root preview. Only Map and selectors
-  // 3..5 enter another screen.
-  switch (current().selection) {
-  case 0:
+  // Retail FUN_MENU_OVL__8013f714 deliberately leaves Objectives and
+  // Parameters in the root preview. The data table is the single source of
+  // truth for both navigation and composition.
+  const auto &section = retail_root_sections[current().selection];
+  if (!section.opens_detail) {
+    return {};
+  }
+  if (section.detail_screen == PauseScreen::map) {
     if (data_.mission.map.reconnaissance_available &&
         !data_.mission.map.layer_assets.empty()) {
-      push(PauseScreen::map);
+      push(section.detail_screen);
     }
-    break;
-  case 1:
-  case 2:
-    break;
-  case 3:
-    push(PauseScreen::briefing);
-    break;
-  case 4:
-    push(PauseScreen::weapons);
-    break;
-  case 5:
-    push(PauseScreen::options);
-    break;
-  default:
-    break;
+  } else {
+    push(section.detail_screen);
   }
   return {};
 }
@@ -788,14 +838,12 @@ PauseMenuCommand PauseMenu::updateWeapons(const PauseMenuInput &input) {
     }
     return {};
   }
-  if (current().expanded) {
-    if (input.left && current().page > 0) {
-      --current().page;
-    } else if (input.right && current().page < 1) {
-      ++current().page;
-    }
+  // MENU.OVL has two states here: the weapon list and one details page for
+  // the selected entry.  Selection is intentionally frozen on the details
+  // page; Triangle returns to the list and Cross equips the displayed item.
+  if (!current().expanded) {
+    moveSelection(current(), data_.weapons.size(), input);
   }
-  moveSelection(current(), data_.weapons.size(), input);
   if (!input.confirm || data_.weapons.empty()) {
     return {};
   }
@@ -930,31 +978,59 @@ std::vector<PauseRenderCommand> PauseMenu::buildRenderCommands() const {
   const auto add =
       [&commands](PauseRenderKind kind, PauseRect bounds,
                   std::string_view text = {},
-                  PauseColorRole color =
-                      PauseColorRole::normal) -> PauseRenderCommand & {
+                  PauseColorRole color = PauseColorRole::normal,
+                  PausePanelRole panel = PausePanelRole::none,
+                  PauseTextAlignment alignment =
+                      PauseTextAlignment::left) -> PauseRenderCommand & {
     PauseRenderCommand command;
     command.kind = kind;
     command.bounds = bounds;
     command.color = color;
     command.text = text;
+    command.panel = panel;
+    command.alignment = alignment;
     commands.push_back(std::move(command));
     return commands.back();
   };
-  const auto addMenu = [&add](std::string_view text, std::size_t index,
-                              std::size_t selected, std::int16_t y,
-                              bool enabled = true) {
+  const auto addLeft =
+      [&add](PauseRenderKind kind, PauseRect bounds, std::string_view text = {},
+             PauseColorRole color = PauseColorRole::normal,
+             PauseTextAlignment alignment =
+                 PauseTextAlignment::left) -> PauseRenderCommand & {
+    return add(kind, bounds, text, color, PausePanelRole::left_content,
+               alignment);
+  };
+  const auto addInformation =
+      [&add](PauseRenderKind kind, PauseRect bounds, std::string_view text = {},
+             PauseColorRole color = PauseColorRole::normal,
+             PauseTextAlignment alignment =
+                 PauseTextAlignment::left) -> PauseRenderCommand & {
+    return add(kind, bounds, text, color, PausePanelRole::right_information,
+               alignment);
+  };
+  const auto addHint = [&add](PauseRect bounds,
+                              std::string_view text) -> PauseRenderCommand & {
+    return add(PauseRenderKind::button_hint, bounds, text,
+               PauseColorRole::normal, PausePanelRole::hint,
+               PauseTextAlignment::center);
+  };
+  const auto addMenu = [&addLeft](std::string_view text, std::size_t index,
+                                  std::size_t selected, std::int16_t y,
+                                  bool enabled = true) {
     auto &command =
-        add(PauseRenderKind::menu_item, PauseRect{52, y, 165, 12}, text,
-            index == selected
-                ? PauseColorRole::selected
-                : (enabled ? PauseColorRole::normal : PauseColorRole::muted));
+        addLeft(PauseRenderKind::menu_item, PauseRect{52, y, 165, 12}, text,
+                index == selected ? PauseColorRole::selected
+                                  : (enabled ? PauseColorRole::normal
+                                             : PauseColorRole::muted),
+                PauseTextAlignment::center);
     command.id = static_cast<std::uint32_t>(index);
     command.selected = index == selected;
     command.enabled = enabled;
   };
   const auto addMapMarkers = [&add](const PauseMapData &map,
                                     PauseRect map_bounds, std::size_t page,
-                                    std::int16_t marker_size) {
+                                    std::int16_t marker_size,
+                                    PausePanelRole panel) {
     for (const auto &source : map.markers) {
       if (!source.visible ||
           (source.layer != all_pause_map_layers && source.layer != page)) {
@@ -978,7 +1054,8 @@ std::vector<PauseRenderCommand> PauseMenu::buildRenderCommands() const {
                                         marker_size / 2),
               marker_size,
               marker_size,
-          });
+          },
+          {}, PauseColorRole::normal, panel);
       marker.id = static_cast<std::uint32_t>(source.kind);
       marker.value = static_cast<std::int32_t>(marker_heading * 4096.0);
       marker.maximum = static_cast<std::int32_t>(source.objective_id);
@@ -998,7 +1075,7 @@ std::vector<PauseRenderCommand> PauseMenu::buildRenderCommands() const {
   };
   const auto addMapInformation = [&add](const PauseMenuData &data,
                                         PauseRect bounds, std::size_t page,
-                                        bool expanded) {
+                                        bool expanded, PausePanelRole panel) {
     const auto &map = data.mission.map;
     const auto marker_on_page = [&map, page](MapMarkerKind kind,
                                              std::uint32_t objective_id) {
@@ -1009,21 +1086,22 @@ std::vector<PauseRenderCommand> PauseMenu::buildRenderCommands() const {
                 marker.objective_id == objective_id);
       });
     };
-    const auto add_line =
-        [&add, bounds](std::int16_t y, std::string text, bool continuation,
-                       PauseColorRole color, std::uint32_t id, bool highlighted,
-                       std::uint8_t line_height) {
-          const auto indent = static_cast<std::int16_t>(continuation ? 7 : 0);
-          auto &line =
-              add(PauseRenderKind::text,
-                  PauseRect{static_cast<std::int16_t>(bounds.x + indent), y,
-                            static_cast<std::int16_t>(bounds.width - indent),
-                            static_cast<std::int16_t>(line_height)},
-                  text, color);
-          line.id = id;
-          line.selected = highlighted;
-          line.line_height = line_height;
-        };
+    const auto add_line = [&add, bounds,
+                           panel](std::int16_t y, std::string text,
+                                  bool continuation, PauseColorRole color,
+                                  std::uint32_t id, bool highlighted,
+                                  std::uint8_t line_height) {
+      const auto indent = static_cast<std::int16_t>(continuation ? 7 : 0);
+      auto &line =
+          add(PauseRenderKind::text,
+              PauseRect{static_cast<std::int16_t>(bounds.x + indent), y,
+                        static_cast<std::int16_t>(bounds.width - indent),
+                        static_cast<std::int16_t>(line_height)},
+              text, color, panel);
+      line.id = id;
+      line.selected = highlighted;
+      line.line_height = line_height;
+    };
 
     const auto add_entry = [&](std::string_view text, std::uint32_t id,
                                bool highlighted, std::int16_t &y) {
@@ -1062,38 +1140,33 @@ std::vector<PauseRenderCommand> PauseMenu::buildRenderCommands() const {
   };
 
   const auto &state = current();
+  // Only the enlarged map replaces the ACD frame.  Weapon information is a
+  // second page inside the original left/right panel composition.
   const auto expanded_detail =
-      state.expanded && (state.screen == PauseScreen::map ||
-                         state.screen == PauseScreen::weapons);
+      state.expanded && state.screen == PauseScreen::map;
 
   add(PauseRenderKind::dim_background, PauseAcdLayout::canvas);
   if (!expanded_detail) {
-    auto &left_panel = add(PauseRenderKind::panel, PauseAcdLayout::left_grid,
-                           {}, PauseColorRole::background);
-    left_panel.panel = PausePanelRole::left_content;
-    auto &information_panel =
-        add(PauseRenderKind::panel, PauseAcdLayout::information_grid, {},
-            PauseColorRole::background);
-    information_panel.panel = PausePanelRole::right_information;
-    auto &section_panel =
-        add(PauseRenderKind::panel, PauseAcdLayout::section_menu, {},
-            PauseColorRole::background);
-    section_panel.panel = PausePanelRole::right_sections;
-    auto &hint_panel = add(PauseRenderKind::panel, PauseAcdLayout::hint, {},
-                           PauseColorRole::background);
-    hint_panel.panel = PausePanelRole::hint;
+    add(PauseRenderKind::panel, PauseAcdLayout::left_grid, {},
+        PauseColorRole::background, PausePanelRole::left_content);
+    add(PauseRenderKind::panel, PauseAcdLayout::information_grid, {},
+        PauseColorRole::background, PausePanelRole::right_information);
+    add(PauseRenderKind::panel, PauseAcdLayout::section_menu, {},
+        PauseColorRole::background, PausePanelRole::right_sections);
+    add(PauseRenderKind::panel, PauseAcdLayout::hint, {},
+        PauseColorRole::background, PausePanelRole::hint);
   }
   switch (state.screen) {
   case PauseScreen::root: {
     // The original ACD keeps the six section selectors on the right and
     // previews the highlighted section in the left display.
-    constexpr std::array labels{"Map",      "Objectives", "Parameters",
-                                "Briefing", "Weapons",    "Options"};
-    for (std::size_t index = 0; index < labels.size(); ++index) {
-      auto &item = add(PauseRenderKind::menu_item,
-                       PauseAcdLayout::sectionSelection(index), labels[index],
-                       index == state.selection ? PauseColorRole::selected
-                                                : PauseColorRole::normal);
+    for (std::size_t index = 0; index < retail_root_sections.size(); ++index) {
+      auto &item = add(
+          PauseRenderKind::menu_item, PauseAcdLayout::sectionSelection(index),
+          retail_root_sections[index].label,
+          index == state.selection ? PauseColorRole::selected
+                                   : PauseColorRole::normal,
+          PausePanelRole::right_sections, PauseTextAlignment::center);
       item.id = static_cast<std::uint32_t>(index);
       item.selected = index == state.selection;
     }
@@ -1101,42 +1174,69 @@ std::vector<PauseRenderCommand> PauseMenu::buildRenderCommands() const {
     if (state.selection == 0) {
       const auto &map = data_.mission.map;
       if (!map.reconnaissance_available || map.layer_assets.empty()) {
-        add(PauseRenderKind::text, PauseRect{56, 96, 157, 18},
-            "No Reconnaissance", PauseColorRole::warning);
+        addLeft(PauseRenderKind::text, PauseRect{56, 96, 157, 18},
+                "No Reconnaissance", PauseColorRole::warning);
       } else {
         constexpr auto map_bounds = PauseAcdLayout::map_image;
         const auto page =
             std::min(map.current_layer, map.layer_assets.size() - 1U);
-        auto &asset = add(PauseRenderKind::asset, map_bounds);
+        auto &asset = addLeft(PauseRenderKind::asset, map_bounds);
         asset.asset = map.layer_assets[page];
-        addMapMarkers(map, map_bounds, page, 6);
+        addMapMarkers(map, map_bounds, page, 6, PausePanelRole::left_content);
         addMapInformation(data_, PauseAcdLayout::information_content, page,
-                          false);
+                          false, PausePanelRole::right_information);
       }
     } else {
-      const auto heading = labels[state.selection];
-      add(PauseRenderKind::title, PauseRect{56, 36, 157, 10}, heading,
-          PauseColorRole::accent);
+      const auto heading = retail_root_sections[state.selection].label;
+      addLeft(PauseRenderKind::title, PauseRect{56, 36, 157, 10}, heading,
+              PauseColorRole::accent);
       std::string preview;
       std::string information;
+      auto preview_composed = false;
       if (state.selection == 1 || state.selection == 2) {
         const auto &entries = state.selection == 1 ? data_.mission.objectives
                                                    : data_.mission.parameters;
+        std::vector<const MissionMenuEntry *> visible;
+        visible.reserve(entries.size());
         auto active = std::size_t{};
         auto completed = std::size_t{};
         for (const auto &entry : entries) {
           if (entry.visible) {
-            if (!preview.empty()) {
-              preview += "\n";
-            }
-            preview += retailListItem(entry.text);
+            visible.push_back(&entry);
             active += entry.state == MissionEntryState::active ? 1U : 0U;
             completed += entry.state == MissionEntryState::completed ? 1U : 0U;
           }
         }
-        if (preview.empty()) {
-          preview = "none";
+        const auto first = std::min(state.page, visible.size());
+        auto y = std::int16_t{52};
+        auto last = first;
+        constexpr auto content_bottom = std::int16_t{181};
+        for (auto index = first; index < visible.size(); ++index) {
+          const auto display_text = retailListItem(visible[index]->text);
+          const auto line_count = retailWrappedLineCount(display_text, 153);
+          const auto height = static_cast<std::int16_t>(
+              std::max<std::size_t>(1U, line_count) * 9U);
+          if (y + height > content_bottom) {
+            break;
+          }
+          auto &line =
+              addLeft(PauseRenderKind::text, PauseRect{60, y, 153, height},
+                      display_text, entryColor(visible[index]->state));
+          line.id = visible[index]->id;
+          y = static_cast<std::int16_t>(y + height + 3);
+          last = index + 1U;
         }
+        if (visible.empty()) {
+          addLeft(PauseRenderKind::text, PauseRect{60, 65, 153, 12}, "none",
+                  PauseColorRole::muted);
+        } else if (first != 0U || last < visible.size()) {
+          auto &indicator = addLeft(
+              PauseRenderKind::page_indicator, PauseRect{168, 176, 41, 10}, {},
+              PauseColorRole::normal, PauseTextAlignment::center);
+          indicator.value = static_cast<std::int32_t>(first + 1U);
+          indicator.maximum = static_cast<std::int32_t>(visible.size());
+        }
+        preview_composed = true;
         information = state.selection == 1 ? "Mission Objectives\n"
                                            : "Mission Parameters\n";
         information += "Active: " + std::to_string(active);
@@ -1155,57 +1255,61 @@ std::vector<PauseRenderCommand> PauseMenu::buildRenderCommands() const {
         const auto equipped = std::find_if(
             data_.weapons.begin(), data_.weapons.end(),
             [](const PauseWeaponData &weapon) { return weapon.equipped; });
-        preview = equipped == data_.weapons.end()
-                      ? "No weapon equipped"
-                      : "Equipped " + equipped->name + ".";
+        information = equipped == data_.weapons.end()
+                          ? "No weapon equipped"
+                          : "Equipped\n" + equipped->name;
         if (equipped != data_.weapons.end()) {
           if (equipped->maximum_ammo > 0) {
-            preview += "\nAmmo: " + std::to_string(equipped->ammo) + "/" +
-                       std::to_string(equipped->maximum_ammo);
+            information += "\nAmmo: " + std::to_string(equipped->ammo) + "/" +
+                           std::to_string(equipped->maximum_ammo);
           }
         }
         if (equipped != data_.weapons.end() && !equipped->icon_asset.empty()) {
-          auto &asset =
-              add(PauseRenderKind::asset, PauseRect{238, 42, 105, 68});
+          auto &asset = addLeft(PauseRenderKind::weapon_icon,
+                                PauseRect{60, 52, 145, 112});
           asset.asset = equipped->icon_asset;
           asset.id = equipped->id;
         }
       } else {
         information = "Configuration\nBrightness: " +
                       std::to_string(settings_.brightness);
-        for (std::size_t index = 0; index < option_labels.size(); ++index) {
-          addMenu(option_labels[index], index, option_labels.size(),
-                  static_cast<std::int16_t>(51 + index * 18));
-        }
+        // Retail root preview lists only the four configuration categories.
+        // Destructive/session actions belong to the Options detail screen.
+        addLeft(PauseRenderKind::text, PauseRect{56, 54, 157, 105},
+                "Sound\nController\nGame Brightness\nScreen Centering");
       }
-      if (!preview.empty()) {
-        add(PauseRenderKind::text, PauseRect{56, 51, 157, 131}, preview);
+      if (!preview_composed && !preview.empty()) {
+        addLeft(PauseRenderKind::text, PauseRect{56, 51, 157, 131}, preview);
       }
       if (!information.empty()) {
-        add(PauseRenderKind::text, PauseRect{240, 44, 101, 60}, information);
+        addInformation(PauseRenderKind::text, PauseRect{240, 44, 101, 60},
+                       information);
       }
     }
-    add(PauseRenderKind::button_hint, PauseAcdLayout::hint,
-        "%x select   %t resume");
+    addHint(PauseAcdLayout::hint, (state.selection == 1 || state.selection == 2)
+                                      ? "A/D page   %t resume"
+                                      : "%x select   %t resume");
     break;
   }
   case PauseScreen::options: {
-    add(PauseRenderKind::title, PauseRect{56, 36, 157, 10}, "Options",
-        PauseColorRole::accent);
+    addLeft(PauseRenderKind::title, PauseRect{56, 36, 157, 10}, "Options",
+            PauseColorRole::accent);
     // MENU.OVL keeps Select Mission in this list. Retail restricts it to
     // reached missions until its held-button cheat opens the full table.
     for (std::size_t index = 0; index < option_labels.size(); ++index) {
       addMenu(option_labels[index], index, state.selection,
               static_cast<std::int16_t>(51 + index * 18));
     }
-    add(PauseRenderKind::button_hint, PauseAcdLayout::hint,
-        "%x select   %t back");
+    addInformation(PauseRenderKind::text, PauseRect{240, 44, 101, 60},
+                   "Options\n" + data_.mission.location);
+    addHint(PauseAcdLayout::hint, "%x select   %t back");
     break;
   }
   case PauseScreen::mission_select: {
-    add(PauseRenderKind::title, PauseRect{56, 36, 157, 10},
-        mission_select_unlocked_ ? "Select Mission - All" : "Select Mission",
-        PauseColorRole::accent);
+    addLeft(PauseRenderKind::title, PauseRect{56, 36, 157, 10},
+            mission_select_unlocked_ ? "Select Mission - All"
+                                     : "Select Mission",
+            PauseColorRole::accent);
     constexpr std::size_t rows = 10U;
     const auto first = state.selection < rows
                            ? 0U
@@ -1223,13 +1327,14 @@ std::vector<PauseRenderCommand> PauseMenu::buildRenderCommands() const {
       addMenu(mission.text, index, state.selection,
               static_cast<std::int16_t>(50 + (index - first) * 14), enabled);
     }
-    add(PauseRenderKind::button_hint, PauseAcdLayout::hint,
-        "%x select   %t back");
+    addInformation(PauseRenderKind::text, PauseRect{240, 44, 101, 60},
+                   "Select Mission\n" + data_.mission.mission_name);
+    addHint(PauseAcdLayout::hint, "%x select   %t back");
     break;
   }
   case PauseScreen::sound: {
-    add(PauseRenderKind::title, PauseRect{56, 36, 157, 10}, "Sound",
-        PauseColorRole::accent);
+    addLeft(PauseRenderKind::title, PauseRect{56, 36, 157, 10}, "Sound",
+            PauseColorRole::accent);
     constexpr std::array labels{"Sound FX", "Music", "Voice-over"};
     const std::array values{
         settings_.sound_effects_volume,
@@ -1238,25 +1343,28 @@ std::vector<PauseRenderCommand> PauseMenu::buildRenderCommands() const {
     };
     for (std::size_t index = 0; index < labels.size(); ++index) {
       const auto y = static_cast<std::int16_t>(54 + index * 40);
-      auto &item = add(PauseRenderKind::menu_item, PauseRect{56, y, 157, 11},
-                       labels[index],
-                       index == state.selection ? PauseColorRole::selected
-                                                : PauseColorRole::normal);
+      auto &item = addLeft(PauseRenderKind::menu_item,
+                           PauseRect{56, y, 157, 11}, labels[index],
+                           index == state.selection ? PauseColorRole::selected
+                                                    : PauseColorRole::normal,
+                           PauseTextAlignment::center);
       item.id = static_cast<std::uint32_t>(index);
       item.selected = index == state.selection;
       auto &slider =
-          add(PauseRenderKind::slider,
-              PauseRect{72, static_cast<std::int16_t>(y + 14), 129, 8});
+          addLeft(PauseRenderKind::slider,
+                  PauseRect{72, static_cast<std::int16_t>(y + 14), 129, 8});
       slider.value = values[index];
       slider.maximum = 100;
       slider.selected = index == state.selection;
     }
-    add(PauseRenderKind::button_hint, PauseAcdLayout::hint, "%t back");
+    addInformation(PauseRenderKind::text, PauseRect{240, 44, 101, 60},
+                   "Sound\nConfiguration");
+    addHint(PauseAcdLayout::hint, "%t back");
     break;
   }
   case PauseScreen::controller: {
-    add(PauseRenderKind::title, PauseRect{56, 36, 157, 10}, "Controller",
-        PauseColorRole::accent);
+    addLeft(PauseRenderKind::title, PauseRect{56, 36, 157, 10}, "Controller",
+            PauseColorRole::accent);
     const std::array labels{
         std::string{"Preset config: "} +
             std::string{controllerPresetName(settings_.controller_preset)},
@@ -1271,13 +1379,14 @@ std::vector<PauseRenderCommand> PauseMenu::buildRenderCommands() const {
       addMenu(labels[index], index, state.selection,
               static_cast<std::int16_t>(49 + index * 18));
     }
-    add(PauseRenderKind::button_hint, PauseAcdLayout::hint,
-        "%x select   %t cancel");
+    addInformation(PauseRenderKind::text, PauseRect{240, 44, 101, 60},
+                   "Controller\nConfiguration");
+    addHint(PauseAcdLayout::hint, "%x select   %t cancel");
     break;
   }
   case PauseScreen::controller_bindings: {
-    add(PauseRenderKind::title, PauseRect{56, 35, 157, 10},
-        "Controller Configuration:", PauseColorRole::accent);
+    addLeft(PauseRenderKind::title, PauseRect{56, 35, 157, 10},
+            "Controller Configuration:", PauseColorRole::accent);
     for (std::size_t index = 0; index < binding_item_count; ++index) {
       const auto action = static_cast<ControllerAction>(index);
       std::string label{controllerActionName(action)};
@@ -1293,41 +1402,48 @@ std::vector<PauseRenderCommand> PauseMenu::buildRenderCommands() const {
       addMenu(label, index, state.selection,
               static_cast<std::int16_t>(48 + index * 14));
     }
-    add(PauseRenderKind::button_hint, PauseAcdLayout::hint,
-        binding_pending_ ? "Press new button for action"
-                         : "%x select   %t back");
+    addInformation(PauseRenderKind::text, PauseRect{240, 44, 101, 60},
+                   "Controller\nBindings");
+    addHint(PauseAcdLayout::hint, binding_pending_
+                                      ? "Press new button for action"
+                                      : "%x select   %t back");
     break;
   }
   case PauseScreen::brightness: {
-    add(PauseRenderKind::title, PauseRect{56, 36, 157, 10}, "Game Brightness",
-        PauseColorRole::accent);
-    add(PauseRenderKind::text, PauseRect{56, 59, 157, 38},
-        "Adjust game lighting levels by moving bar up or down");
-    auto &slider = add(PauseRenderKind::slider, PauseRect{60, 116, 149, 10});
+    addLeft(PauseRenderKind::title, PauseRect{56, 36, 157, 10},
+            "Game Brightness", PauseColorRole::accent);
+    addLeft(PauseRenderKind::text, PauseRect{56, 59, 157, 38},
+            "Adjust game lighting levels by moving bar up or down");
+    auto &slider =
+        addLeft(PauseRenderKind::slider, PauseRect{60, 116, 149, 10});
     slider.value = settings_.brightness;
     slider.maximum = 100;
     slider.selected = true;
-    add(PauseRenderKind::button_hint, PauseAcdLayout::hint,
-        "%x accept   %t cancel");
+    addInformation(PauseRenderKind::text, PauseRect{240, 44, 101, 60},
+                   "Configuration\nBrightness: " +
+                       std::to_string(settings_.brightness));
+    addHint(PauseAcdLayout::hint, "%x accept   %t cancel");
     break;
   }
   case PauseScreen::screen_centering: {
-    add(PauseRenderKind::title, PauseRect{56, 36, 157, 10}, "Screen Centering",
-        PauseColorRole::accent);
-    add(PauseRenderKind::text, PauseRect{56, 59, 157, 28},
-        "Use directional buttons to center the image.");
-    auto &marker = add(PauseRenderKind::selection, PauseRect{129, 105, 12, 12});
+    addLeft(PauseRenderKind::title, PauseRect{56, 36, 157, 10},
+            "Screen Centering", PauseColorRole::accent);
+    addLeft(PauseRenderKind::text, PauseRect{56, 59, 157, 28},
+            "Use directional buttons to center the image.");
+    auto &marker =
+        addLeft(PauseRenderKind::selection, PauseRect{129, 105, 12, 12});
     marker.bounds.x = static_cast<std::int16_t>(marker.bounds.x +
                                                 settings_.screen_center_x * 2);
     marker.bounds.y = static_cast<std::int16_t>(marker.bounds.y +
                                                 settings_.screen_center_y * 2);
-    add(PauseRenderKind::button_hint, PauseAcdLayout::hint,
-        "%x Save  %t Cancel");
+    addInformation(PauseRenderKind::text, PauseRect{240, 44, 101, 60},
+                   "Configuration\nScreen Centering");
+    addHint(PauseAcdLayout::hint, "%x Save  %t Cancel");
     break;
   }
   case PauseScreen::briefing: {
-    add(PauseRenderKind::title, PauseRect{56, 36, 157, 10}, "Briefing",
-        PauseColorRole::accent);
+    addLeft(PauseRenderKind::title, PauseRect{56, 36, 157, 10}, "Briefing",
+            PauseColorRole::accent);
     std::string metadata;
     if (!data_.mission.date_time.empty()) {
       metadata += data_.mission.date_time;
@@ -1344,8 +1460,8 @@ std::vector<PauseRenderCommand> PauseMenu::buildRenderCommands() const {
       }
       metadata += data_.mission.area;
     }
-    add(PauseRenderKind::text, PauseRect{56, 50, 157, 20}, metadata,
-        PauseColorRole::muted);
+    addLeft(PauseRenderKind::text, PauseRect{56, 50, 157, 20}, metadata,
+            PauseColorRole::muted);
     const auto page_count =
         std::max<std::size_t>(data_.mission.briefing_pages.size(), 1);
     const auto page = std::min(state.page, page_count - 1);
@@ -1353,114 +1469,113 @@ std::vector<PauseRenderCommand> PauseMenu::buildRenderCommands() const {
         data_.mission.briefing_pages.empty()
             ? std::string_view{"No briefing data available"}
             : std::string_view{data_.mission.briefing_pages[page]};
-    add(PauseRenderKind::text, PauseRect{56, 74, 157, 96}, text);
+    addLeft(PauseRenderKind::text, PauseRect{56, 74, 157, 96}, text);
     auto &indicator =
-        add(PauseRenderKind::page_indicator, PauseRect{176, 174, 37, 10});
+        addLeft(PauseRenderKind::page_indicator, PauseRect{176, 174, 37, 10},
+                {}, PauseColorRole::normal, PauseTextAlignment::center);
     indicator.value = static_cast<std::int32_t>(page + 1);
     indicator.maximum = static_cast<std::int32_t>(page_count);
-    add(PauseRenderKind::button_hint, PauseAcdLayout::hint,
-        page + 1 < page_count ? "%x next   %t back" : "%t back");
+    std::string briefing_information{"Briefing"};
+    if (!data_.mission.mission_name.empty()) {
+      briefing_information += "\n" + data_.mission.mission_name;
+    }
+    if (!data_.mission.location.empty()) {
+      briefing_information += "\n" + data_.mission.location;
+    }
+    addInformation(PauseRenderKind::text, PauseRect{240, 44, 101, 60},
+                   briefing_information);
+    addHint(PauseAcdLayout::hint,
+            page + 1 < page_count ? "%x next   %t back" : "%t back");
     break;
   }
   case PauseScreen::weapons: {
     const auto count = data_.weapons.size();
     const auto selected = count == 0 ? 0 : std::min(state.selection, count - 1);
-    if (state.expanded) {
-      add(PauseRenderKind::panel, PauseAcdLayout::expanded_content, {},
-          PauseColorRole::background);
-      add(PauseRenderKind::panel, PauseAcdLayout::expanded_weapon_image_panel,
-          {}, PauseColorRole::background);
-      add(PauseRenderKind::panel,
-          PauseAcdLayout::expanded_weapon_information_panel, {},
-          PauseColorRole::background);
-      const auto ratings_page = state.page == 0;
-      add(PauseRenderKind::title, PauseRect{20, 14, 344, 12},
-          ratings_page ? "Weapons - Ratings" : "Weapons - Description",
-          PauseColorRole::accent);
-      if (count != 0) {
-        const auto &weapon = data_.weapons[selected];
-        if (!weapon.icon_asset.empty()) {
-          auto &asset =
-              add(PauseRenderKind::asset, PauseRect{24, 42, 156, 154});
-          asset.asset = weapon.icon_asset;
-          asset.id = weapon.id;
-        }
-        std::string information = weapon.equipped ? "Equipped " : "Selected ";
-        information += weapon.name + ".";
-        if (weapon.maximum_ammo > 0) {
-          information += "\nAmmo: " + std::to_string(weapon.ammo) + "/" +
-                         std::to_string(weapon.maximum_ammo);
-        }
-        add(PauseRenderKind::text, PauseRect{200, 42, 158, 42}, information);
-        if (ratings_page) {
-          const auto add_rating = [&](std::int16_t y, std::string label,
-                                      std::uint8_t value) {
-            auto &rating =
-                add(PauseRenderKind::slider, PauseRect{202, y, 154, 10});
-            rating.text = std::move(label);
-            rating.value = value;
-            rating.maximum = 5;
-          };
-          add_rating(105, "Fire Rate", weapon.fire_rate);
-          add_rating(137, "Power", weapon.damage);
-          add_rating(169, "Accuracy", weapon.accuracy);
-        } else {
-          add(PauseRenderKind::text, PauseRect{200, 91, 158, 100},
-              weapon.description.empty() ? "No description available"
-                                         : weapon.description);
-        }
-        auto &indicator =
-            add(PauseRenderKind::page_indicator, PauseRect{132, 184, 48, 10});
-        indicator.value = static_cast<std::int32_t>(selected + 1);
-        indicator.maximum = static_cast<std::int32_t>(count);
-        auto &detail_indicator =
-            add(PauseRenderKind::page_indicator, PauseRect{320, 184, 34, 10});
-        detail_indicator.value = ratings_page ? 1 : 2;
-        detail_indicator.maximum = 2;
-      } else {
-        add(PauseRenderKind::text, PauseRect{20, 72, 344, 20},
-            "No weapons available");
-      }
-      add(PauseRenderKind::button_hint, PauseAcdLayout::expanded_hint,
-          "%x equip   A/D page   W/S weapon   %t close");
-      break;
-    }
-
-    add(PauseRenderKind::title, PauseRect{56, 36, 157, 10}, "Weapons",
-        PauseColorRole::accent);
     if (count != 0) {
       const auto &weapon = data_.weapons[selected];
       if (!weapon.icon_asset.empty()) {
-        auto &asset = add(PauseRenderKind::asset, PauseRect{238, 42, 105, 68});
+        // The retail page always leaves the weapon render in the upper-right
+        // information window on both the list and description screens.
+        auto &asset = addInformation(PauseRenderKind::weapon_icon,
+                                     PauseRect{237, 50, 107, 60});
         asset.asset = weapon.icon_asset;
         asset.id = weapon.id;
       }
-      std::string information = weapon.equipped ? "Equipped " : "Selected ";
-      information += weapon.name + ".";
-      if (weapon.maximum_ammo > 0) {
-        information += "\nAmmo: " + std::to_string(weapon.ammo) + "/" +
-                       std::to_string(weapon.maximum_ammo);
+      if (state.expanded) {
+        addLeft(PauseRenderKind::title, PauseRect{66, 31, 143, 10},
+                weapon.name, PauseColorRole::accent);
+
+        const auto roman = [](std::uint8_t value) {
+          return std::string(std::min<std::uint8_t>(value, 5U), 'I');
+        };
+        const auto clip_size =
+            weapon.clip_size.empty() ? std::to_string(weapon.ammo)
+                                     : weapon.clip_size;
+        const auto maximum_rounds =
+            weapon.maximum_rounds.empty()
+                ? std::to_string(weapon.maximum_ammo)
+                : weapon.maximum_rounds;
+        const auto add_specification = [&](std::int16_t y,
+                                           std::string_view label,
+                                           std::string_view value) {
+          addLeft(PauseRenderKind::text, PauseRect{66, y, 99, 9}, label);
+          addLeft(PauseRenderKind::text, PauseRect{166, y, 43, 9}, value,
+                  PauseColorRole::normal, PauseTextAlignment::right);
+        };
+        const auto fire_rate = roman(weapon.fire_rate);
+        const auto damage = roman(weapon.damage);
+        add_specification(48, "Fire Rate", fire_rate);
+        add_specification(58, "Damage", damage);
+        add_specification(68, "Clip Size", clip_size);
+        add_specification(78, "Max Rounds", maximum_rounds);
+        addLeft(PauseRenderKind::text, PauseRect{66, 93, 143, 89},
+                weapon.description.empty() ? "No description available"
+                                           : weapon.description);
+        addHint(PauseAcdLayout::hint, "%x equip   %t back");
+      } else {
+        constexpr auto visible_rows = std::size_t{15};
+        const auto first = selected < visible_rows
+                               ? std::size_t{}
+                               : selected - visible_rows + 1U;
+        const auto last = std::min(count, first + visible_rows);
+        auto y = std::int16_t{31};
+        for (auto index = first; index < last; ++index) {
+          const auto &entry = data_.weapons[index];
+          const auto item_width = static_cast<std::int16_t>(std::clamp(
+              originalHudTextWidth(entry.name) + 6, 24, 143));
+          auto &item = addLeft(
+              PauseRenderKind::menu_item, PauseRect{66, y, item_width, 11},
+              entry.name,
+              index == selected ? PauseColorRole::selected
+                                : (entry.available ? PauseColorRole::normal
+                                                   : PauseColorRole::muted));
+          item.id = static_cast<std::uint32_t>(index);
+          item.selected = index == selected;
+          item.enabled = entry.available;
+          y = static_cast<std::int16_t>(y + 10);
+        }
+        if (weapon.maximum_ammo > 0) {
+          addInformation(PauseRenderKind::text, PauseRect{237, 40, 107, 10},
+                         "Ammo: " + std::to_string(weapon.ammo) + "/" +
+                             std::to_string(weapon.maximum_ammo));
+        }
+        addHint(PauseAcdLayout::hint, "%x select   %t back");
       }
-      information += "\nRate: " + std::to_string(weapon.fire_rate) + "/5";
-      information += "\nDamage: " + std::to_string(weapon.damage) + "/5";
-      add(PauseRenderKind::text, PauseRect{56, 52, 157, 74}, information);
-      auto &indicator =
-          add(PauseRenderKind::page_indicator, PauseRect{168, 176, 41, 10});
-      indicator.value = static_cast<std::int32_t>(selected + 1);
-      indicator.maximum = static_cast<std::int32_t>(count);
     } else {
-      add(PauseRenderKind::text, PauseRect{56, 72, 157, 20},
-          "No weapons available");
+      addLeft(PauseRenderKind::text, PauseRect{56, 72, 157, 20},
+              "No weapons available");
+      addInformation(PauseRenderKind::text, PauseRect{240, 44, 101, 60},
+                     "Weapons\nNone available");
+      addHint(PauseAcdLayout::hint, "%t back");
     }
-    add(PauseRenderKind::button_hint, PauseAcdLayout::hint,
-        "%x info   W/S   %t back");
     break;
   }
   case PauseScreen::objectives:
   case PauseScreen::parameters: {
     const auto is_objectives = state.screen == PauseScreen::objectives;
-    add(PauseRenderKind::title, PauseRect{56, 36, 157, 10},
-        is_objectives ? "Objectives" : "Parameters", PauseColorRole::accent);
+    addLeft(PauseRenderKind::title, PauseRect{56, 36, 157, 10},
+            is_objectives ? "Objectives" : "Parameters",
+            PauseColorRole::accent);
     const auto &entries =
         is_objectives ? data_.mission.objectives : data_.mission.parameters;
     std::vector<const MissionMenuEntry *> visible;
@@ -1479,37 +1594,57 @@ std::vector<PauseRenderCommand> PauseMenu::buildRenderCommands() const {
     for (auto index = begin; index < visible.size(); ++index) {
       const auto &entry = *visible[index];
       const auto needs_heading = first || entry.state != previous_state;
+      const auto display_text = retailListItem(entry.text);
+      const auto line_count = retailWrappedLineCount(display_text, 153);
+      const auto text_height =
+          static_cast<std::int16_t>(std::max<std::size_t>(1U, line_count) * 9U);
       const auto required_height =
-          static_cast<std::int16_t>((needs_heading ? 11 : 0) + 12);
+          static_cast<std::int16_t>((needs_heading ? 11 : 0) + text_height + 2);
       if (y + required_height > content_bottom) {
         break;
       }
       if (needs_heading) {
-        add(PauseRenderKind::text, PauseRect{56, y, 157, 10},
-            is_objectives ? objectiveHeading(entry.state)
-                          : parameterHeading(entry.state),
-            PauseColorRole::accent);
+        addLeft(PauseRenderKind::text, PauseRect{56, y, 157, 10},
+                is_objectives ? objectiveHeading(entry.state)
+                              : parameterHeading(entry.state),
+                PauseColorRole::accent);
         y = static_cast<std::int16_t>(y + 11);
         previous_state = entry.state;
         first = false;
       }
-      auto &line = add(PauseRenderKind::text, PauseRect{60, y, 153, 12},
-                       retailListItem(entry.text), entryColor(entry.state));
+      auto &line =
+          addLeft(PauseRenderKind::text, PauseRect{60, y, 153, text_height},
+                  display_text, entryColor(entry.state));
       line.id = entry.id;
-      y = static_cast<std::int16_t>(y + 14);
+      y = static_cast<std::int16_t>(y + text_height + 2);
     }
     if (visible.empty()) {
-      add(PauseRenderKind::text, PauseRect{60, 65, 153, 12}, "none",
-          PauseColorRole::muted);
+      addLeft(PauseRenderKind::text, PauseRect{60, 65, 153, 12}, "none",
+              PauseColorRole::muted);
     }
-    add(PauseRenderKind::button_hint, PauseAcdLayout::hint, "%t back");
+    auto active = std::size_t{};
+    auto completed = std::size_t{};
+    for (const auto *entry : visible) {
+      active += entry->state == MissionEntryState::active ? 1U : 0U;
+      completed += entry->state == MissionEntryState::completed ? 1U : 0U;
+    }
+    std::string summary =
+        is_objectives ? "Mission Objectives\n" : "Mission Parameters\n";
+    summary += "Active: " + std::to_string(active);
+    if (is_objectives) {
+      summary += "\nCompleted: " + std::to_string(completed);
+    }
+    addInformation(PauseRenderKind::text, PauseRect{240, 44, 101, 60}, summary);
+    addHint(PauseAcdLayout::hint, "%t back");
     break;
   }
   case PauseScreen::map: {
     const auto &map = data_.mission.map;
     if (!map.reconnaissance_available || map.layer_assets.empty()) {
-      add(PauseRenderKind::text, PauseRect{56, 96, 157, 18},
-          "No Reconnaissance", PauseColorRole::warning);
+      addLeft(PauseRenderKind::text, PauseRect{56, 96, 157, 18},
+              "No Reconnaissance", PauseColorRole::warning);
+      addInformation(PauseRenderKind::text, PauseRect{240, 44, 101, 60},
+                     "Map\nNo Reconnaissance", PauseColorRole::warning);
     } else {
       if (state.expanded) {
         add(PauseRenderKind::panel, PauseAcdLayout::expanded_map_panel, {},
@@ -1520,15 +1655,21 @@ std::vector<PauseRenderCommand> PauseMenu::buildRenderCommands() const {
       const auto map_bounds = state.expanded
                                   ? PauseAcdLayout::expanded_map_image
                                   : PauseAcdLayout::map_image;
-      auto &asset = add(PauseRenderKind::asset, map_bounds);
+      auto &asset = state.expanded
+                        ? add(PauseRenderKind::asset, map_bounds)
+                        : addLeft(PauseRenderKind::asset, map_bounds);
       asset.asset =
           map.layer_assets[std::min(state.page, map.layer_assets.size() - 1)];
-      addMapMarkers(map, map_bounds, state.page, state.expanded ? 8 : 6);
+      addMapMarkers(map, map_bounds, state.page, state.expanded ? 8 : 6,
+                    state.expanded ? PausePanelRole::none
+                                   : PausePanelRole::left_content);
       addMapInformation(data_,
                         state.expanded
                             ? PauseAcdLayout::expanded_information_content
                             : PauseAcdLayout::information_content,
-                        state.page, state.expanded);
+                        state.page, state.expanded,
+                        state.expanded ? PausePanelRole::none
+                                       : PausePanelRole::right_information);
       if (state.expanded) {
         auto &indicator =
             add(PauseRenderKind::page_indicator, PauseRect{326, 196, 38, 10});
@@ -1536,12 +1677,16 @@ std::vector<PauseRenderCommand> PauseMenu::buildRenderCommands() const {
         indicator.maximum = static_cast<std::int32_t>(map.layer_assets.size());
       }
     }
-    add(PauseRenderKind::button_hint,
-        state.expanded ? PauseAcdLayout::expanded_hint : PauseAcdLayout::hint,
-        state.expanded
-            ? (map.layer_assets.size() > 1 ? "A/D map   %t close" : "%t close")
-            : (map.layer_assets.size() > 1 ? "A/D map   %x full   %t back"
-                                           : "%x full   %t back"));
+    if (state.expanded) {
+      add(PauseRenderKind::button_hint, PauseAcdLayout::expanded_hint,
+          map.layer_assets.size() > 1 ? "A/D map   %t close" : "%t close",
+          PauseColorRole::normal, PausePanelRole::none,
+          PauseTextAlignment::center);
+    } else {
+      addHint(PauseAcdLayout::hint, map.layer_assets.size() > 1
+                                        ? "A/D map   %x full   %t back"
+                                        : "%x full   %t back");
+    }
     break;
   }
   case PauseScreen::confirmation: {
@@ -1559,93 +1704,35 @@ std::vector<PauseRenderCommand> PauseMenu::buildRenderCommands() const {
     case ConfirmationAction::none:
       break;
     }
-    add(PauseRenderKind::dialog, PauseRect{56, 62, 157, 72}, question,
-        PauseColorRole::warning);
+    addLeft(PauseRenderKind::dialog, PauseRect{56, 62, 157, 72}, question,
+            PauseColorRole::warning);
     addMenu("Yes", 0, state.selection, 143);
     addMenu("No", 1, state.selection, 159);
-    add(PauseRenderKind::button_hint, PauseAcdLayout::hint,
-        "%x accept   %t cancel");
+    addInformation(PauseRenderKind::text, PauseRect{240, 44, 101, 60},
+                   "Confirmation");
+    addHint(PauseAcdLayout::hint, "%x accept   %t cancel");
     break;
   }
   case PauseScreen::notification:
-    add(PauseRenderKind::dialog, PauseRect{56, 66, 157, 88}, notification_,
-        PauseColorRole::warning);
-    add(PauseRenderKind::button_hint, PauseAcdLayout::hint,
-        "Press %x to continue");
+    addLeft(PauseRenderKind::dialog, PauseRect{56, 66, 157, 88}, notification_,
+            PauseColorRole::warning);
+    addInformation(PauseRenderKind::text, PauseRect{240, 44, 101, 60},
+                   "Notice");
+    addHint(PauseAcdLayout::hint, "Press %x to continue");
     break;
   }
 
-  constexpr std::array section_labels{
-      "Map", "Objectives", "Parameters", "Briefing", "Weapons", "Options",
-  };
   if (state.screen != PauseScreen::root && !expanded_detail) {
-    const auto has_information =
-        std::ranges::any_of(commands, [](const auto &command) {
-          return (command.kind == PauseRenderKind::title ||
-                  command.kind == PauseRenderKind::text ||
-                  command.kind == PauseRenderKind::asset) &&
-                 command.bounds.x >= PauseAcdLayout::information_content.x &&
-                 command.bounds.y >= PauseAcdLayout::information_content.y &&
-                 command.bounds.y <
-                     PauseAcdLayout::information_content.y +
-                         PauseAcdLayout::information_content.height;
-        });
-    if (!has_information) {
-      std::string information{pauseScreenName(state.screen)};
-      if (!data_.mission.mission_name.empty()) {
-        information += "\n" + data_.mission.mission_name;
-      }
-      if (!data_.mission.location.empty()) {
-        information += "\n" + data_.mission.location;
-      }
-      add(PauseRenderKind::text, PauseRect{240, 44, 101, 60}, information);
-    }
-
     const auto selected_section = sectionSelection();
-    for (std::size_t index = 0; index < section_labels.size(); ++index) {
-      auto &item =
-          add(PauseRenderKind::menu_item,
-              PauseAcdLayout::sectionSelection(index), section_labels[index],
-              index == selected_section ? PauseColorRole::selected
-                                        : PauseColorRole::normal);
+    for (std::size_t index = 0; index < retail_root_sections.size(); ++index) {
+      auto &item = add(
+          PauseRenderKind::menu_item, PauseAcdLayout::sectionSelection(index),
+          retail_root_sections[index].label,
+          index == selected_section ? PauseColorRole::selected
+                                    : PauseColorRole::normal,
+          PausePanelRole::right_sections, PauseTextAlignment::center);
       item.id = static_cast<std::uint32_t>(index);
       item.selected = index == selected_section;
-    }
-  }
-
-  // Carry semantic placement to the platform renderer. This prevents detail
-  // screens from silently falling back to a full-screen panel and makes font
-  // alignment deterministic across render backends.
-  for (auto &command : commands) {
-    switch (command.kind) {
-    case PauseRenderKind::dim_background:
-      break;
-    case PauseRenderKind::panel:
-      break;
-    case PauseRenderKind::button_hint:
-      if (!expanded_detail) {
-        command.bounds = PauseAcdLayout::hint;
-        command.panel = PausePanelRole::hint;
-      }
-      command.alignment = PauseTextAlignment::center;
-      break;
-    case PauseRenderKind::menu_item:
-      command.panel = command.bounds.x >= PauseAcdLayout::section_menu.x
-                          ? PausePanelRole::right_sections
-                          : PausePanelRole::left_content;
-      command.alignment = PauseTextAlignment::center;
-      break;
-    default:
-      if (!expanded_detail) {
-        command.panel =
-            command.bounds.x >= PauseAcdLayout::information_content.x
-                ? PausePanelRole::right_information
-                : PausePanelRole::left_content;
-      }
-      if (command.kind == PauseRenderKind::page_indicator) {
-        command.alignment = PauseTextAlignment::center;
-      }
-      break;
     }
   }
 

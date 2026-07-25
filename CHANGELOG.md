@@ -5,7 +5,54 @@ pre-release tags rather than a stable semantic-versioning promise.
 
 ## Unreleased
 
-- No changes after Public Test 0.1.0-PT6.
+- No changes after Public Test 0.1.0-PT7.
+
+## 0.1.0-public-test.7 - 2026-07-25
+
+### Russian localization
+
+- Added the complete text-only Russian language pack for all 20 missions,
+  including proofread menus, objectives, parameters, briefings, gameplay
+  messages, weapon descriptions and baked map/title labels.
+- Rebuilt the ViT-compatible font sheets as a unified 2x Industria-style atlas
+  while preserving the retail byte map, advances and logical menu geometry.
+- Fixed incomplete or mismatched mission briefings, missing weapon descriptions,
+  weapon specification tables and every observed spelling/case variant of the
+  gas-grenade pickup message.
+- Kept speech, music and FMV on the original USA v1.1 disc; the pack changes
+  presentation text only.
+
+### Presentation and runtime
+
+- Finished the original two-page Weapons presentation and restored complete
+  descriptions, ammunition data and the four authored specifications.
+- Corrected text flow, pagination and placement across briefing, objective,
+  parameter, map, weapon and options pages for both supported languages.
+- Added working vertical synchronization and a high-resolution frame limiter,
+  and removed the guest CPU-overclock workaround from normal gameplay timing.
+- Replaced restart-prone gameplay audio queues with a bounded continuous
+  callback stream, stock-rate SPU scheduling and deterministic transition reset.
+- Corrected scene ordering and depth behavior for translucent polygons, pickups,
+  grenade sprites and transient effects without bypassing authored occlusion.
+- Preserved mission completion/save flow, campaign unlock progress and
+  restart-safe destructible state.
+
+### Launcher and architecture
+
+- Corrected launcher layout and Unicode language labels, and exposed the new
+  Russian text pack through the persistent language selector.
+- Split file I/O, localization, pause-menu data, retail map projection, VRAM,
+  runtime guards and native font upload into explicit modules with automated
+  architecture checks.
+- Updated the public packager to require and include the complete `locales`
+  directory while continuing to reject disc images, saves, logs, cheats and
+  developer binaries.
+
+### Release artifact
+
+- File: `SyphonFilterPC-0.1.0-public-test.7-win64.zip`
+- Checksum: supplied in the accompanying `.zip.sha256` file.
+- Supported disc: *Syphon Filter* USA v1.1 (`SCUS-94240`), BIN/CUE.
 
 ## 0.1.0-public-test.6 - 2026-07-24
 

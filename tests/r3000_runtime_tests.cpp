@@ -2014,6 +2014,19 @@ void testLegacyGameplayVmBoundary() {
               vm.takePcm(pcm) == pcm.size(),
           "Legacy VM 20 Hz audio clock did not emit exactly 2205 frames");
 
+  vm.clearPcm();
+  const auto sliced_audio_start = vm.machine().currentTick();
+  auto sliced_audio_ok = true;
+  for (auto slice = 0U; slice < 6U; ++slice) {
+    sliced_audio_ok = sliced_audio_ok && vm.advanceAudioSliceClock();
+  }
+  std::ranges::fill(pcm, sf::psx::SpuPcmFrame{});
+  require(sliced_audio_ok &&
+              vm.machine().currentTick() ==
+                  sliced_audio_start + audio_ticks_per_frame &&
+              vm.takePcm(pcm) == pcm.size(),
+          "Six low-latency SPU slices diverged from one retail audio frame");
+
   sf::game::LegacyGameplayVm overclocked_vm{executable,
                                             sf::psx::CpuClockScale{2U, 1U}};
   overclocked_vm.clearPcm();
@@ -2056,6 +2069,28 @@ void testLegacyGameplayVmBoundary() {
               audio_callback_count == 6U,
           "Retail 120 Hz audio callback did not run six times per frame");
 
+  // Streaming can consume more than one retail frame of guest CPU time before
+  // returning to the native outer loop. Real timer IRQs latch one pending bit;
+  // replaying every elapsed edge as an immediate callback makes sequenced
+  // music race or restart after a room/chunk transition.
+  const auto overdue_start = vm.machine().currentTick();
+  vm.machine().advanceTicks(audio_ticks_per_frame * 2U);
+  const auto overdue_target = overdue_start + audio_ticks_per_frame * 2U;
+  require(
+      vm.advanceAudioFrameClock(audio_profile) &&
+          vm.machine().currentTick() >= overdue_target &&
+          vm.machine().currentTick() <= overdue_target + 16U &&
+          audio_callback_count == 7U,
+      "Overdue retail audio IRQs were not coalesced at a streaming boundary");
+
+  vm.clearPcm();
+  vm.machine().spu().mixFrames(32U);
+  const auto host_pcm_snapshot = vm.captureSnapshot();
+  require(vm.machine().spu().queuedPcmFrames() == 32U &&
+              vm.restoreSnapshot(host_pcm_snapshot) &&
+              vm.machine().spu().queuedPcmFrames() == 0U,
+          "Gameplay snapshot replayed already-rendered host PCM");
+
   const auto callback_snapshot = vm.captureSnapshot();
   const std::array unregister_audio_callback{
       static_cast<std::uint32_t>(audio_profile.timer_irq), 0U};
@@ -2064,16 +2099,16 @@ void testLegacyGameplayVmBoundary() {
   require(unregistered.completed() &&
               unregistered.return_value == audio_callback &&
               vm.advanceAudioFrameClock(audio_profile) &&
-              audio_callback_count == 6U,
+              audio_callback_count == 7U,
           "InterruptCallback did not return and remove the previous callback");
   require(vm.restoreSnapshot(callback_snapshot) &&
               vm.advanceAudioFrameClock(audio_profile) &&
-              audio_callback_count == 12U,
+              audio_callback_count == 13U,
           "Audio callback registration did not survive snapshot restore");
   const auto reset_callbacks = vm.invoke(audio_profile.reset_callback_entry);
   require(reset_callbacks.completed() &&
               vm.advanceAudioFrameClock(audio_profile) &&
-              audio_callback_count == 12U,
+              audio_callback_count == 13U,
           "ResetCallback did not clear the retail audio timer");
   vm.clearPcm();
 
@@ -3019,7 +3054,8 @@ void testLegacyGameplayVmBoundary() {
           vm.runtime().write32(generic_text_node, generic_text_object) &&
           vm.runtime().write32(generic_text_node + 8U, 0U) &&
           vm.runtime().write8(generic_text_object + 0x14U, 0x03U) &&
-          vm.runtime().write8(generic_text_object + 0x15U, 2U) &&
+          // FUN_8008507c writes the additive source-string checksum here.
+          vm.runtime().write8(generic_text_object + 0x15U, 161U) &&
           vm.runtime().write16(generic_text_object + 0x16U, 0U),
       "Attached-text hook did not retain the predicted retail pool object");
 
@@ -3037,6 +3073,8 @@ void testLegacyGameplayVmBoundary() {
           gameplay_text_snapshot.attached_text_sources.size() == 1U &&
           gameplay_text_snapshot.attached_text_sources[0].text_object ==
               generic_text_object &&
+          gameplay_text_snapshot.attached_text_sources[0].text_checksum ==
+              161U &&
           gameplay_text_snapshot.attached_text_sources[0].text == "Open Crate",
       "Gameplay-text hooks exported different text, timing or pool identity");
 
@@ -3092,39 +3130,40 @@ void testLegacyGameplayVmBoundary() {
   constexpr std::uint32_t enemy_projectile_object = 0x8004a600U;
   constexpr std::uint32_t enemy_projectile_matrix =
       enemy_projectile_object + 0x1cU;
-  require(vm.runtime().write32(bridge_profile.player_thrown_projectile_pointer,
-                               thrown_projectile_descriptor) &&
-              vm.runtime().write8(thrown_projectile_descriptor + 1U, 7U) &&
-              vm.runtime().write32(thrown_projectile_descriptor + 4U, 19U) &&
-              vm.runtime().write32(thrown_projectile_descriptor + 8U,
-                                   thrown_projectile_object) &&
-              // Display+0 is an opaque non-zero retail ownership token. It is
-              // only a liveness test and is not necessarily a readable pointer.
-              vm.runtime().write32(thrown_projectile_object, 1U) &&
-              vm.runtime().write16(thrown_projectile_matrix, 4096U) &&
-              vm.runtime().write16(thrown_projectile_matrix + 8U, 4096U) &&
-              vm.runtime().write16(thrown_projectile_matrix + 0x10U, 4096U) &&
-              vm.runtime().write32(thrown_projectile_matrix + 0x14U, 4569U) &&
-              vm.runtime().write32(
-                  thrown_projectile_matrix + 0x18U,
-                  std::bit_cast<std::uint32_t>(std::int32_t{-2492})) &&
-              vm.runtime().write32(thrown_projectile_matrix + 0x1cU, 3160U) &&
-              vm.runtime().write32(bridge_profile.enemy_thrown_projectile_pointer,
-                                   enemy_projectile_descriptor) &&
-              vm.runtime().write8(enemy_projectile_descriptor + 1U, 9U) &&
-              vm.runtime().write32(enemy_projectile_descriptor + 4U, 20U) &&
-              vm.runtime().write32(enemy_projectile_descriptor + 8U,
-                                   enemy_projectile_object) &&
-              vm.runtime().write32(enemy_projectile_object, 1U) &&
-              vm.runtime().write16(enemy_projectile_matrix, 4096U) &&
-              vm.runtime().write16(enemy_projectile_matrix + 8U, 4096U) &&
-              vm.runtime().write16(enemy_projectile_matrix + 0x10U, 4096U) &&
-              vm.runtime().write32(enemy_projectile_matrix + 0x14U, 4660U) &&
-              vm.runtime().write32(
-                  enemy_projectile_matrix + 0x18U,
-                  std::bit_cast<std::uint32_t>(std::int32_t{-2500})) &&
-              vm.runtime().write32(enemy_projectile_matrix + 0x1cU, 3200U),
-          "Could not seed the retail player/enemy in-flight grenade descriptors");
+  require(
+      vm.runtime().write32(bridge_profile.player_thrown_projectile_pointer,
+                           thrown_projectile_descriptor) &&
+          vm.runtime().write8(thrown_projectile_descriptor + 1U, 7U) &&
+          vm.runtime().write32(thrown_projectile_descriptor + 4U, 19U) &&
+          vm.runtime().write32(thrown_projectile_descriptor + 8U,
+                               thrown_projectile_object) &&
+          // Display+0 is an opaque non-zero retail ownership token. It is
+          // only a liveness test and is not necessarily a readable pointer.
+          vm.runtime().write32(thrown_projectile_object, 1U) &&
+          vm.runtime().write16(thrown_projectile_matrix, 4096U) &&
+          vm.runtime().write16(thrown_projectile_matrix + 8U, 4096U) &&
+          vm.runtime().write16(thrown_projectile_matrix + 0x10U, 4096U) &&
+          vm.runtime().write32(thrown_projectile_matrix + 0x14U, 4569U) &&
+          vm.runtime().write32(
+              thrown_projectile_matrix + 0x18U,
+              std::bit_cast<std::uint32_t>(std::int32_t{-2492})) &&
+          vm.runtime().write32(thrown_projectile_matrix + 0x1cU, 3160U) &&
+          vm.runtime().write32(bridge_profile.enemy_thrown_projectile_pointer,
+                               enemy_projectile_descriptor) &&
+          vm.runtime().write8(enemy_projectile_descriptor + 1U, 9U) &&
+          vm.runtime().write32(enemy_projectile_descriptor + 4U, 20U) &&
+          vm.runtime().write32(enemy_projectile_descriptor + 8U,
+                               enemy_projectile_object) &&
+          vm.runtime().write32(enemy_projectile_object, 1U) &&
+          vm.runtime().write16(enemy_projectile_matrix, 4096U) &&
+          vm.runtime().write16(enemy_projectile_matrix + 8U, 4096U) &&
+          vm.runtime().write16(enemy_projectile_matrix + 0x10U, 4096U) &&
+          vm.runtime().write32(enemy_projectile_matrix + 0x14U, 4660U) &&
+          vm.runtime().write32(
+              enemy_projectile_matrix + 0x18U,
+              std::bit_cast<std::uint32_t>(std::int32_t{-2500})) &&
+          vm.runtime().write32(enemy_projectile_matrix + 0x1cU, 3200U),
+      "Could not seed the retail player/enemy in-flight grenade descriptors");
   const auto bridge = vm.readBridgeState(bridge_profile);
   require(
       bridge && bridge->camera.eye.x == 100 && bridge->camera.eye.y == -200 &&
@@ -4461,6 +4500,7 @@ void testLegacyGameplayVmBoundary() {
           vm.runtime().write16(outer_profile.renderer_vblank_interval, 2U) &&
           vm.runtime().write32(outer_profile.player_pointer, 0x80012000U),
       "Could not seed retail outer-frame ordering test");
+  const auto outer_frame_tick = vm.machine().currentTick();
   const auto outer_frame = vm.tickRetailOuterFrame(
       outer_profile, sf::game::syphonFilterUsaV11RetailPlatformTailProfile(),
       1U);
@@ -4477,9 +4517,10 @@ void testLegacyGameplayVmBoundary() {
           vm.runtime().read32(outer_profile.gameplay_clock, gameplay_clock) &&
           gameplay_clock == 1U &&
           vm.runtime().read32(outer_profile.vblank_counter, renderer_vblanks) &&
-          renderer_vblanks == 2U,
+          renderer_vblanks == 2U &&
+          vm.machine().currentTick() == outer_frame_tick,
       "Retail outer frame did not sample input state/render cadence in retail "
-      "order");
+      "order or consumed hardware time outside the fixed 20 Hz boundary");
   vm.clearHostCalls();
 
   outer_profile.display_flags = 0x8003021cU;
@@ -5298,6 +5339,7 @@ void testLegacyGameplayVmBoundary() {
                                   mission_bridge_profile.text_object_stride;
   const auto timer_text_object = mission_bridge_profile.text_object_pool +
                                  mission_bridge_profile.text_object_stride * 2U;
+  constexpr std::uint32_t pickup_text_address = 0x80010b00U;
   const auto write_guest_string = [&vm](std::uint32_t address,
                                         std::string_view text) noexcept {
     for (std::size_t index = 0U; index < text.size(); ++index) {
@@ -5325,6 +5367,18 @@ void testLegacyGameplayVmBoundary() {
                                    parameter_texts[index]),
             "Could not seed retail parameter text table");
   }
+  vm.bindSyphonFilterUsaV11GameplayTextHooks(text_hook_profile);
+  vm.clearUiMessages();
+  require(write_guest_text(pickup_text_address, "9mm taken") &&
+              vm.invoke(status_text_hook, std::array{pickup_text_address, 41U})
+                  .completed(),
+          "Could not observe the retail pickup-notification source");
+  const auto pickup_source_snapshot = vm.captureSnapshot();
+  require(pickup_source_snapshot.ui_messages.size() == 1U &&
+              pickup_source_snapshot.ui_messages[0].channel ==
+                  sf::game::LegacyUiMessageChannel::status &&
+              pickup_source_snapshot.ui_messages[0].text == "9mm taken",
+          "Retail pickup-notification source was not retained");
   require(
       vm.runtime().write32(mission_bridge_profile.mission_progress_pointer,
                            mission_progress) &&
@@ -5373,6 +5427,8 @@ void testLegacyGameplayVmBoundary() {
           vm.runtime().write32(status_text_object,
                                mission_bridge_profile.message_glyph_pool) &&
           vm.runtime().write16(status_text_object + 0x0cU, 2U) &&
+          // Additive checksum of the source string "9mm taken".
+          vm.runtime().write8(status_text_object + 0x15U, 70U) &&
           vm.runtime().write32(status_text_object + 0x18U, 0U) &&
           vm.runtime().write16(mission_bridge_profile.message_glyph_pool + 4U,
                                static_cast<std::uint16_t>(-17)) &&
@@ -5463,6 +5519,42 @@ void testLegacyGameplayVmBoundary() {
   }
   const auto failed_before_transition =
       vm.readMissionBridgeState(mission_bridge_profile);
+  require(failed_before_transition &&
+              failed_before_transition->messages.size() == 1U &&
+              failed_before_transition->messages[0].text == "9mm taken",
+          "Retail pickup-notification text was not associated with its glyphs");
+  vm.clearUiMessages();
+  const auto persistent_pickup =
+      vm.readMissionBridgeState(mission_bridge_profile);
+  require(
+      persistent_pickup && persistent_pickup->messages.size() == 1U &&
+          persistent_pickup->messages[0].text == "9mm taken",
+      "Retail pickup-notification source did not survive its creation frame");
+  constexpr std::uint32_t colliding_status_text_address = 0x80010b00U;
+  require(write_guest_text(colliding_status_text_address, "New prompt :") &&
+              vm.invoke(status_text_hook,
+                        std::array{colliding_status_text_address, 41U})
+                  .completed(),
+          "Could not submit the colliding retail status source");
+  const auto collision_replacement =
+      vm.readMissionBridgeState(mission_bridge_profile);
+  require(collision_replacement &&
+              collision_replacement->messages.size() == 1U &&
+              collision_replacement->messages[0].text == "New prompt :",
+          "A stale equal-checksum source replaced the current status text");
+  vm.clearUiMessages();
+  require(write_guest_text(colliding_status_text_address, "9mm taken") &&
+              vm.invoke(status_text_hook,
+                        std::array{colliding_status_text_address, 41U})
+                  .completed(),
+          "Could not resubmit the pickup source after the collision probe");
+  const auto restored_pickup_source =
+      vm.readMissionBridgeState(mission_bridge_profile);
+  require(restored_pickup_source &&
+              restored_pickup_source->messages.size() == 1U &&
+              restored_pickup_source->messages[0].text == "9mm taken",
+          "Could not restore the pickup source after the collision probe");
+  vm.clearUiMessages();
   require(
       failed_before_transition && failed_before_transition->failure &&
           failed_before_transition->terminal &&
@@ -5486,6 +5578,7 @@ void testLegacyGameplayVmBoundary() {
           failed_before_transition->messages.size() == 1U &&
           failed_before_transition->messages[0].channel ==
               sf::game::LegacyUiMessageChannel::status &&
+          failed_before_transition->messages[0].text == "9mm taken" &&
           failed_before_transition->messages[0].glyphs.size() == 2U &&
           failed_before_transition->messages[0].glyphs[0].x == -17 &&
           failed_before_transition->messages[0].glyphs[0].color ==

@@ -114,7 +114,11 @@ public:
   static constexpr std::uint32_t register_span = 0x260U;
   static constexpr std::uint32_t cpu_clock_hz = 33'868'800U;
   static constexpr std::uint32_t sample_rate = 44'100U;
-  static constexpr std::size_t pcm_queue_capacity = 16384U;
+  // Guest streaming/loading can complete a long CPU slice before the host
+  // presentation thread pumps audio. Keep the same two-second safety window
+  // used by mature PSX audio pipelines so that slice cannot overwrite the
+  // beginning of the already-mixed waveform.
+  static constexpr std::size_t pcm_queue_capacity = sample_rate * 2U;
 
   Spu();
   Spu(const Spu &) = delete;
@@ -225,7 +229,7 @@ private:
   // Keep the device small enough to coexist with one inline snapshot on the
   // default Windows thread stack. The snapshot itself remains pointer-free.
   std::unique_ptr<SpuState> state_;
-  std::array<SpuPcmFrame, pcm_queue_capacity> pcm_queue_{};
+  std::unique_ptr<std::array<SpuPcmFrame, pcm_queue_capacity>> pcm_queue_;
   std::size_t pcm_read_position_{};
   std::size_t pcm_write_position_{};
   std::size_t pcm_frame_count_{};

@@ -1,8 +1,8 @@
 #include "PsyX_main.h"
 
-#include "PsyX/PsyX_version.h"
 #include "PsyX/PsyX_globals.h"
 #include "PsyX/PsyX_public.h"
+#include "PsyX/PsyX_version.h"
 #include "PsyX/util/timer.h"
 
 #include "gpu/PsyX_GPU.h"
@@ -12,15 +12,15 @@
 #include "util/crash_handler.h"
 
 #include "psx/libetc.h"
-#include "psx/libgte.h"
 #include "psx/libgpu.h"
+#include "psx/libgte.h"
 #include "psx/libspu.h"
 
 #include <assert.h>
 #include <string.h>
 
-#include <stdio.h>
 #include <SDL.h>
+#include <stdio.h>
 
 #include "PsyX/PsyX_render.h"
 
@@ -31,8 +31,9 @@
 #ifdef __EMSCRIPTEN__
 int strcasecmp(const char* _l, const char* _r)
 {
-	const u_char* l = (u_char*)_l, * r = (u_char*)_r;
-	for (; *l && *r && (*l == *r || tolower(*l) == tolower(*r)); l++, r++);
+	const u_char *l = (u_char*)_l, *r = (u_char*)_r;
+	for (; *l && *r && (*l == *r || tolower(*l) == tolower(*r)); l++, r++)
+		;
 	return tolower(*l) - tolower(*r);
 }
 #elif !defined(_WIN32)
@@ -43,18 +44,76 @@ SDL_Window* g_window = NULL;
 int g_swapInterval = 1;
 int g_enableSwapInterval = 1;
 int g_skipSwapInterval = 0;
+int g_frameLimit = 0;
 timerCtx_t g_vblTimer;
 
-int							g_cfg_swapInterval = 0;
-int							g_cfg_framebufferFeedback = 1;
-int							g_cfg_vblankThread = 1;
-PsyXKeyboardMapping			g_cfg_keyboardMapping;
-PsyXControllerMapping		g_cfg_controllerMapping;
-GameOnTextInputHandler		g_cfg_gameOnTextInput = NULL;
+static Uint64 g_frameLimitFrequency = 0;
+static Uint64 g_frameLimitBaseInterval = 0;
+static Uint64 g_frameLimitRemainder = 0;
+static Uint64 g_frameLimitRemainderAccumulator = 0;
+static Uint64 g_frameLimitNextCounter = 0;
 
-GameDebugKeysHandlerFunc	g_dbg_gameDebugKeys = NULL;
-GameDebugMouseHandlerFunc	g_dbg_gameDebugMouse = NULL;
-int							g_dbg_polygonSelected = 0;
+static Uint64 PsyX_NextFrameLimitInterval()
+{
+	if (g_frameLimit <= 0 || g_frameLimitFrequency == 0)
+		return 0;
+
+	Uint64 interval = g_frameLimitBaseInterval;
+	g_frameLimitRemainderAccumulator += g_frameLimitRemainder;
+	if (g_frameLimitRemainderAccumulator >= (Uint64)g_frameLimit)
+	{
+		g_frameLimitRemainderAccumulator -= (Uint64)g_frameLimit;
+		interval++;
+	}
+	return interval;
+}
+
+static void PsyX_PaceCompletedFrame()
+{
+	if (g_frameLimit <= 0 || g_frameLimitFrequency == 0)
+		return;
+
+	Uint64 now = SDL_GetPerformanceCounter();
+	if (g_frameLimitNextCounter == 0)
+	{
+		g_frameLimitNextCounter = now + PsyX_NextFrameLimitInterval();
+		return;
+	}
+
+	const Uint64 maximumLateness = g_frameLimitBaseInterval * 4;
+	if (now > g_frameLimitNextCounter &&
+		now - g_frameLimitNextCounter > maximumLateness)
+	{
+		g_frameLimitRemainderAccumulator = 0;
+		g_frameLimitNextCounter = now + PsyX_NextFrameLimitInterval();
+		return;
+	}
+
+	while (now < g_frameLimitNextCounter)
+	{
+		const Uint64 remaining = g_frameLimitNextCounter - now;
+		const Uint64 remainingMilliseconds =
+			remaining * 1000 / g_frameLimitFrequency;
+		if (remainingMilliseconds > 1)
+			SDL_Delay((Uint32)(remainingMilliseconds - 1));
+		else if (remaining > g_frameLimitFrequency / 2000)
+			SDL_Delay(0);
+		now = SDL_GetPerformanceCounter();
+	}
+
+	g_frameLimitNextCounter += PsyX_NextFrameLimitInterval();
+}
+
+int g_cfg_swapInterval = 0;
+int g_cfg_framebufferFeedback = 1;
+int g_cfg_vblankThread = 1;
+PsyXKeyboardMapping g_cfg_keyboardMapping;
+PsyXControllerMapping g_cfg_controllerMapping;
+GameOnTextInputHandler g_cfg_gameOnTextInput = NULL;
+
+GameDebugKeysHandlerFunc g_dbg_gameDebugKeys = NULL;
+GameDebugMouseHandlerFunc g_dbg_gameDebugMouse = NULL;
+int g_dbg_polygonSelected = 0;
 
 enum EPsxCounters
 {
@@ -69,22 +128,26 @@ SDL_Thread* g_intrThread = NULL;
 SDL_mutex* g_intrMutex = NULL;
 volatile char g_stopIntrThread = 0;
 
-#if defined(_LANGUAGE_C_PLUS_PLUS)||defined(__cplusplus)||defined(c_plusplus)
-extern "C" {
+#if defined(_LANGUAGE_C_PLUS_PLUS) || defined(__cplusplus) || \
+	defined(c_plusplus)
+extern "C"
+{
 #endif
 
-extern void(*vsync_callback)(void);
+	extern void (*vsync_callback)(void);
 
-#if defined(_LANGUAGE_C_PLUS_PLUS)||defined(__cplusplus)||defined(c_plusplus)
+#if defined(_LANGUAGE_C_PLUS_PLUS) || defined(__cplusplus) || \
+	defined(c_plusplus)
 }
 #endif
 
-extern int	PsyX_Pad_InitSystem();
+extern int PsyX_Pad_InitSystem();
 extern void PsyX_Pad_Event_ControllerRemoved(Sint32 deviceId);
 extern void PsyX_Pad_Event_ControllerAdded(Sint32 deviceId);
 
-extern int	GR_InitialisePSX();
-extern int	GR_InitialiseRender(char* windowName, int width, int height, int fullscreen);
+extern int GR_InitialisePSX();
+extern int GR_InitialiseRender(char* windowName, int width, int height,
+							   int fullscreen);
 
 extern void GR_ResetDevice();
 extern void GR_Shutdown();
@@ -103,7 +166,8 @@ double g_emOldDate = 0;
 
 void emIntrCallback(void* userData)
 {
-	double timestep = g_vmode == MODE_NTSC ? FIXED_TIME_STEP_NTSC : FIXED_TIME_STEP_PAL;
+	double timestep =
+		g_vmode == MODE_NTSC ? FIXED_TIME_STEP_NTSC : FIXED_TIME_STEP_PAL;
 
 	int newVBlank = (Util_GetHPCTime(&g_vblTimer, 0) / timestep) + g_frameSkip;
 
@@ -134,7 +198,7 @@ int PsyX_Sys_SetVMode(int mode)
 #ifdef __EMSCRIPTEN__
 	if (old != g_vmode)
 	{
-		//if(g_emIntrInterval != -1)
+		// if(g_emIntrInterval != -1)
 		//	emscripten_clear_interval(g_emIntrInterval);
 		g_stopIntrThread = 1;
 
@@ -157,7 +221,7 @@ int PsyX_Sys_GetVBlankCount()
 		g_psxSysCounters[PsxCounter_VBLANK] += 1;
 		g_frameSkip++;
 	}
-	
+
 	return g_psxSysCounters[PsxCounter_VBLANK];
 }
 
@@ -169,21 +233,22 @@ int intrThreadMain(void* data)
 	{
 		// step counters
 		{
-			const double timestep = g_vmode == MODE_NTSC ? FIXED_TIME_STEP_NTSC : FIXED_TIME_STEP_PAL;
+			const double timestep =
+				g_vmode == MODE_NTSC ? FIXED_TIME_STEP_NTSC : FIXED_TIME_STEP_PAL;
 			const double vblDelta = Util_GetHPCTime(&g_vblTimer, 0);
 
 			if (vblDelta > timestep)
 			{
 				SDL_LockMutex(g_intrMutex);
-				
+
 				if (vsync_callback)
 					vsync_callback();
-				
+
 				SDL_UnlockMutex(g_intrMutex);
-				
+
 				// do vblank events
 				g_psxSysCounters[PsxCounter_VBLANK]++;
-			
+
 				Util_GetHPCTime(&g_vblTimer, 1);
 			}
 
@@ -255,11 +320,13 @@ static void PsyX_Sys_InitialiseInput()
 	g_cfg_controllerMapping.gc_cross = SDL_CONTROLLER_BUTTON_A;
 
 	g_cfg_controllerMapping.gc_l1 = SDL_CONTROLLER_BUTTON_LEFTSHOULDER;
-	g_cfg_controllerMapping.gc_l2 = SDL_CONTROLLER_AXIS_TRIGGERLEFT | CONTROLLER_MAP_FLAG_AXIS;
+	g_cfg_controllerMapping.gc_l2 =
+		SDL_CONTROLLER_AXIS_TRIGGERLEFT | CONTROLLER_MAP_FLAG_AXIS;
 	g_cfg_controllerMapping.gc_l3 = SDL_CONTROLLER_BUTTON_LEFTSTICK;
 
 	g_cfg_controllerMapping.gc_r1 = SDL_CONTROLLER_BUTTON_RIGHTSHOULDER;
-	g_cfg_controllerMapping.gc_r2 = SDL_CONTROLLER_AXIS_TRIGGERRIGHT | CONTROLLER_MAP_FLAG_AXIS;
+	g_cfg_controllerMapping.gc_r2 =
+		SDL_CONTROLLER_AXIS_TRIGGERRIGHT | CONTROLLER_MAP_FLAG_AXIS;
 	g_cfg_controllerMapping.gc_r3 = SDL_CONTROLLER_BUTTON_RIGHTSTICK;
 
 	g_cfg_controllerMapping.gc_dpad_up = SDL_CONTROLLER_BUTTON_DPAD_UP;
@@ -270,10 +337,14 @@ static void PsyX_Sys_InitialiseInput()
 	g_cfg_controllerMapping.gc_select = SDL_CONTROLLER_BUTTON_BACK;
 	g_cfg_controllerMapping.gc_start = SDL_CONTROLLER_BUTTON_START;
 
-	g_cfg_controllerMapping.gc_axis_left_x = SDL_CONTROLLER_AXIS_LEFTX | CONTROLLER_MAP_FLAG_AXIS;
-	g_cfg_controllerMapping.gc_axis_left_y = SDL_CONTROLLER_AXIS_LEFTY | CONTROLLER_MAP_FLAG_AXIS;
-	g_cfg_controllerMapping.gc_axis_right_x = SDL_CONTROLLER_AXIS_RIGHTX | CONTROLLER_MAP_FLAG_AXIS;
-	g_cfg_controllerMapping.gc_axis_right_y = SDL_CONTROLLER_AXIS_RIGHTY | CONTROLLER_MAP_FLAG_AXIS;
+	g_cfg_controllerMapping.gc_axis_left_x =
+		SDL_CONTROLLER_AXIS_LEFTX | CONTROLLER_MAP_FLAG_AXIS;
+	g_cfg_controllerMapping.gc_axis_left_y =
+		SDL_CONTROLLER_AXIS_LEFTY | CONTROLLER_MAP_FLAG_AXIS;
+	g_cfg_controllerMapping.gc_axis_right_x =
+		SDL_CONTROLLER_AXIS_RIGHTX | CONTROLLER_MAP_FLAG_AXIS;
+	g_cfg_controllerMapping.gc_axis_right_y =
+		SDL_CONTROLLER_AXIS_RIGHTY | CONTROLLER_MAP_FLAG_AXIS;
 
 	PsyX_Pad_InitSystem();
 }
@@ -315,7 +386,8 @@ int PsyX_LookupKeyboardMapping(const char* str, int default_value)
 //	rightx righty
 //	lefttrigger righttrigger
 //
-// NOTE: adding `-` before axis names makes it inverse, so `-leftx` inverse left stick X axis
+// NOTE: adding `-` before axis names makes it inverse, so `-leftx` inverse left
+// stick X axis
 //
 // Buttons:
 // 	a, b, x, y
@@ -347,7 +419,8 @@ int PsyX_LookupGameControllerMapping(const char* str, int default_value)
 		// check buttons
 		for (i = 0; i < SDL_CONTROLLER_BUTTON_MAX; i++)
 		{
-			buttonOrAxisName = SDL_GameControllerGetStringForButton((SDL_GameControllerButton)i);
+			buttonOrAxisName =
+				SDL_GameControllerGetStringForButton((SDL_GameControllerButton)i);
 
 			if (strlen(buttonOrAxisName) && !_stricmp(buttonOrAxisName, str))
 			{
@@ -358,7 +431,8 @@ int PsyX_LookupGameControllerMapping(const char* str, int default_value)
 		// Check axes
 		for (i = 0; i < SDL_CONTROLLER_AXIS_MAX; i++)
 		{
-			buttonOrAxisName = SDL_GameControllerGetStringForAxis((SDL_GameControllerAxis)i);
+			buttonOrAxisName =
+				SDL_GameControllerGetStringForAxis((SDL_GameControllerAxis)i);
 
 			if (strlen(buttonOrAxisName) && !_stricmp(buttonOrAxisName, axisStr))
 			{
@@ -419,7 +493,7 @@ typedef enum
 	SPEW_WARNING,
 	SPEW_ERROR,
 	SPEW_SUCCESS,
-}SpewType_t;
+} SpewType_t;
 
 #ifdef _WIN32
 static unsigned short g_InitialColor = 0xFFFF;
@@ -434,8 +508,12 @@ static void Spew_GetInitialColors()
 	// Get the old background attributes.
 	CONSOLE_SCREEN_BUFFER_INFO oldInfo;
 	GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &oldInfo);
-	g_InitialColor = g_LastColor = oldInfo.wAttributes & (FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE | FOREGROUND_INTENSITY);
-	g_BackgroundFlags = oldInfo.wAttributes & (BACKGROUND_RED | BACKGROUND_GREEN | BACKGROUND_BLUE | BACKGROUND_INTENSITY);
+	g_InitialColor = g_LastColor =
+		oldInfo.wAttributes & (FOREGROUND_RED | FOREGROUND_GREEN |
+							   FOREGROUND_BLUE | FOREGROUND_INTENSITY);
+	g_BackgroundFlags =
+		oldInfo.wAttributes & (BACKGROUND_RED | BACKGROUND_GREEN |
+							   BACKGROUND_BLUE | BACKGROUND_INTENSITY);
 
 	g_BadColor = 0;
 	if (g_BackgroundFlags & BACKGROUND_RED)
@@ -448,27 +526,34 @@ static void Spew_GetInitialColors()
 		g_BadColor |= FOREGROUND_INTENSITY;
 }
 
-static WORD Spew_SetConsoleTextColor(int red, int green, int blue, int intensity)
+static WORD Spew_SetConsoleTextColor(int red, int green, int blue,
+									 int intensity)
 {
 	WORD ret = g_LastColor;
 
 	g_LastColor = 0;
-	if (red)	g_LastColor |= FOREGROUND_RED;
-	if (green) g_LastColor |= FOREGROUND_GREEN;
-	if (blue)  g_LastColor |= FOREGROUND_BLUE;
-	if (intensity) g_LastColor |= FOREGROUND_INTENSITY;
+	if (red)
+		g_LastColor |= FOREGROUND_RED;
+	if (green)
+		g_LastColor |= FOREGROUND_GREEN;
+	if (blue)
+		g_LastColor |= FOREGROUND_BLUE;
+	if (intensity)
+		g_LastColor |= FOREGROUND_INTENSITY;
 
 	// Just use the initial color if there's a match...
 	if (g_LastColor == g_BadColor)
 		g_LastColor = g_InitialColor;
 
-	SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), g_LastColor | g_BackgroundFlags);
+	SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE),
+							g_LastColor | g_BackgroundFlags);
 	return ret;
 }
 
 static void Spew_RestoreConsoleTextColor(WORD color)
 {
-	SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), color | g_BackgroundFlags);
+	SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE),
+							color | g_BackgroundFlags);
 	g_LastColor = color;
 }
 
@@ -519,7 +604,8 @@ void Spew_ConDebugSpew(SpewType_t type, char* text)
 }
 #endif
 
-void PrintMessageToOutput(SpewType_t spewtype, char const* pMsgFormat, va_list args)
+void PrintMessageToOutput(SpewType_t spewtype, char const* pMsgFormat,
+						  va_list args)
 {
 	static char pTempBuffer[4096];
 	int len = 0;
@@ -530,39 +616,31 @@ void PrintMessageToOutput(SpewType_t spewtype, char const* pMsgFormat, va_list a
 #elif defined(__EMSCRIPTEN__)
 	if (spewtype == SPEW_INFO)
 	{
-		EM_ASM({
-			console.info(UTF8ToString($0));
-		}, pTempBuffer);
+		EM_ASM({ console.info(UTF8ToString($0)); }, pTempBuffer);
 	}
 	else if (spewtype == SPEW_WARNING)
 	{
-		EM_ASM({
-			console.warn(UTF8ToString($0));
-		}, pTempBuffer);
+		EM_ASM({ console.warn(UTF8ToString($0)); }, pTempBuffer);
 	}
 	else if (spewtype == SPEW_ERROR)
 	{
-		EM_ASM({
-			console.error(UTF8ToString($0));
-		}, pTempBuffer);
+		EM_ASM({ console.error(UTF8ToString($0)); }, pTempBuffer);
 	}
 	else
 	{
-		EM_ASM({
-			console.log(UTF8ToString($0));
-		}, pTempBuffer);
+		EM_ASM({ console.log(UTF8ToString($0)); }, pTempBuffer);
 	}
 #else
 	printf(pTempBuffer);
 #endif
 
-	if(g_logStream)
+	if (g_logStream)
 		fprintf(g_logStream, pTempBuffer);
 }
 
 void PsyX_Log(const char* fmt, ...)
 {
-	va_list		argptr;
+	va_list argptr;
 
 	va_start(argptr, fmt);
 	PrintMessageToOutput(SPEW_NORM, fmt, argptr);
@@ -571,7 +649,7 @@ void PsyX_Log(const char* fmt, ...)
 
 void PsyX_Log_Info(const char* fmt, ...)
 {
-	va_list		argptr;
+	va_list argptr;
 
 	va_start(argptr, fmt);
 	PrintMessageToOutput(SPEW_INFO, fmt, argptr);
@@ -580,7 +658,7 @@ void PsyX_Log_Info(const char* fmt, ...)
 
 void PsyX_Log_Warning(const char* fmt, ...)
 {
-	va_list		argptr;
+	va_list argptr;
 
 	va_start(argptr, fmt);
 	PrintMessageToOutput(SPEW_WARNING, fmt, argptr);
@@ -589,7 +667,7 @@ void PsyX_Log_Warning(const char* fmt, ...)
 
 void PsyX_Log_Error(const char* fmt, ...)
 {
-	va_list		argptr;
+	va_list argptr;
 
 	va_start(argptr, fmt);
 	PrintMessageToOutput(SPEW_ERROR, fmt, argptr);
@@ -598,13 +676,12 @@ void PsyX_Log_Error(const char* fmt, ...)
 
 void PsyX_Log_Success(const char* fmt, ...)
 {
-	va_list		argptr;
+	va_list argptr;
 
 	va_start(argptr, fmt);
 	PrintMessageToOutput(SPEW_SUCCESS, fmt, argptr);
 	va_end(argptr);
 }
-
 
 void PsyX_Initialise(char* appName, int width, int height, int fullscreen)
 {
@@ -622,24 +699,27 @@ void PsyX_Initialise(char* appName, int width, int height, int fullscreen)
 	{
 		freopen("CONOUT$", "w", stdout);
 		SetConsoleTitleA(windowNameStr);
-		SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), FOREGROUND_GREEN | FOREGROUND_BLUE | FOREGROUND_RED);
+		SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE),
+								FOREGROUND_GREEN | FOREGROUND_BLUE |
+									FOREGROUND_RED);
 	}
 #endif
 
-	eprintinfo("Initialising Psy-X %d.%d\n", PSYX_MAJOR_VERSION, PSYX_MINOR_VERSION);
+	eprintinfo("Initialising Psy-X %d.%d\n", PSYX_MAJOR_VERSION,
+			   PSYX_MINOR_VERSION);
 	eprintinfo("Build date: %s:%s\n", PSYX_COMPILE_DATE, PSYX_COMPILE_TIME);
 
 #if defined(__EMSCRIPTEN__)
 	SDL_SetHint(SDL_HINT_EMSCRIPTEN_ASYNCIFY, "0");
 #endif
-	
+
 	if (SDL_Init(SDL_INIT_VIDEO) != 0)
 	{
 		eprinterr("Failed to initialise SDL\n");
 		PsyX_Shutdown();
 		return;
 	}
-	
+
 	if (!GR_InitialiseRender(windowNameStr, width, height, fullscreen))
 	{
 		eprinterr("Failed to Intialise Window\n");
@@ -700,77 +780,81 @@ void PsyX_Sys_DoPollEvent()
 	{
 		switch (event.type)
 		{
-			case SDL_CONTROLLERDEVICEADDED:
-				PsyX_Pad_Event_ControllerAdded(event.cdevice.which);
+		case SDL_CONTROLLERDEVICEADDED:
+			PsyX_Pad_Event_ControllerAdded(event.cdevice.which);
+			break;
+		case SDL_CONTROLLERDEVICEREMOVED:
+			PsyX_Pad_Event_ControllerRemoved(event.cdevice.which);
+			break;
+		case SDL_QUIT:
+			PsyX_Exit();
+			break;
+		case SDL_WINDOWEVENT:
+			switch (event.window.event)
+			{
+			case SDL_WINDOWEVENT_RESIZED:
+				g_windowWidth = event.window.data1;
+				g_windowHeight = event.window.data2;
+				GR_ResetDevice();
 				break;
-			case SDL_CONTROLLERDEVICEREMOVED:
-				PsyX_Pad_Event_ControllerRemoved(event.cdevice.which);
-				break;
-			case SDL_QUIT:
+			case SDL_WINDOWEVENT_CLOSE:
 				PsyX_Exit();
 				break;
-			case SDL_WINDOWEVENT:
-				switch (event.window.event)
-				{
-				case SDL_WINDOWEVENT_RESIZED:
-					g_windowWidth = event.window.data1;
-					g_windowHeight = event.window.data2;
-					GR_ResetDevice();
-					break;
-				case SDL_WINDOWEVENT_CLOSE:
-					PsyX_Exit();
-					break;
-				}
-				break;
-			case SDL_MOUSEMOTION:
+			}
+			break;
+		case SDL_MOUSEMOTION:
 
-				PsyX_Sys_DoDebugMouseMotion(event.motion.x, event.motion.y, event.motion.xrel, event.motion.yrel);
-				break;
-			case SDL_KEYDOWN:
-			case SDL_KEYUP:
+			PsyX_Sys_DoDebugMouseMotion(event.motion.x, event.motion.y,
+										event.motion.xrel, event.motion.yrel);
+			break;
+		case SDL_KEYDOWN:
+		case SDL_KEYUP:
+		{
+			int nKey = event.key.keysym.scancode;
+
+			if (nKey == SDL_SCANCODE_RALT)
 			{
-				int nKey = event.key.keysym.scancode;
-
-				if (nKey == SDL_SCANCODE_RALT)
+				g_altKeyState = (event.type == SDL_KEYDOWN);
+			}
+			else if (nKey == SDL_SCANCODE_RETURN)
+			{
+				if (g_altKeyState && event.type == SDL_KEYDOWN)
 				{
-					g_altKeyState = (event.type == SDL_KEYDOWN);
+					int fullscreen =
+						SDL_GetWindowFlags(g_window) & SDL_WINDOW_FULLSCREEN > 0;
+
+					SDL_SetWindowFullscreen(
+						g_window, fullscreen ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP);
+
+					SDL_GetWindowSize(g_window, &g_windowWidth, &g_windowHeight);
+					GR_ResetDevice();
 				}
-				else if (nKey == SDL_SCANCODE_RETURN)
-				{
-					if (g_altKeyState && event.type == SDL_KEYDOWN)
-					{
-						int fullscreen = SDL_GetWindowFlags(g_window) & SDL_WINDOW_FULLSCREEN > 0;
-
-						SDL_SetWindowFullscreen(g_window, fullscreen ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP);
-
-						SDL_GetWindowSize(g_window, &g_windowWidth, &g_windowHeight);
-						GR_ResetDevice();
-					}
-					break;
-				}
-
-				// lshift/right shift
-				if (nKey == SDL_SCANCODE_RSHIFT)
-					nKey = SDL_SCANCODE_LSHIFT;
-				else if (nKey == SDL_SCANCODE_RCTRL)
-					nKey = SDL_SCANCODE_LCTRL;
-				else if (nKey == SDL_SCANCODE_RALT)
-					nKey = SDL_SCANCODE_LALT;
-
-				if (g_cfg_gameOnTextInput && nKey == SDL_SCANCODE_BACKSPACE && event.type == SDL_KEYDOWN)
-				{
-					(g_cfg_gameOnTextInput)(NULL);
-				}
-
-				PsyX_Sys_DoDebugKeys(nKey, (event.type == SDL_KEYUP) ? 0 : 1);
 				break;
 			}
-			case SDL_TEXTINPUT:
+
+			// lshift/right shift
+			if (nKey == SDL_SCANCODE_RSHIFT)
+				nKey = SDL_SCANCODE_LSHIFT;
+			else if (nKey == SDL_SCANCODE_RCTRL)
+				nKey = SDL_SCANCODE_LCTRL;
+			else if (nKey == SDL_SCANCODE_RALT)
+				nKey = SDL_SCANCODE_LALT;
+
+			if (g_cfg_gameOnTextInput && nKey == SDL_SCANCODE_BACKSPACE &&
+				event.type == SDL_KEYDOWN)
 			{
-				if(g_cfg_gameOnTextInput)
-					(g_cfg_gameOnTextInput)(event.text.text);
-				break;
-			}			
+				(g_cfg_gameOnTextInput)(NULL);
+			}
+
+			PsyX_Sys_DoDebugKeys(nKey, (event.type == SDL_KEYUP) ? 0 : 1);
+			break;
+		}
+		case SDL_TEXTINPUT:
+		{
+			if (g_cfg_gameOnTextInput)
+				(g_cfg_gameOnTextInput)(event.text.text);
+			break;
+		}
 		}
 	}
 }
@@ -787,10 +871,13 @@ char PsyX_BeginScene()
 	assert(!begin_scene_flag);
 
 	{
-		int swapInterval = (g_cfg_swapInterval && g_enableSwapInterval && !g_skipSwapInterval) ? g_swapInterval : 0;
+		int swapInterval =
+			(g_cfg_swapInterval && g_enableSwapInterval && !g_skipSwapInterval)
+				? g_swapInterval
+				: 0;
 
-		// Maximum is (ScreenRefreshRate / 2). 
-		// If our screen refresh rate is lower than our PSX vmode refresh rate, 
+		// Maximum is (ScreenRefreshRate / 2).
+		// If our screen refresh rate is lower than our PSX vmode refresh rate,
 		// we reducing swap interval to maintain the framerate.
 		// Example:
 		//		target 60fps, 50hz screen = no interval (tearing)
@@ -800,14 +887,15 @@ char PsyX_BeginScene()
 		if (g_cfg_vblankThread &&
 			SDL_GetWindowDisplayMode(g_window, &curMode) == 0)
 		{
-			const int mode_frequency = g_vmode == MODE_NTSC ? VBLANK_FREQUENCY_NTSC : VBLANK_FREQUENCY_PAL;
+			const int mode_frequency =
+				g_vmode == MODE_NTSC ? VBLANK_FREQUENCY_NTSC : VBLANK_FREQUENCY_PAL;
 			if (curMode.refresh_rate < mode_frequency)
 				swapInterval--;
 		}
 
 		if (swapInterval < 0)
 			swapInterval = 0;
-		
+
 		GR_UpdateSwapIntervalState(swapInterval);
 	}
 
@@ -821,7 +909,7 @@ char PsyX_BeginScene()
 		const u_char b = activeDrawEnv.b0;
 
 		// TODO: clear all affected backbuffers
-		//GR_ClearVRAM(clipenv.x, clipenv.y, clipenv.w, clipenv.h, r, g, b);
+		// GR_ClearVRAM(clipenv.x, clipenv.y, clipenv.w, clipenv.h, r, g, b);
 		GR_Clear(clipenv.x, clipenv.y, clipenv.w, clipenv.h, r, g, b);
 	}
 
@@ -845,11 +933,13 @@ void PsyX_EndScene()
 #endif
 
 	GR_EndScene();
-	
+
 	if (g_cfg_framebufferFeedback)
-		GR_StoreFrameBuffer(activeDispEnv.disp.x, activeDispEnv.disp.y, activeDispEnv.disp.w, activeDispEnv.disp.h);
+		GR_StoreFrameBuffer(activeDispEnv.disp.x, activeDispEnv.disp.y,
+							activeDispEnv.disp.w, activeDispEnv.disp.h);
 
 	GR_SwapWindow();
+	PsyX_PaceCompletedFrame();
 }
 
 #if !defined(__EMSCRIPTEN__) && !defined(__ANDROID__)
@@ -862,15 +952,18 @@ void PsyX_TakeScreenshot()
 		return;
 
 	u_char* pixels = (u_char*)malloc(drawableWidth * drawableHeight * 4);
-	
+
 #if defined(RENDERER_OGL)
-	glReadPixels(0, 0, drawableWidth, drawableHeight, GL_BGRA, GL_UNSIGNED_BYTE, pixels);
+	glReadPixels(0, 0, drawableWidth, drawableHeight, GL_BGRA, GL_UNSIGNED_BYTE,
+				 pixels);
 #elif defined(RENDERER_OGLES)
-	glReadPixels(0, 0, drawableWidth, drawableHeight, GL_RGBA, GL_UNSIGNED_BYTE, pixels);	// FIXME: is that correct format?
+	glReadPixels(0, 0, drawableWidth, drawableHeight, GL_RGBA, GL_UNSIGNED_BYTE,
+				 pixels); // FIXME: is that correct format?
 #endif
 
-	SDL_Surface* surface = SDL_CreateRGBSurfaceFrom(pixels, drawableWidth, drawableHeight,
-		8 * 4, drawableWidth * 4, 0, 0, 0, 0);
+	SDL_Surface* surface =
+		SDL_CreateRGBSurfaceFrom(pixels, drawableWidth, drawableHeight, 8 * 4,
+								 drawableWidth * 4, 0, 0, 0, 0);
 
 	SDL_SaveBMP(surface, "SCREENSHOT.BMP");
 	SDL_FreeSurface(surface);
@@ -944,10 +1037,11 @@ void PsyX_Sys_DoDebugKeys(int nKey, char down)
 			if (g_activeKeyboardControllers == 0)
 				g_activeKeyboardControllers++;
 
-			eprintwarn("Active keyboard controller: %d\n", g_activeKeyboardControllers);
+			eprintwarn("Active keyboard controller: %d\n",
+					   g_activeKeyboardControllers);
 			break;
-		// Native PC geometry precision and depth are mandatory. Do not expose
-		// the old emulator toggles which reintroduce PS1 wobble and affine warp.
+			// Native PC geometry precision and depth are mandatory. Do not expose
+			// the old emulator toggles which reintroduce PS1 wobble and affine warp.
 		}
 	}
 }
@@ -957,7 +1051,7 @@ void PsyX_UpdateInput()
 	// also poll events here
 	PsyX_Sys_DoPollEvent();
 
-	if(!g_altKeyState)
+	if (!g_altKeyState)
 		PsyX_Pad_InternalPadUpdates();
 }
 
@@ -985,11 +1079,35 @@ unsigned int PsyX_CalcFPS()
 void PsyX_SetSwapInterval(int interval)
 {
 	g_swapInterval = interval;
+	PsyX_ResetFrameLimiter();
 }
 
 void PsyX_EnableSwapInterval(int enable)
 {
 	g_enableSwapInterval = enable;
+	PsyX_ResetFrameLimiter();
+}
+
+void PsyX_SetFrameLimit(int framesPerSecond)
+{
+	if (framesPerSecond < 0)
+		framesPerSecond = 0;
+	else if (framesPerSecond > 1000)
+		framesPerSecond = 1000;
+
+	g_frameLimit = framesPerSecond;
+	g_frameLimitFrequency = SDL_GetPerformanceFrequency();
+	g_frameLimitBaseInterval =
+		g_frameLimit > 0 ? g_frameLimitFrequency / (Uint64)g_frameLimit : 0;
+	g_frameLimitRemainder =
+		g_frameLimit > 0 ? g_frameLimitFrequency % (Uint64)g_frameLimit : 0;
+	PsyX_ResetFrameLimiter();
+}
+
+void PsyX_ResetFrameLimiter(void)
+{
+	g_frameLimitRemainderAccumulator = 0;
+	g_frameLimitNextCounter = 0;
 }
 
 void PsyX_WaitForTimestep(int count)
@@ -1003,7 +1121,7 @@ void PsyX_WaitForTimestep(int count)
 
 	// wait for vblank
 	if (!g_skipSwapInterval)
-	{	
+	{
 		static int swapLastVbl = 0;
 
 		int vbl;
@@ -1013,17 +1131,13 @@ void PsyX_WaitForTimestep(int count)
 			emscripten_sleep(0);
 #endif
 			vbl = PsyX_Sys_GetVBlankCount();
-		}
-		while (vbl - swapLastVbl < count);
+		} while (vbl - swapLastVbl < count);
 
 		swapLastVbl = PsyX_Sys_GetVBlankCount();
 	}
 }
 
-void PsyX_Exit()
-{
-	exit(0);
-}
+void PsyX_Exit() { exit(0); }
 
 void PsyX_Shutdown()
 {

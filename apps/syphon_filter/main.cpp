@@ -2,6 +2,7 @@
 
 #include "sf/core/error.hpp"
 #include "sf/game/game_disc.hpp"
+#include "sf/game/localization.hpp"
 #include "sf/game/mission.hpp"
 #include "sf/game/title.hpp"
 #include "sf/platform/host.hpp"
@@ -14,6 +15,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -71,8 +73,7 @@ parseLaunchRequest(const std::vector<std::string_view> &arguments) {
   }
 
   if (arguments[0] == "--game") {
-    return LaunchRequest{LaunchMode::game,
-                         std::filesystem::path{arguments[1]}};
+    return LaunchRequest{LaunchMode::game, std::filesystem::path{arguments[1]}};
   }
   if (arguments[0] == "--title-test") {
     return LaunchRequest{LaunchMode::title_test,
@@ -112,7 +113,9 @@ void printUsage() {
       << "Graphics options: --fullscreen --no-launcher "
          "--resolution=WIDTHxHEIGHT "
          "--msaa=0|2|4|8 --bilinear --nearest --anisotropic "
-         "--no-anisotropic --aspect-adaptive --aspect-4-3\n";
+         "--no-anisotropic --aspect-adaptive --aspect-4-3 "
+         "--vsync --no-vsync --fps-limit=0|20..1000\n";
+  std::cerr << "Language options: --language=en --language=ru\n";
 }
 
 } // namespace
@@ -122,7 +125,15 @@ int main(int argc, char **argv) {
     sf::platform::GraphicsSettings graphics;
     sf::platform::GameplayTestSettings gameplay_tests;
     auto input = sf::platform::defaultKeyboardMouseBindings();
-    sf::platform::loadLauncherSettings(graphics, input);
+    auto language = sf::game::GameLanguage::english;
+    std::error_code executable_path_error;
+    const auto executable_path = std::filesystem::absolute(
+        std::filesystem::path{argv[0]}, executable_path_error);
+    const auto executable_directory = executable_path_error
+                                          ? std::filesystem::current_path()
+                                          : executable_path.parent_path();
+    sf::game::setLocalizationRoot(executable_directory / "locales" / "ru-vit");
+    sf::platform::loadLauncherSettings(graphics, input, language);
     bool show_launcher = true;
     std::optional<std::uint32_t> requested_mission;
     std::vector<std::string_view> arguments;
@@ -145,6 +156,22 @@ int main(int argc, char **argv) {
         graphics.anisotropic_filtering = true;
       } else if (argument == "--no-anisotropic") {
         graphics.anisotropic_filtering = false;
+      } else if (argument == "--vsync") {
+        graphics.vsync = true;
+      } else if (argument == "--no-vsync") {
+        graphics.vsync = false;
+      } else if (argument.starts_with("--fps-limit=")) {
+        const auto limit = parseInteger(
+            argument.substr(std::string_view{"--fps-limit="}.size()));
+        if (!limit || (*limit != 0 && (*limit < 20 || *limit > 1000))) {
+          printUsage();
+          return 64;
+        }
+        graphics.frame_limit = static_cast<std::uint32_t>(*limit);
+      } else if (argument == "--language=en" || argument == "--locale=en") {
+        language = sf::game::GameLanguage::english;
+      } else if (argument == "--language=ru" || argument == "--locale=ru") {
+        language = sf::game::GameLanguage::russian_vit;
       } else if (argument == "--widescreen" || argument == "--aspect-auto" ||
                  argument == "--aspect-adaptive") {
         graphics.aspect_ratio = sf::platform::AspectRatioMode::adaptive;
@@ -233,11 +260,20 @@ int main(int argc, char **argv) {
     // therefore opt into those controls without making them public UI.
     const auto launcher_mission_selection = supports_mission_selection;
     auto cue_path = launch->cue_path;
-    if (show_launcher && !sf::platform::showGraphicsLauncher(
-                             graphics, input, gameplay_tests, cue_path,
-                             mission_index, launcher_mission_selection)) {
+    if (show_launcher &&
+        !sf::platform::showGraphicsLauncher(graphics, input, gameplay_tests,
+                                            language, cue_path, mission_index,
+                                            launcher_mission_selection)) {
       return 0;
     }
+    if (!sf::game::localizationPackAvailable(language)) {
+      const auto message =
+          "The selected Russian text pack is missing or incomplete.";
+      std::cerr << message << '\n';
+      sf::platform::showLauncherError("LANGUAGE PACK MISSING", message);
+      return 64;
+    }
+    sf::game::setGameLanguage(language);
     if (cue_path.empty()) {
       const auto message =
           "No game image was selected. Choose the CUE file from the original "
@@ -276,8 +312,8 @@ int main(int argc, char **argv) {
           development_alias ? "Syphon Filter PC - title test"
                             : "Syphon Filter PC",
           std::move(assets), std::move(movies), std::move(selected_mission),
-          std::move(mission_cue_path), std::move(supported_game_serial), graphics,
-          input, gameplay_tests);
+          std::move(mission_cue_path), std::move(supported_game_serial),
+          graphics, input, gameplay_tests);
     } else if (launch->mode == LaunchMode::scene_test) {
       const auto &definition = sf::game::missionDefinition(mission_index);
       std::cout << "Disc verified. Starting native scene test at mission "

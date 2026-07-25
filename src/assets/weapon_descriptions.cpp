@@ -129,6 +129,78 @@ WeaponDescriptionTable WeaponDescriptionTable::parse(std::span<const std::byte> 
     return WeaponDescriptionTable{std::move(entries)};
 }
 
+WeaponDescriptionTable WeaponDescriptionTable::parseRussianVit(
+    std::span<const std::byte> bytes) {
+    std::string text;
+    text.reserve(bytes.size());
+    for (const auto value : bytes) {
+        const auto character = std::to_integer<unsigned char>(value);
+        if (character == 0U) {
+            break;
+        }
+        text.push_back(static_cast<char>(character));
+    }
+
+    std::vector<WeaponDescription> entries;
+    std::vector<std::string> record;
+    const auto flush = [&] {
+        std::vector<std::string> lines;
+        for (const auto &candidate : record) {
+            const auto line = trim(candidate);
+            if (!line.empty()) {
+                lines.push_back(line);
+            }
+        }
+        if (!lines.empty()) {
+            WeaponDescription entry;
+            entry.name = lines.front();
+            // ViT translated the labels but retained the retail field order.
+            if (lines.size() > 1U) {
+                entry.fire_rate = romanRating(fieldValue(lines[1U]));
+            }
+            if (lines.size() > 2U) {
+                entry.damage = romanRating(fieldValue(lines[2U]));
+            }
+            if (lines.size() > 3U) {
+                entry.clip_size = fieldValue(lines[3U]);
+            }
+            if (lines.size() > 4U) {
+                entry.maximum_rounds = fieldValue(lines[4U]);
+            }
+            for (std::size_t index = 5U; index < lines.size(); ++index) {
+                if (!entry.description.empty()) {
+                    entry.description.push_back(' ');
+                }
+                entry.description += lines[index];
+            }
+            entries.push_back(std::move(entry));
+        }
+        record.clear();
+    };
+    std::size_t offset{};
+    while (offset <= text.size()) {
+        const auto end = text.find('\n', offset);
+        const auto line = trim(std::string_view{text}.substr(
+            offset, end == std::string::npos ? std::string::npos
+                                             : end - offset));
+        if (line == "*") {
+            flush();
+        } else {
+            record.push_back(line);
+        }
+        if (end == std::string::npos) {
+            break;
+        }
+        offset = end + 1U;
+    }
+    flush();
+    if (entries.empty()) {
+        throw core::Error{core::ErrorCode::invalid_format,
+                          "ViT WEAPDESC.TXT has no weapon records"};
+    }
+    return WeaponDescriptionTable{std::move(entries)};
+}
+
 const WeaponDescription* WeaponDescriptionTable::find(std::string_view name) const noexcept {
     const auto wanted = normalized(name);
     const auto match = std::ranges::find_if(entries_, [&](const WeaponDescription& entry) {

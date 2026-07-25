@@ -28,16 +28,16 @@ run the interactive game as part of automated packaging.
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File tools/package_windows_release.ps1 `
-  -Version 0.1.0-public-test.6 `
+  -Version 0.1.0-public-test.7 `
   -Configuration Release
 ```
 
 Expected outputs:
 
 ```text
-dist/SyphonFilterPC-0.1.0-public-test.6-win64/
-dist/SyphonFilterPC-0.1.0-public-test.6-win64.zip
-dist/SyphonFilterPC-0.1.0-public-test.6-win64.zip.sha256
+dist/SyphonFilterPC-0.1.0-public-test.7-win64/
+dist/SyphonFilterPC-0.1.0-public-test.7-win64.zip
+dist/SyphonFilterPC-0.1.0-public-test.7-win64.zip.sha256
 ```
 
 The script fails instead of overwriting any existing output.
@@ -46,6 +46,8 @@ The script fails instead of overwriting any existing output.
 
 - Verify the archive checksum and the internal `SHA256SUMS.txt`.
 - Verify the packaged executable hash matches the built executable.
+- Verify `locales/ru-vit` contains the manifest, briefings, mission tables,
+  weapon descriptions, all three font sheets and the localized map/title data.
 - Verify all four `assets/dossiers/screens/dossier_*.png` pages are present.
 - Verify the archive contains no `syphon_filter_cheats`, save, BIN, CUE, CMD,
   log, dump, PDB, LIB or EXP file.

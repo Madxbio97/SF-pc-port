@@ -68,6 +68,14 @@ GPUDrawSplit g_splits[MAX_DRAW_SPLITS];
 int g_vertexIndex = 0;
 int g_splitIndex  = 0;
 
+// DuckStation's PGXP depth path clears depth when painter order jumps back to
+// substantially farther geometry. PS1 ordering tables allow that jump; a
+// persistent PC depth buffer otherwise cuts camera-dependent triangles out of
+// later transparent surfaces. PGXP Z is in native GTE camera-depth units.
+static const float PGXP_DEPTH_CLEAR_THRESHOLD = 4096.0f;
+static const float PGXP_MAX_DEPTH = 65536.0f;
+static float g_lastPolygonDepth = PGXP_MAX_DEPTH;
+
 void ClearSplits()
 {
 	currentSplitDebugText = nullptr;
@@ -866,20 +874,54 @@ void DrawSplit(const GPUDrawSplit& split)
 	GR_SetOffscreenState(&split.drawenv.clip, !drawOnScreen);
 
 	GR_SetBlendMode(split.blendMode);
-	// Opaque world primitives populate depth. Transparent world primitives keep
-	// their painter/blend order, test against that depth, and never overwrite it.
-	// Callers disable the requested depth mode for UI and other screen geometry.
-	if(g_RequestedDepthMode)
-		GR_SetDepthState(1, split.blendMode == BM_NONE ? 1 : 0);
-	else
-		GR_SetDepthState(0, 0);
-	const bool transparentWorld =
-		g_RequestedDepthMode && split.blendMode != BM_NONE;
-	// Reversed depth grows towards the camera, so transparent decals use a
-	// positive one-unit bias to remain stable over their opaque receiver.
-	GR_SetPolygonOffset(0.0f, transparentWorld ? 1.0f : 0.0f);
+	GR_SetPolygonOffset(0.0f, 0.0f);
 
-	GR_DrawTriangles(split.startVertex, split.numVerts / 3);
+	const bool depthRequested = g_RequestedDepthMode != 0;
+	const bool depthWrite = split.blendMode == BM_NONE;
+	int runStart = split.startVertex;
+	int runVertices = 0;
+	bool runUsesDepth = false;
+
+	const auto flushRun = [&]()
+	{
+		if(runVertices == 0)
+			return;
+		GR_SetDepthState(runUsesDepth ? 1 : 0,
+						 runUsesDepth && depthWrite ? 1 : 0);
+		GR_DrawTriangles(runStart, runVertices / 3);
+		runVertices = 0;
+	};
+
+	for(int vertexIndex = split.startVertex;
+		vertexIndex < split.startVertex + split.numVerts; vertexIndex += 3)
+	{
+		const GrVertex* triangle = &g_vertexBuffer[vertexIndex];
+		const bool precise = triangle[0].scr_h > 0.0f &&
+			triangle[1].scr_h > 0.0f && triangle[2].scr_h > 0.0f;
+		// Like the reference PGXP implementation, screen-aligned/2D polygons do
+		// not participate in world depth. Their authored OT order is definitive.
+		const bool is3D = precise &&
+			(triangle[0].z != triangle[1].z || triangle[0].z != triangle[2].z);
+		const bool usesDepth = depthRequested && is3D;
+		const float averageDepth =
+			(triangle[0].z + triangle[1].z + triangle[2].z) / 3.0f;
+		const bool clearDepth = usesDepth &&
+			averageDepth - g_lastPolygonDepth >= PGXP_DEPTH_CLEAR_THRESHOLD;
+
+		if(runVertices != 0 && (runUsesDepth != usesDepth || clearDepth))
+			flushRun();
+		if(clearDepth)
+			GR_ClearDepthBuffer();
+		if(runVertices == 0)
+		{
+			runStart = vertexIndex;
+			runUsesDepth = usesDepth;
+		}
+		runVertices += 3;
+		if(usesDepth)
+			g_lastPolygonDepth = averageDepth;
+	}
+	flushRun();
 
 	if(split.debugText)
 		GR_PopDebugLabel();
@@ -937,6 +979,7 @@ void ParsePrimitivesLinkedList(u_long* p, int singlePrimitive)
 {
 	if(!p)
 		return;
+	g_lastPolygonDepth = PGXP_MAX_DEPTH;
 
 	// setup single primitive flag (needed for AddSplits)
 	g_DrawPrimMode = singlePrimitive;

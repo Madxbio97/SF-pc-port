@@ -3,6 +3,7 @@
 #include "sf/assets/hog_archive.hpp"
 #include "sf/core/error.hpp"
 #include "sf/game/game_disc.hpp"
+#include "sf/game/localization.hpp"
 #include "sf/game/mission.hpp"
 
 #include <algorithm>
@@ -197,9 +198,14 @@ TitleAssets TitleAssets::load(GameDisc& disc) {
     std::vector<TitleSprite> sprites;
     sprites.reserve(definitions.size());
     for (const auto& definition : definitions) {
+        const auto localized = readLocalizedAsset(
+            std::string{"title/"} + definition.name);
+        const auto source = localized
+            ? std::span<const std::byte>{*localized}
+            : archive.file(definition.name);
         sprites.push_back(TitleSprite{
             definition.name,
-            assets::TimImage::parse(archive.file(definition.name)),
+            assets::TimImage::parse(source),
             definition.x,
             definition.y,
         });

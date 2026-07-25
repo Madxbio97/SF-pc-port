@@ -1,5 +1,7 @@
 #include "sf/game/hud.hpp"
 
+#include "sf/game/localization.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -169,9 +171,43 @@ constexpr std::array<OriginalHudGlyph, 26> hud_upper_glyphs{{
     {96U, 0U, 6U}, {64U, 8U, 5U},
 }};
 
+// SCES-01913 ViT Co. glyph metadata. The translation keeps the original
+// one-byte text pipeline, replaces several Latin cells with Cyrillic, and
+// adds 30 glyphs addressed by byte values 0xdf..0xfc.
+constexpr std::array<OriginalHudGlyph, 26> vit_lower_glyphs{{
+    {8U, 32U, 5U},  {16U, 32U, 4U}, {24U, 32U, 4U}, {0U, 40U, 5U},
+    {8U, 40U, 4U},  {16U, 40U, 4U}, {24U, 40U, 5U}, {0U, 48U, 5U},
+    {8U, 48U, 6U},  {16U, 48U, 6U}, {24U, 48U, 4U}, {0U, 56U, 5U},
+    {8U, 56U, 6U},  {16U, 56U, 5U}, {24U, 56U, 5U}, {32U, 0U, 4U},
+    {40U, 0U, 5U},  {48U, 0U, 4U},  {56U, 0U, 5U},  {32U, 8U, 5U},
+    {40U, 8U, 4U},  {48U, 8U, 5U},  {56U, 8U, 6U},  {32U, 16U, 5U},
+    {40U, 16U, 4U}, {48U, 16U, 4U},
+}};
+
+constexpr std::array<OriginalHudGlyph, 26> vit_upper_glyphs{{
+    {56U, 16U, 6U}, {32U, 24U, 5U}, {40U, 24U, 5U}, {48U, 24U, 6U},
+    {56U, 24U, 4U}, {32U, 32U, 4U}, {40U, 32U, 5U}, {48U, 32U, 5U},
+    {56U, 32U, 1U}, {32U, 40U, 4U}, {40U, 40U, 5U}, {48U, 40U, 4U},
+    {56U, 40U, 7U}, {32U, 48U, 6U}, {40U, 48U, 5U}, {48U, 48U, 5U},
+    {56U, 48U, 6U}, {32U, 56U, 5U}, {40U, 56U, 5U}, {48U, 56U, 5U},
+    {56U, 56U, 5U}, {64U, 0U, 6U},  {72U, 0U, 8U},  {88U, 0U, 6U},
+    {96U, 0U, 6U},  {64U, 8U, 5U},
+}};
+
+constexpr std::array<OriginalHudGlyph, 30> vit_extended_glyphs{{
+    {64U, 24U, 6U}, {72U, 24U, 5U}, {80U, 24U, 6U}, {88U, 24U, 5U},
+    {96U, 24U, 4U}, {64U, 32U, 5U}, {72U, 32U, 5U}, {80U, 32U, 5U},
+    {88U, 32U, 5U}, {96U, 32U, 4U}, {64U, 40U, 4U}, {72U, 40U, 5U},
+    {80U, 40U, 5U}, {88U, 40U, 8U}, {96U, 40U, 4U}, {64U, 48U, 5U},
+    {72U, 48U, 5U}, {80U, 48U, 5U}, {88U, 48U, 3U}, {96U, 48U, 5U},
+    {64U, 56U, 4U}, {72U, 56U, 4U}, {80U, 56U, 5U}, {88U, 56U, 6U},
+    {96U, 56U, 7U}, {64U, 64U, 4U}, {72U, 64U, 4U}, {80U, 64U, 4U},
+    {88U, 64U, 4U}, {96U, 64U, 5U},
+}};
+
 } // namespace
 
-std::optional<OriginalHudGlyph> originalHudGlyph(char value) noexcept {
+std::optional<OriginalHudGlyph> originalEnglishHudGlyph(char value) noexcept {
   if (value >= '0' && value <= '9') {
     return hud_digit_glyphs[static_cast<std::size_t>(value - '0')];
   }
@@ -207,6 +243,23 @@ std::optional<OriginalHudGlyph> originalHudGlyph(char value) noexcept {
   default:
     return std::nullopt;
   }
+}
+
+std::optional<OriginalHudGlyph> originalHudGlyph(char value) noexcept {
+  if (!russianLanguageActive()) {
+    return originalEnglishHudGlyph(value);
+  }
+  const auto raw = static_cast<unsigned char>(value);
+  if (raw >= 0xdfU && raw <= 0xfcU) {
+    return vit_extended_glyphs[raw - 0xdfU];
+  }
+  if (value >= 'a' && value <= 'z') {
+    return vit_lower_glyphs[static_cast<std::size_t>(value - 'a')];
+  }
+  if (value >= 'A' && value <= 'Z') {
+    return vit_upper_glyphs[static_cast<std::size_t>(value - 'A')];
+  }
+  return originalEnglishHudGlyph(value);
 }
 
 int originalHudTextWidth(std::string_view text) noexcept {

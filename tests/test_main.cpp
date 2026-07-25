@@ -19,6 +19,7 @@
 #include "sf/game/effects.hpp"
 #include "sf/game/gameplay.hpp"
 #include "sf/game/hud.hpp"
+#include "sf/game/localization.hpp"
 #include "sf/game/mission.hpp"
 #include "sf/game/mission_start.hpp"
 #include "sf/game/player_controller.hpp"
@@ -41,6 +42,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -163,9 +165,45 @@ void testMissionCatalog() {
               missions.back().resource_name == "SILO" &&
               missions.back().title == "Missile Silo",
           "Retail mission catalog order mismatch");
+  constexpr std::array expected_briefing_overlays{
+      std::string_view{"SUBWAY.OVL"},  std::string_view{"SUBWAY2.OVL"},
+      std::string_view{"SUBWAY3.OVL"}, std::string_view{"PARK.OVL"},
+      std::string_view{"PARK2.OVL"},   std::string_view{"MUSEUM.OVL"},
+      std::string_view{"MUSEUM2.OVL"}, std::string_view{"BASEEXT.OVL"},
+      std::string_view{"BASEEXT.OVL"}, std::string_view{"CHOPPER.OVL"},
+      std::string_view{"BASEEXT.OVL"}, std::string_view{"LEVSPEC.OVL"},
+      std::string_view{"LEVSPEC.OVL"}, std::string_view{"CATACOMB.OVL"},
+      std::string_view{"WHOUSE.OVL"},  std::string_view{"WHOUSE.OVL"},
+      std::string_view{"WHOUSE.OVL"},  std::string_view{"CAVE.OVL"},
+      std::string_view{"CAVE.OVL"},    std::string_view{"CAVE.OVL"},
+  };
+  constexpr std::array<std::uint8_t, 20U> expected_briefing_records{
+      0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 1U, 0U,
+      2U, 0U, 1U, 0U, 0U, 1U, 2U, 0U, 1U, 2U,
+  };
+  for (std::size_t index = 0U; index < missions.size(); ++index) {
+    const auto briefing_overlay =
+        missions[index].briefing_overlay_name.empty()
+            ? missions[index].overlay_name
+            : missions[index].briefing_overlay_name;
+    require(briefing_overlay == expected_briefing_overlays[index] &&
+                missions[index].briefing_record ==
+                    expected_briefing_records[index],
+            "Retail mission briefing source mismatch");
+  }
   require(sf::game::missionDefinition(13U).overlay_name == "CATACOMB.OVL" &&
               sf::game::missionDefinition(18U).overlay_name == "WHOUSE.OVL",
           "Retail mission overlay mapping mismatch");
+  require(sf::game::missionDefinition(2U).briefing_record == 0U &&
+              sf::game::missionDefinition(13U).briefing_record == 0U &&
+              sf::game::missionDefinition(17U).briefing_record == 0U &&
+              sf::game::missionDefinition(18U).briefing_record == 1U &&
+              sf::game::missionDefinition(19U).briefing_record == 2U &&
+              sf::game::missionDefinition(18U).briefing_overlay_name ==
+                  "CAVE.OVL" &&
+              sf::game::missionDefinition(19U).briefing_overlay_name ==
+                  "CAVE.OVL",
+          "Retail mission briefing mapping mismatch");
   require(sf::game::missionDefinition(9U).resource_name == "CHOPPER" &&
               sf::game::missionDefinition(10U).resource_name == "BASEEXT2" &&
               std::ranges::all_of(missions,
@@ -2437,6 +2475,18 @@ void testGameplayHud() {
                   sf::game::PrimaryStatus::health) == "HEALTH",
           "Original gameplay-font UV/advance table mismatch");
 
+  sf::game::setGameLanguage(sf::game::GameLanguage::russian_vit);
+  require(sf::game::originalHudGlyph(static_cast<char>(0xdfU)) ==
+                  sf::game::OriginalHudGlyph{64U, 24U, 6U} &&
+              sf::game::originalHudGlyph(static_cast<char>(0xeaU)) ==
+                  sf::game::OriginalHudGlyph{72U, 40U, 5U} &&
+              sf::game::originalHudGlyph(static_cast<char>(0xe5U)) ==
+                  sf::game::OriginalHudGlyph{72U, 32U, 5U} &&
+              sf::game::originalHudGlyph(static_cast<char>(0xf5U)) ==
+                  sf::game::OriginalHudGlyph{80U, 56U, 5U},
+          "Russian distinct Cyrillic glyph mapping mismatch");
+  sf::game::setGameLanguage(sf::game::GameLanguage::english);
+
   constexpr std::array pistol_icon_widths{32, 32};
   constexpr std::array rifle_icon_widths{24, 24, 24};
   require(sf::game::originalWeaponIconOffsets(pistol_icon_widths) ==
@@ -2711,6 +2761,37 @@ void testMissionBriefing() {
                   "INCOMING FROM LIAN:\nSecond directive\n" &&
               continuation.additionalDirective() == "Continuation context",
           "Shared DLF continuation briefing record mismatch");
+
+  std::vector<std::byte> overlay(1024U);
+  auto overlay_cursor = std::size_t{32U};
+  const auto appendOverlay = [&overlay](std::size_t &offset,
+                                        std::string_view text) {
+    std::ranges::transform(
+        text, overlay.begin() + static_cast<std::ptrdiff_t>(offset),
+        [](char value) { return static_cast<std::byte>(value); });
+    offset += text.size();
+    overlay[offset++] = std::byte{};
+  };
+  appendOverlay(overlay_cursor, "Warehouse context");
+  appendOverlay(overlay_cursor, "INCOMING FROM LIAN:\nFirst overlay directive");
+  appendOverlay(overlay_cursor, "09/08 04:00");
+  appendOverlay(overlay_cursor, "Warehouse 76");
+  appendOverlay(overlay_cursor, "Almaty, Kazakhstan");
+  appendOverlay(overlay_cursor, "Tunnel context");
+  appendOverlay(overlay_cursor,
+                "INCOMING FROM LIAN:\nSecond overlay directive");
+  appendOverlay(overlay_cursor, "09/08 04:45");
+  appendOverlay(overlay_cursor, "Tunnel blackout");
+  const auto overlay_continuation =
+      sf::assets::MissionBriefing::parseOverlayRecord(overlay, 1U,
+                                                      "Tunnel blackout");
+  require(overlay_continuation.location() == "Almaty, Kazakhstan" &&
+              overlay_continuation.missionTitle() == "Tunnel blackout" &&
+              overlay_continuation.dateTime() == "09/08 04:45" &&
+              overlay_continuation.directive() ==
+                  "INCOMING FROM LIAN:\nSecond overlay directive" &&
+              overlay_continuation.additionalDirective() == "Tunnel context",
+          "Mission overlay continuation briefing record mismatch");
   auto camera_environment = sf::game::LegacyEnvironmentBridgeState{};
   camera_environment.terrain_depth_cue = 0x00020320U;
   camera_environment.renderer_darkness_enabled = true;

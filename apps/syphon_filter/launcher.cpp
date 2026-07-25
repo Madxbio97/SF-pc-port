@@ -1,5 +1,6 @@
 #include "launcher.hpp"
 
+#include "sf/game/localization.hpp"
 #include "sf/game/mission.hpp"
 
 #ifdef _WIN32
@@ -51,6 +52,9 @@ constexpr int anisotropic_control_id = 1011;
 constexpr int game_image_control_id = 1012;
 constexpr int browse_image_control_id = 1013;
 constexpr int dossier_control_id = 1014;
+constexpr int language_control_id = 1015;
+constexpr int vsync_control_id = 1016;
+constexpr int frame_limit_control_id = 1017;
 constexpr int binding_list_control_id = 2001;
 constexpr int change_binding_control_id = 2002;
 constexpr int clear_binding_control_id = 2003;
@@ -81,15 +85,19 @@ struct LauncherState {
   GraphicsSettings settings;
   KeyboardMouseBindings input;
   GameplayTestSettings tests;
+  game::GameLanguage language{game::GameLanguage::english};
   std::filesystem::path cue_path;
   std::uint32_t mission_index{};
   bool mission_selection_enabled{};
   std::vector<std::pair<int, int>> resolutions;
+  std::vector<std::uint32_t> frame_limits;
   HWND mission_combo{};
   HWND resolution_combo{};
   HWND aspect_combo{};
   HWND msaa_combo{};
+  HWND frame_limit_combo{};
   HWND game_image_edit{};
+  HWND language_combo{};
   int desktop_width{};
   int desktop_height{};
   bool cheats_visible{};
@@ -164,9 +172,9 @@ std::wstring widenUtf8(std::string_view text) {
   if (text.empty()) {
     return {};
   }
-  const auto required = MultiByteToWideChar(
-      CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()),
-      nullptr, 0);
+  const auto required =
+      MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(),
+                          static_cast<int>(text.size()), nullptr, 0);
   if (required <= 0) {
     return widenAscii(text);
   }
@@ -215,9 +223,9 @@ void writeProfileInteger(const std::filesystem::path &path,
 std::filesystem::path loadGameImagePath() {
   const auto path = launcherSettingsPath(false);
   std::array<wchar_t, 32768U> buffer{};
-  const auto length = GetPrivateProfileStringW(
-      L"Game", L"Image", L"", buffer.data(), static_cast<DWORD>(buffer.size()),
-      path.c_str());
+  const auto length =
+      GetPrivateProfileStringW(L"Game", L"Image", L"", buffer.data(),
+                               static_cast<DWORD>(buffer.size()), path.c_str());
   if (length == 0U || length >= buffer.size() - 1U) {
     return {};
   }
@@ -226,12 +234,12 @@ std::filesystem::path loadGameImagePath() {
 
 void saveGameImagePath(const std::filesystem::path &cue_path) {
   const auto path = launcherSettingsPath(true);
-  static_cast<void>(WritePrivateProfileStringW(
-      L"Game", L"Image", cue_path.c_str(), path.c_str()));
+  static_cast<void>(WritePrivateProfileStringW(L"Game", L"Image",
+                                               cue_path.c_str(), path.c_str()));
 }
 
-void loadSettingsFile(GraphicsSettings &graphics,
-                      KeyboardMouseBindings &input) {
+void loadSettingsFile(GraphicsSettings &graphics, KeyboardMouseBindings &input,
+                      game::GameLanguage &language) {
   const auto path = launcherSettingsPath(false);
   const auto width =
       readProfileInteger(path, L"Graphics", L"Width", graphics.width);
@@ -253,6 +261,13 @@ void loadSettingsFile(GraphicsSettings &graphics,
   graphics.anisotropic_filtering =
       readProfileInteger(path, L"Graphics", L"Anisotropic",
                          graphics.anisotropic_filtering ? 1 : 0) != 0;
+  graphics.vsync = readProfileInteger(path, L"Graphics", L"VSync",
+                                      graphics.vsync ? 1 : 0) != 0;
+  const auto frame_limit = readProfileInteger(
+      path, L"Graphics", L"FrameLimit", static_cast<int>(graphics.frame_limit));
+  if (frame_limit == 0 || (frame_limit >= 20 && frame_limit <= 1000)) {
+    graphics.frame_limit = static_cast<std::uint32_t>(frame_limit);
+  }
   graphics.fullscreen = readProfileInteger(path, L"Graphics", L"Fullscreen",
                                            graphics.fullscreen ? 1 : 0) != 0;
   graphics.aspect_ratio =
@@ -261,6 +276,9 @@ void loadSettingsFile(GraphicsSettings &graphics,
           graphics.aspect_ratio == AspectRatioMode::adaptive ? 0 : 1) == 0
           ? AspectRatioMode::adaptive
           : AspectRatioMode::original_4_3;
+  language = readProfileInteger(path, L"Game", L"Locale", 0) == 1
+                 ? game::GameLanguage::russian_vit
+                 : game::GameLanguage::english;
 
   for (std::size_t index = 0U; index < keyboard_mouse_action_count; ++index) {
     const auto action = static_cast<KeyboardMouseAction>(index);
@@ -276,6 +294,7 @@ void loadSettingsFile(GraphicsSettings &graphics,
 
 void saveSettingsFile(const GraphicsSettings &graphics,
                       const KeyboardMouseBindings &input,
+                      game::GameLanguage language,
                       const std::filesystem::path &cue_path) {
   const auto path = launcherSettingsPath(true);
   writeProfileInteger(path, L"Graphics", L"Width", graphics.width);
@@ -285,11 +304,16 @@ void saveSettingsFile(const GraphicsSettings &graphics,
                       graphics.bilinear_filtering ? 1 : 0);
   writeProfileInteger(path, L"Graphics", L"Anisotropic",
                       graphics.anisotropic_filtering ? 1 : 0);
+  writeProfileInteger(path, L"Graphics", L"VSync", graphics.vsync ? 1 : 0);
+  writeProfileInteger(path, L"Graphics", L"FrameLimit",
+                      static_cast<int>(graphics.frame_limit));
   writeProfileInteger(path, L"Graphics", L"Fullscreen",
                       graphics.fullscreen ? 1 : 0);
   writeProfileInteger(path, L"Graphics", L"Aspect",
                       graphics.aspect_ratio == AspectRatioMode::adaptive ? 0
                                                                          : 1);
+  writeProfileInteger(path, L"Game", L"Locale",
+                      language == game::GameLanguage::russian_vit ? 1 : 0);
   for (std::size_t index = 0U; index < keyboard_mouse_action_count; ++index) {
     const auto action = static_cast<KeyboardMouseAction>(index);
     const auto key = widenAscii(keyboardMouseActionConfigKey(action));
@@ -315,6 +339,7 @@ void populateMissions(LauncherState &state) {
   }
   SendMessageW(state.mission_combo, CB_SETCURSEL, static_cast<WPARAM>(selected),
                0);
+  SendMessageW(state.mission_combo, CB_SETDROPPEDWIDTH, 320, 0);
   EnableWindow(state.mission_combo,
                state.mission_selection_enabled ? TRUE : FALSE);
 }
@@ -568,9 +593,9 @@ void drawTerminalButton(const DRAWITEMSTRUCT &item, HFONT font,
 }
 
 HICON createLauncherIcon(int size) {
-  if (const auto resource = LoadImageW(
-          GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1), IMAGE_ICON, size,
-          size, LR_DEFAULTCOLOR)) {
+  if (const auto resource =
+          LoadImageW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1), IMAGE_ICON,
+                     size, size, LR_DEFAULTCOLOR)) {
     return static_cast<HICON>(resource);
   }
   BITMAPV5HEADER header{};
@@ -585,9 +610,9 @@ HICON createLauncherIcon(int size) {
   header.bV5BlueMask = 0x000000ffU;
   header.bV5AlphaMask = 0xff000000U;
   void *bits{};
-  const auto color = CreateDIBSection(nullptr,
-                                      reinterpret_cast<BITMAPINFO *>(&header),
-                                      DIB_RGB_COLORS, &bits, nullptr, 0);
+  const auto color =
+      CreateDIBSection(nullptr, reinterpret_cast<BITMAPINFO *>(&header),
+                       DIB_RGB_COLORS, &bits, nullptr, 0);
   if (color == nullptr || bits == nullptr) {
     return nullptr;
   }
@@ -595,14 +620,14 @@ HICON createLauncherIcon(int size) {
   for (auto y = 0; y < size; ++y) {
     for (auto x = 0; x < size; ++x) {
       const auto border = x < 2 || y < 2 || x >= size - 2 || y >= size - 2;
-      const auto diagonal = std::abs(x - y) <= std::max(1, size / 16) ||
-                            std::abs((size - 1 - x) - y) <=
-                                std::max(1, size / 16);
+      const auto diagonal =
+          std::abs(x - y) <= std::max(1, size / 16) ||
+          std::abs((size - 1 - x) - y) <= std::max(1, size / 16);
       const auto center = std::abs(x - size / 2) <= std::max(1, size / 12) ||
                           std::abs(y - size / 2) <= std::max(1, size / 12);
-      const auto rgb = center && diagonal
-                           ? 0x00f29a2eU
-                           : border ? 0x005067c4U : 0x00070d1dU;
+      const auto rgb = center && diagonal ? 0x00f29a2eU
+                       : border           ? 0x005067c4U
+                                          : 0x00070d1dU;
       pixels[static_cast<std::size_t>(y * size + x)] = 0xff000000U | rgb;
     }
   }
@@ -629,8 +654,8 @@ struct NoticeState {
 
 LRESULT CALLBACK noticeWindowProc(HWND window, UINT message, WPARAM w_param,
                                   LPARAM l_param) {
-  auto *state = reinterpret_cast<NoticeState *>(
-      GetWindowLongPtrW(window, GWLP_USERDATA));
+  auto *state =
+      reinterpret_cast<NoticeState *>(GetWindowLongPtrW(window, GWLP_USERDATA));
   if (message == WM_NCCREATE) {
     const auto *create = reinterpret_cast<const CREATESTRUCTW *>(l_param);
     state = static_cast<NoticeState *>(create->lpCreateParams);
@@ -726,14 +751,14 @@ void showStyledNotice(HWND owner, std::wstring title, std::wstring message) {
   NoticeState state{};
   state.title = std::move(title);
   state.message = std::move(message);
-  state.title_font = CreateFontW(
-      -18, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-      OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, FF_DONTCARE,
-      L"Bahnschrift SemiCondensed");
-  state.ui_font = CreateFontW(-16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                              DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-                              CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                              FF_DONTCARE, L"Bahnschrift");
+  state.title_font =
+      CreateFontW(-18, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                  OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                  FF_DONTCARE, L"Bahnschrift SemiCondensed");
+  state.ui_font =
+      CreateFontW(-16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                  OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                  FF_DONTCARE, L"Bahnschrift");
   state.background_brush = CreateSolidBrush(launcher_background_color);
   state.panel_brush = CreateSolidBrush(launcher_panel_color);
   constexpr DWORD style = WS_CAPTION | WS_SYSMENU;
@@ -756,10 +781,11 @@ void showStyledNotice(HWND owner, std::wstring title, std::wstring message) {
     GetWindowRect(window, &window_bounds);
     const auto width = window_bounds.right - window_bounds.left;
     const auto height = window_bounds.bottom - window_bounds.top;
-    SetWindowPos(window, HWND_TOP,
-                 reference.left + (reference.right - reference.left - width) / 2,
-                 reference.top + (reference.bottom - reference.top - height) / 2,
-                 0, 0, SWP_NOSIZE);
+    SetWindowPos(
+        window, HWND_TOP,
+        reference.left + (reference.right - reference.left - width) / 2,
+        reference.top + (reference.bottom - reference.top - height) / 2, 0, 0,
+        SWP_NOSIZE);
     ShowWindow(window, SW_SHOW);
     UpdateWindow(window);
     MSG event{};
@@ -1053,12 +1079,11 @@ void showControlsWindow(HWND owner, KeyboardMouseBindings &input) {
 }
 
 std::array<std::filesystem::path, 4U> dossierFiles() {
-  auto directory = executableDirectory() / L"assets" / L"dossiers" /
-                   L"screens";
+  auto directory = executableDirectory() / L"assets" / L"dossiers" / L"screens";
   std::error_code error;
   if (!std::filesystem::is_directory(directory, error) || error) {
-    directory = std::filesystem::current_path(error) / L"assets" /
-                L"dossiers" / L"screens";
+    directory = std::filesystem::current_path(error) / L"assets" / L"dossiers" /
+                L"screens";
   }
   return {
       directory / L"dossier_01.png",
@@ -1152,8 +1177,7 @@ void drawDossierFrame(HWND window, DossierState &state) {
   SetTextColor(dc, dossier_accent_color);
   SelectObject(dc, state.title_font);
   RECT title{28, 12, client.right - 28, 50};
-  DrawTextW(dc, L"DOSSIERS", -1, &title,
-            DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+  DrawTextW(dc, L"DOSSIERS", -1, &title, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
   SetTextColor(dc, launcher_text_color);
   SelectObject(dc, state.ui_font);
   RECT subtitle{216, 17, client.right - 28, 49};
@@ -1190,8 +1214,7 @@ void drawDossierFrame(HWND window, DossierState &state) {
 
   SetTextColor(dc, launcher_muted_text_color);
   SelectObject(dc, state.ui_font);
-  RECT hint{276, client.bottom - 52, client.right - 168,
-            client.bottom - 18};
+  RECT hint{276, client.bottom - 52, client.right - 168, client.bottom - 18};
   DrawTextW(dc, L"A / D  OR  LEFT / RIGHT  //  CHANGE FILE", -1, &hint,
             DT_CENTER | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
 
@@ -1218,17 +1241,17 @@ LRESULT CALLBACK dossierWindowProc(HWND window, UINT message, WPARAM w_param,
   switch (message) {
   case WM_CREATE:
     state->previous_button = createControl(
-        window, L"BUTTON", L"PREVIOUS", WS_TABSTOP | BS_OWNERDRAW, 0, 0, 0,
-        0, previous_dossier_control_id, state->heading_font);
-    state->next_button = createControl(
-        window, L"BUTTON", L"NEXT", WS_TABSTOP | BS_OWNERDRAW, 0, 0, 0, 0,
-        next_dossier_control_id, state->heading_font);
-    state->close_button = createControl(
-        window, L"BUTTON", L"CLOSE", WS_TABSTOP | BS_OWNERDRAW, 0, 0, 0, 0,
-        close_dossier_control_id, state->heading_font);
-    state->page_label = createControl(window, L"STATIC", L"", SS_CENTER, 0,
-                                      0, 0, 0, dossier_page_control_id,
-                                      state->heading_font);
+        window, L"BUTTON", L"PREVIOUS", WS_TABSTOP | BS_OWNERDRAW, 0, 0, 0, 0,
+        previous_dossier_control_id, state->heading_font);
+    state->next_button =
+        createControl(window, L"BUTTON", L"NEXT", WS_TABSTOP | BS_OWNERDRAW, 0,
+                      0, 0, 0, next_dossier_control_id, state->heading_font);
+    state->close_button =
+        createControl(window, L"BUTTON", L"CLOSE", WS_TABSTOP | BS_OWNERDRAW, 0,
+                      0, 0, 0, close_dossier_control_id, state->heading_font);
+    state->page_label =
+        createControl(window, L"STATIC", L"", SS_CENTER, 0, 0, 0, 0,
+                      dossier_page_control_id, state->heading_font);
     layoutDossierControls(window, *state);
     updateDossierNavigation(*state);
     return 0;
@@ -1319,8 +1342,9 @@ void showDossierWindow(HWND owner) {
   ULONG_PTR gdiplus_token{};
   if (Gdiplus::GdiplusStartup(&gdiplus_token, &startup_input, nullptr) !=
       Gdiplus::Ok) {
-    showStyledNotice(owner, L"DOSSIER ARCHIVE UNAVAILABLE",
-                     L"Windows could not initialize the dossier image decoder.");
+    showStyledNotice(
+        owner, L"DOSSIER ARCHIVE UNAVAILABLE",
+        L"Windows could not initialize the dossier image decoder.");
     return;
   }
 
@@ -1382,19 +1406,19 @@ void showDossierWindow(HWND owner) {
   RECT bounds{0, 0, client_width, client_height};
   AdjustWindowRectEx(&bounds, style, FALSE, extended_style);
   const auto window = CreateWindowExW(
-      extended_style, dossier_class_name, L"Syphon Filter PC - Dossiers",
-      style, CW_USEDEFAULT, CW_USEDEFAULT, bounds.right - bounds.left,
+      extended_style, dossier_class_name, L"Syphon Filter PC - Dossiers", style,
+      CW_USEDEFAULT, CW_USEDEFAULT, bounds.right - bounds.left,
       bounds.bottom - bounds.top, owner, nullptr, instance, &state);
   if (window != nullptr) {
     RECT window_bounds{};
     GetWindowRect(window, &window_bounds);
     const auto width = window_bounds.right - window_bounds.left;
     const auto height = window_bounds.bottom - window_bounds.top;
-    SetWindowPos(window, HWND_TOP,
-                 work_area.left + (work_area.right - work_area.left - width) / 2,
-                 work_area.top +
-                     (work_area.bottom - work_area.top - height) / 2,
-                 0, 0, SWP_NOSIZE);
+    SetWindowPos(
+        window, HWND_TOP,
+        work_area.left + (work_area.right - work_area.left - width) / 2,
+        work_area.top + (work_area.bottom - work_area.top - height) / 2, 0, 0,
+        SWP_NOSIZE);
     EnableWindow(owner, FALSE);
     ShowWindow(window, SW_SHOW);
     UpdateWindow(window);
@@ -1562,6 +1586,32 @@ void populateMsaa(LauncherState &state) {
                0);
 }
 
+void populateFrameLimits(LauncherState &state) {
+  constexpr std::array<std::uint32_t, 9> standard_limits{
+      0U, 30U, 60U, 72U, 90U, 120U, 144U, 165U, 240U,
+  };
+  state.frame_limits.assign(standard_limits.begin(), standard_limits.end());
+  if (std::ranges::find(state.frame_limits, state.settings.frame_limit) ==
+      state.frame_limits.end()) {
+    state.frame_limits.push_back(state.settings.frame_limit);
+    std::ranges::sort(state.frame_limits);
+  }
+  int selected{};
+  for (std::size_t index = 0; index < state.frame_limits.size(); ++index) {
+    const auto label =
+        state.frame_limits[index] == 0U
+            ? std::wstring{L"Unlimited"}
+            : std::to_wstring(state.frame_limits[index]) + L" FPS";
+    SendMessageW(state.frame_limit_combo, CB_ADDSTRING, 0,
+                 reinterpret_cast<LPARAM>(label.c_str()));
+    if (state.frame_limits[index] == state.settings.frame_limit) {
+      selected = static_cast<int>(index);
+    }
+  }
+  SendMessageW(state.frame_limit_combo, CB_SETCURSEL,
+               static_cast<WPARAM>(selected), 0);
+}
+
 void populateAspectRatios(LauncherState &state) {
   constexpr std::array<const wchar_t *, 2> labels{
       L"Adaptive (display aspect)",
@@ -1574,6 +1624,23 @@ void populateAspectRatios(LauncherState &state) {
   const auto selected =
       state.settings.aspect_ratio == AspectRatioMode::adaptive ? 0 : 1;
   SendMessageW(state.aspect_combo, CB_SETCURSEL, selected, 0);
+  SendMessageW(state.aspect_combo, CB_SETDROPPEDWIDTH, 240, 0);
+}
+
+void populateLanguages(LauncherState &state) {
+  constexpr std::array<const wchar_t *, 2> labels{
+      L"English",
+      // Keep the source ASCII-only: MSVC installations using the system ANSI
+      // code page otherwise reinterpret the UTF-8 literal as mojibake.
+      L"\u0420\u0443\u0441\u0441\u043a\u0438\u0439 (ViT Co.)",
+  };
+  for (const auto *label : labels) {
+    SendMessageW(state.language_combo, CB_ADDSTRING, 0,
+                 reinterpret_cast<LPARAM>(label));
+  }
+  SendMessageW(state.language_combo, CB_SETCURSEL,
+               state.language == game::GameLanguage::russian_vit ? 1 : 0, 0);
+  SendMessageW(state.language_combo, CB_SETDROPPEDWIDTH, 220, 0);
 }
 
 std::wstring windowText(HWND control) {
@@ -1602,8 +1669,8 @@ void browseGameImage(HWND window, LauncherState &state) {
   dialog.lpstrFile = selected.data();
   dialog.nMaxFile = static_cast<DWORD>(selected.size());
   dialog.lpstrDefExt = L"cue";
-  dialog.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST |
-                 OFN_HIDEREADONLY | OFN_NOCHANGEDIR;
+  dialog.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY |
+                 OFN_NOCHANGEDIR;
   if (GetOpenFileNameW(&dialog) != FALSE) {
     SetWindowTextW(state.game_image_edit, selected.data());
     SetFocus(state.game_image_edit);
@@ -1613,10 +1680,9 @@ void browseGameImage(HWND window, LauncherState &state) {
 
 bool isCueImage(const std::filesystem::path &path) {
   auto extension = path.extension().wstring();
-  std::ranges::transform(extension, extension.begin(),
-                         [](wchar_t character) {
-                           return static_cast<wchar_t>(std::towlower(character));
-                         });
+  std::ranges::transform(extension, extension.begin(), [](wchar_t character) {
+    return static_cast<wchar_t>(std::towlower(character));
+  });
   return extension == L".cue";
 }
 
@@ -1671,6 +1737,13 @@ void acceptSettings(HWND window, LauncherState &state) {
       static_cast<std::size_t>(msaa_index) < samples.size()) {
     state.settings.msaa_samples = samples[static_cast<std::size_t>(msaa_index)];
   }
+  const auto frame_limit_index = static_cast<int>(
+      SendMessageW(state.frame_limit_combo, CB_GETCURSEL, 0, 0));
+  if (frame_limit_index >= 0 &&
+      static_cast<std::size_t>(frame_limit_index) < state.frame_limits.size()) {
+    state.settings.frame_limit =
+        state.frame_limits[static_cast<std::size_t>(frame_limit_index)];
+  }
   state.settings.aspect_ratio =
       SendMessageW(state.aspect_combo, CB_GETCURSEL, 0, 0) == 0
           ? AspectRatioMode::adaptive
@@ -1679,8 +1752,20 @@ void acceptSettings(HWND window, LauncherState &state) {
       IsDlgButtonChecked(window, bilinear_control_id) == BST_CHECKED;
   state.settings.anisotropic_filtering =
       IsDlgButtonChecked(window, anisotropic_control_id) == BST_CHECKED;
+  state.settings.vsync =
+      IsDlgButtonChecked(window, vsync_control_id) == BST_CHECKED;
   state.settings.fullscreen =
       IsDlgButtonChecked(window, fullscreen_control_id) == BST_CHECKED;
+  state.language = SendMessageW(state.language_combo, CB_GETCURSEL, 0, 0) == 1
+                       ? game::GameLanguage::russian_vit
+                       : game::GameLanguage::english;
+  if (!game::localizationPackAvailable(state.language)) {
+    showStyledNotice(window, L"LANGUAGE PACK MISSING",
+                     L"The Russian text pack is missing or incomplete. "
+                     L"Reinstall the full release package.");
+    SetFocus(state.language_combo);
+    return;
+  }
   state.tests.retail_all_weapons =
       state.cheats_visible &&
       IsDlgButtonChecked(window, all_weapons_control_id) == BST_CHECKED;
@@ -1709,9 +1794,11 @@ void drawLauncherFrame(HWND window, LauncherState &state) {
   RECT image_panel{24, 102, 736, 160};
   RECT left_panel{24, 176, 370, 474};
   RECT right_panel{390, 176, 736, 474};
+  RECT archive_panel{176, 514, 456, 556};
   FillRect(dc, &image_panel, state.panel_brush);
   FillRect(dc, &left_panel, state.panel_brush);
   FillRect(dc, &right_panel, state.panel_brush);
+  FillRect(dc, &archive_panel, state.panel_brush);
   const auto border_pen = CreatePen(PS_SOLID, 2, launcher_border_color);
   SelectObject(dc, border_pen);
   SelectObject(dc, GetStockObject(NULL_BRUSH));
@@ -1721,6 +1808,8 @@ void drawLauncherFrame(HWND window, LauncherState &state) {
             right_panel.bottom);
   Rectangle(dc, image_panel.left, image_panel.top, image_panel.right,
             image_panel.bottom);
+  Rectangle(dc, archive_panel.left, archive_panel.top, archive_panel.right,
+            archive_panel.bottom);
 
   SetBkMode(dc, TRANSPARENT);
   SetTextColor(dc, launcher_text_color);
@@ -1733,6 +1822,11 @@ void drawLauncherFrame(HWND window, LauncherState &state) {
   RECT subtitle{31, 60, client.right - 28, 86};
   DrawTextW(dc, L"AGENCY FIELD TERMINAL  /  LAUNCH CONFIGURATION", -1,
             &subtitle, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+
+  SelectObject(dc, state.heading_font);
+  RECT archive_text = archive_panel;
+  DrawTextW(dc, L"CLASSIFIED  //  AGENCY ARCHIVE", -1, &archive_text,
+            DT_CENTER | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
 
   SelectObject(dc, old_pen);
   DeleteObject(border_pen);
@@ -1750,8 +1844,7 @@ void drawLauncherButton(const DRAWITEMSTRUCT &item,
                         const LauncherState &state) {
   const auto pressed = (item.itemState & ODS_SELECTED) != 0U;
   const auto disabled = (item.itemState & ODS_DISABLED) != 0U;
-  const auto accent = item.CtlID == launch_control_id
-                          ? launcher_launch_color
+  const auto accent = item.CtlID == launch_control_id ? launcher_launch_color
                       : item.CtlID == dossier_control_id
                           ? dossier_accent_color
                           : launcher_border_color;
@@ -1810,40 +1903,47 @@ LRESULT CALLBACK launcherWindowProc(HWND window, UINT message, WPARAM w_param,
                  reinterpret_cast<LPARAM>(state->small_icon));
     createControl(window, L"STATIC", L"GAME IMAGE", 0, 40, 118, 96, 24, 0,
                   state->heading_font);
-    state->game_image_edit = createControl(
-        window, L"EDIT", state->cue_path.c_str(),
-        WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, 140, 116, 478, 26,
-        game_image_control_id, state->ui_font);
-    createControl(window, L"BUTTON", L"BROWSE", WS_TABSTOP | BS_OWNERDRAW,
-                  628, 112, 90, 34, browse_image_control_id,
-                  state->heading_font);
+    state->game_image_edit =
+        createControl(window, L"EDIT", state->cue_path.c_str(),
+                      WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, 140, 116, 478,
+                      26, game_image_control_id, state->ui_font);
+    createControl(window, L"BUTTON", L"BROWSE", WS_TABSTOP | BS_OWNERDRAW, 628,
+                  112, 90, 34, browse_image_control_id, state->heading_font);
 
     createControl(window, L"STATIC", L"DISPLAY SYSTEM", 0, 44, 188, 270, 26, 0,
                   state->heading_font);
-    createControl(window, L"STATIC", L"Resolution", 0, 48, 228, 118, 20, 0,
+    createControl(window, L"STATIC", L"Resolution", 0, 48, 228, 92, 20, 0,
                   state->ui_font);
     state->resolution_combo = createControl(
         window, L"COMBOBOX", L"",
-        WS_TABSTOP | CBS_DROPDOWN | CBS_AUTOHSCROLL | WS_VSCROLL, 188, 222, 158,
+        WS_TABSTOP | CBS_DROPDOWN | CBS_AUTOHSCROLL | WS_VSCROLL, 144, 222, 214,
         240, resolution_control_id, state->ui_font);
-    createControl(window, L"STATIC", L"Aspect ratio", 0, 48, 270, 132, 20, 0,
+    createControl(window, L"STATIC", L"Aspect ratio", 0, 48, 264, 92, 20, 0,
                   state->ui_font);
     state->aspect_combo =
         createControl(window, L"COMBOBOX", L"", WS_TABSTOP | CBS_DROPDOWNLIST,
-                      188, 264, 158, 120, aspect_control_id, state->ui_font);
-    createControl(window, L"STATIC", L"Antialiasing", 0, 48, 312, 132, 20, 0,
+                      144, 258, 214, 120, aspect_control_id, state->ui_font);
+    createControl(window, L"STATIC", L"Antialiasing", 0, 48, 300, 92, 20, 0,
                   state->ui_font);
     state->msaa_combo =
         createControl(window, L"COMBOBOX", L"", WS_TABSTOP | CBS_DROPDOWNLIST,
-                      188, 306, 158, 160, msaa_control_id, state->ui_font);
+                      144, 294, 214, 160, msaa_control_id, state->ui_font);
+    createControl(window, L"STATIC", L"Frame limit", 0, 48, 336, 92, 20, 0,
+                  state->ui_font);
+    state->frame_limit_combo = createControl(
+        window, L"COMBOBOX", L"", WS_TABSTOP | CBS_DROPDOWNLIST, 144, 330, 214,
+        220, frame_limit_control_id, state->ui_font);
     createControl(window, L"BUTTON", L"Bilinear filtering",
-                  WS_TABSTOP | BS_AUTOCHECKBOX, 48, 356, 294, 24,
+                  WS_TABSTOP | BS_AUTOCHECKBOX, 48, 366, 294, 24,
                   bilinear_control_id, state->ui_font);
     createControl(window, L"BUTTON", L"Anisotropic filtering",
-                  WS_TABSTOP | BS_AUTOCHECKBOX, 48, 386, 294, 24,
+                  WS_TABSTOP | BS_AUTOCHECKBOX, 48, 392, 294, 24,
                   anisotropic_control_id, state->ui_font);
+    createControl(window, L"BUTTON", L"Vertical synchronization",
+                  WS_TABSTOP | BS_AUTOCHECKBOX, 48, 418, 294, 24,
+                  vsync_control_id, state->ui_font);
     createControl(window, L"BUTTON", L"Borderless fullscreen",
-                  WS_TABSTOP | BS_AUTOCHECKBOX, 48, 416, 294, 24,
+                  WS_TABSTOP | BS_AUTOCHECKBOX, 48, 444, 294, 24,
                   fullscreen_control_id, state->ui_font);
 
     createControl(window, L"STATIC",
@@ -1851,11 +1951,11 @@ LRESULT CALLBACK launcherWindowProc(HWND window, UINT message, WPARAM w_param,
                                         : L"MISSION CONTROL",
                   0, 410, 188, 286, 26, 0, state->heading_font);
     if (state->cheats_visible) {
-      createControl(window, L"STATIC", L"Insertion point", 0, 414, 228, 116, 20,
+      createControl(window, L"STATIC", L"Insertion point", 0, 414, 228, 96, 20,
                     0, state->ui_font);
       state->mission_combo = createControl(
           window, L"COMBOBOX", L"", WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL,
-          534, 222, 178, 420, mission_control_id, state->ui_font);
+          516, 222, 204, 420, mission_control_id, state->ui_font);
       createControl(window, L"BUTTON", L"Full weapons authorization",
                     WS_TABSTOP | BS_AUTOCHECKBOX, 414, 278, 294, 24,
                     all_weapons_control_id, state->ui_font);
@@ -1870,26 +1970,30 @@ LRESULT CALLBACK launcherWindowProc(HWND window, UINT message, WPARAM w_param,
                     SS_LEFT, 414, 228, 294, 62, 0, state->ui_font);
       createControl(window, L"STATIC",
                     L"GRAPHICS / INPUT / AUDIO\nSYSTEM STATUS: READY", SS_LEFT,
-                    414, 320, 294, 52, 0, state->ui_font);
+                    414, 342, 294, 42, 0, state->ui_font);
     }
+    createControl(window, L"STATIC", L"Text language", 0, 414, 306, 98, 20, 0,
+                  state->ui_font);
+    state->language_combo =
+        createControl(window, L"COMBOBOX", L"", WS_TABSTOP | CBS_DROPDOWNLIST,
+                      516, 300, 204, 96, language_control_id, state->ui_font);
     createControl(window, L"BUTTON", L"INPUT CONFIGURATION",
                   WS_TABSTOP | BS_OWNERDRAW, 414, 408, 294, 38,
                   controls_control_id, state->heading_font);
-    createControl(window, L"BUTTON", L"DOSSIERS", WS_TABSTOP | BS_OWNERDRAW,
-                  26, 514, 140, 42, dossier_control_id,
-                  state->heading_font);
+    createControl(window, L"BUTTON", L"DOSSIERS", WS_TABSTOP | BS_OWNERDRAW, 26,
+                  514, 140, 42, dossier_control_id, state->heading_font);
     createControl(window, L"BUTTON", L"DEPLOY", WS_TABSTOP | BS_OWNERDRAW, 476,
                   514, 126, 42, launch_control_id, state->heading_font);
     createControl(window, L"BUTTON", L"ABORT", WS_TABSTOP | BS_OWNERDRAW, 618,
                   514, 118, 42, cancel_control_id, state->heading_font);
-    createControl(window, L"STATIC", L"CLASSIFIED  //  AGENCY ARCHIVE", 0,
-                  182, 522, 254, 28, 0, state->heading_font);
     CheckDlgButton(window, bilinear_control_id,
                    state->settings.bilinear_filtering ? BST_CHECKED
                                                       : BST_UNCHECKED);
     CheckDlgButton(window, anisotropic_control_id,
                    state->settings.anisotropic_filtering ? BST_CHECKED
                                                          : BST_UNCHECKED);
+    CheckDlgButton(window, vsync_control_id,
+                   state->settings.vsync ? BST_CHECKED : BST_UNCHECKED);
     if (state->cheats_visible) {
       CheckDlgButton(window, all_weapons_control_id,
                      state->tests.retail_all_weapons ? BST_CHECKED
@@ -1899,6 +2003,8 @@ LRESULT CALLBACK launcherWindowProc(HWND window, UINT message, WPARAM w_param,
     populateResolutions(*state);
     populateAspectRatios(*state);
     populateMsaa(*state);
+    populateFrameLimits(*state);
+    populateLanguages(*state);
     CheckDlgButton(window, fullscreen_control_id,
                    state->settings.fullscreen ||
                            selectedResolutionIsDesktop(*state)
@@ -1990,9 +2096,10 @@ LRESULT CALLBACK launcherWindowProc(HWND window, UINT message, WPARAM w_param,
 } // namespace
 
 void loadLauncherSettings(GraphicsSettings &graphics,
-                          KeyboardMouseBindings &input) noexcept {
+                          KeyboardMouseBindings &input,
+                          game::GameLanguage &language) noexcept {
   try {
-    loadSettingsFile(graphics, input);
+    loadSettingsFile(graphics, input, language);
   } catch (...) {
     // A malformed or inaccessible optional launcher file must not block
     // startup; the caller's defaults remain authoritative.
@@ -2002,6 +2109,7 @@ void loadLauncherSettings(GraphicsSettings &graphics,
 bool showGraphicsLauncher(GraphicsSettings &settings,
                           KeyboardMouseBindings &input,
                           GameplayTestSettings &tests,
+                          game::GameLanguage &language,
                           std::filesystem::path &cue_path,
                           std::uint32_t &mission_index,
                           bool mission_selection_enabled) {
@@ -2026,6 +2134,7 @@ bool showGraphicsLauncher(GraphicsSettings &settings,
   state.settings = settings;
   state.input = input;
   state.tests = tests;
+  state.language = language;
   state.cue_path = cue_path.empty() ? loadGameImagePath() : cue_path;
   state.mission_index = mission_index;
   state.mission_selection_enabled = mission_selection_enabled;
@@ -2088,10 +2197,11 @@ bool showGraphicsLauncher(GraphicsSettings &settings,
     settings = state.settings;
     input = state.input;
     tests = state.tests;
+    language = state.language;
     cue_path = state.cue_path;
     mission_index = state.mission_index;
     try {
-      saveSettingsFile(settings, input, cue_path);
+      saveSettingsFile(settings, input, language, cue_path);
     } catch (...) {
       // The selected settings still apply for this run even when the
       // per-user launcher file cannot be persisted.
@@ -2120,12 +2230,12 @@ void showLauncherError(std::string_view title,
 
 namespace sf::platform {
 
-void loadLauncherSettings(GraphicsSettings &,
-                          KeyboardMouseBindings &) noexcept {}
+void loadLauncherSettings(GraphicsSettings &, KeyboardMouseBindings &,
+                          game::GameLanguage &) noexcept {}
 
 bool showGraphicsLauncher(GraphicsSettings &, KeyboardMouseBindings &,
-                          GameplayTestSettings &, std::filesystem::path &,
-                          std::uint32_t &, bool) {
+                          GameplayTestSettings &, game::GameLanguage &,
+                          std::filesystem::path &, std::uint32_t &, bool) {
   return true;
 }
 

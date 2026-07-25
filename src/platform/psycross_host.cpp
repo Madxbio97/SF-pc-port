@@ -39,13 +39,22 @@ void configureGraphics(const GraphicsSettings &settings) noexcept {
   g_cfg_aspectMode = settings.aspect_ratio == AspectRatioMode::adaptive
                          ? PSYX_ASPECT_ADAPTIVE
                          : PSYX_ASPECT_ORIGINAL_4_3;
-  g_cfg_swapInterval = 1;
+  g_cfg_swapInterval = settings.vsync ? 1 : 0;
   // Presentation is native: no game code samples the displayed framebuffer
   // through PSX VRAM, and the guest simulation has its own deterministic
   // 20 Hz clock. Avoid the legacy readback and busy VBlank compatibility
   // paths, both of which otherwise steal time from display-refresh pacing.
   g_cfg_framebufferFeedback = 0;
   g_cfg_vblankThread = 0;
+}
+
+void configurePresentation(const GraphicsSettings &settings) noexcept {
+  // SDL's high-resolution timer and GL context both exist only after
+  // PsyX_Initialise. Apply the two independent presentation controls here:
+  // swap interval removes tearing, while the software cap controls cadence.
+  PsyX_EnableSwapInterval(settings.vsync ? 1 : 0);
+  PsyX_SetSwapInterval(1);
+  PsyX_SetFrameLimit(static_cast<int>(settings.frame_limit));
 }
 
 void configureInput() {
@@ -78,6 +87,7 @@ public:
   void run() override {
     configureGraphics(graphics_);
     PsyX_Initialise(title_.data(), graphics_.width, graphics_.height, 0);
+    configurePresentation(graphics_);
     [[maybe_unused]] detail::PsyCrossWindowMode window_mode{
         graphics_.fullscreen};
     configureInput();
@@ -233,13 +243,12 @@ runCampaignSaveMenu(const game::MissionPackage &mission,
       return result;
     }
 
-    if (PsyX_BeginScene() == 0) {
-      // Never spin an audio/input-only frontend on a leaked implicit scene.
-      PsyX_EndScene();
-      if (PsyX_BeginScene() == 0) {
-        continue;
-      }
-    }
+    // Draw into either a fresh scene or the still-open implicit scene left by
+    // the terminal guest packet. Ending that scene before covering it used to
+    // swap the old, un-faded gameplay backbuffer to the window for one frame.
+    // The ACD renderer starts with an opaque full-screen black tile, so it is
+    // also the correct recovery path for an inherited scene.
+    static_cast<void>(PsyX_BeginScene());
     renderer.draw(menu, slots);
     PsyX_EndScene();
     if (!first_frame_presented) {
@@ -406,6 +415,7 @@ public:
   void run() override {
     configureGraphics(graphics_);
     PsyX_Initialise(title_.data(), graphics_.width, graphics_.height, 0);
+    configurePresentation(graphics_);
     [[maybe_unused]] detail::PsyCrossWindowMode window_mode{
         graphics_.fullscreen};
     configureInput();
@@ -656,9 +666,14 @@ public:
                   : std::nullopt;
           if (game::campaignMissionsShareCarry(mission_index, next_mission) &&
               !carry_for_next) {
-            PsyX_Log_Error(
-                "Campaign transition has no authoritative player state\n");
-            break;
+            // A terminal overlay can retire its live inventory table before
+            // the native host observes the EOL request. The scene viewer
+            // normally supplies its last coherent snapshot; if even that is
+            // unavailable, continuing with mission defaults is safer than
+            // tearing down the entire campaign and returning to title.
+            PsyX_Log_Warning(
+                "Campaign transition has no coherent player carry; "
+                "continuing with mission defaults\n");
           }
           const auto save_result =
               replaying_unlocked_mission
@@ -766,6 +781,7 @@ public:
   void run() override {
     configureGraphics(graphics_);
     PsyX_Initialise(title_.data(), graphics_.width, graphics_.height, 0);
+    configurePresentation(graphics_);
     [[maybe_unused]] detail::PsyCrossWindowMode window_mode{
         graphics_.fullscreen};
     configureInput();

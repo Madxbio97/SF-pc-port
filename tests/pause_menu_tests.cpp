@@ -1,11 +1,18 @@
+#include "sf/game/localization.hpp"
+#include "sf/game/mission.hpp"
 #include "sf/game/pause_menu.hpp"
+#include "sf/game/pause_menu_data.hpp"
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <source_location>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -67,6 +74,8 @@ PauseMenu makeMenu() {
       true,
       false,
       true,
+      "15",
+      "90",
   });
   data.weapons.push_back({
       8,
@@ -81,6 +90,8 @@ PauseMenu makeMenu() {
       true,
       true,
       true,
+      "30",
+      "150",
   });
   data.current_mission = 0U;
   data.missions = {
@@ -293,26 +304,22 @@ void testOptionsPreviewIsImmediatelyComplete() {
   auto menu = makeMenu();
   moveNext(menu, 5);
   require(menu.screen() == PauseScreen::root);
-  constexpr std::array labels{
-      "Restart Mission",
-      "Restart At Last Checkpoint",
-      "Quit Game",
-      "Select Mission",
-      "Sound",
-      "Game Brightness",
-      "Screen Centering",
-      "Controller",
-  };
   const auto commands = menu.buildRenderCommands();
-  for (std::size_t index = 0; index < labels.size(); ++index) {
-    require(
-        std::ranges::any_of(commands, [index, &labels](const auto &command) {
-          return command.kind == PauseRenderKind::menu_item &&
-                 command.panel == PausePanelRole::left_content &&
-                 command.id == index && command.text == labels[index] &&
-                 !command.selected;
-        }));
-  }
+  require(std::ranges::any_of(commands, [](const auto &command) {
+    return command.kind == PauseRenderKind::text &&
+           command.panel == PausePanelRole::left_content &&
+           command.text ==
+               "Sound\nController\nGame Brightness\nScreen Centering";
+  }));
+  require(std::ranges::none_of(commands, [](const auto &command) {
+    return command.kind == PauseRenderKind::menu_item &&
+           command.panel == PausePanelRole::left_content;
+  }));
+  require(std::ranges::any_of(commands, [](const auto &command) {
+    return command.kind == PauseRenderKind::text &&
+           command.panel == PausePanelRole::right_information &&
+           command.text.starts_with("Configuration\nBrightness:");
+  }));
 }
 
 void testRetailControllerBindingsAreVisible() {
@@ -554,6 +561,30 @@ void testRootAndBriefing() {
           sf::game::PauseCommandType::resume);
 }
 
+void testBriefingPagination() {
+  const auto pages = sf::game::paginatePauseBriefing(
+      "AGENCY DIRECTIVE:",
+      "Your targets are Erich Rhoemer, Pavel Kravitch, Mara Aramov and Anton "
+      "Girdeux. Locate the communications array and protect the CBDC team. "
+      "Avoid civilian casualties and review the objectives for updates.");
+  require(!pages.empty());
+  require(pages.front().starts_with("AGENCY DIRECTIVE:\nYour targets"));
+  require(std::ranges::all_of(pages, [](const auto &page) {
+    return static_cast<std::size_t>(
+               std::count(page.begin(), page.end(), '\n')) < 9U;
+  }));
+
+  std::string long_text;
+  for (auto index = 0; index < 80; ++index) {
+    long_text += "complete objective ";
+  }
+  const auto multiple_pages =
+      sf::game::paginatePauseBriefing("FIELD REPORT:", long_text);
+  require(multiple_pages.size() > 1U);
+  require(multiple_pages.front().find("FIELD REPORT:") != std::string::npos);
+  require(multiple_pages[1].find("complete") != std::string::npos);
+}
+
 void testWeaponEquipAndGuard() {
   auto menu = makeMenu();
   openRootSection(menu, 4);
@@ -569,7 +600,11 @@ void testWeaponEquipAndGuard() {
   require(menu.data().weapons[0].equipped);
   require(!menu.data().weapons[1].equipped);
 
+  require(!menu.update({.cancel = true}));
+  require(!menu.expanded());
   moveNext(menu);
+  require(!menu.update({.confirm = true}));
+  require(menu.expanded());
   const auto rejected = menu.update({.confirm = true});
   require(rejected.type == sf::game::PauseCommandType::equip_weapon);
   require(rejected.subject == 8);
@@ -631,57 +666,73 @@ void testMapAndWeaponExpandedViews() {
   openRootSection(menu, 4);
   commands = menu.buildRenderCommands();
   require(std::ranges::any_of(commands, [](const auto &command) {
-    return command.kind == PauseRenderKind::asset && command.bounds.x >= 236;
+    return command.kind == PauseRenderKind::weapon_icon &&
+           command.panel == PausePanelRole::right_information &&
+           contains(PauseAcdLayout::information_content, command.bounds) &&
+           command.id == 8U;
   }));
   require(std::ranges::any_of(commands, [](const auto &command) {
-    return command.kind == PauseRenderKind::text && command.bounds.x < 220 &&
-           command.text.find("PK-102") != std::string::npos;
+    return command.kind == PauseRenderKind::menu_item &&
+           command.panel == PausePanelRole::left_content &&
+           command.text == "PK-102" && command.selected;
+  }));
+  require(std::ranges::any_of(commands, [](const auto &command) {
+    return command.kind == PauseRenderKind::text &&
+           command.panel == PausePanelRole::right_information &&
+           command.text == "Ammo: 30/150";
   }));
   require(std::ranges::none_of(commands, [](const auto &command) {
     return command.kind == PauseRenderKind::text &&
            command.text.find("Submachine gun") != std::string::npos;
-  }));
-  require(std::ranges::none_of(commands, [](const auto &command) {
-    return command.kind == PauseRenderKind::text &&
-           command.panel == PausePanelRole::right_information;
   }));
   require(!menu.update({.confirm = true}));
   require(menu.expanded());
   commands = menu.buildRenderCommands();
-  require(std::ranges::any_of(commands, [](const auto &command) {
+  requireRetailComposition(menu);
+  require(std::ranges::none_of(commands, [](const auto &command) {
     return command.kind == PauseRenderKind::panel &&
-           sameRect(command.bounds,
-                    PauseAcdLayout::expanded_weapon_information_panel);
+           (sameRect(command.bounds,
+                     PauseAcdLayout::expanded_weapon_image_panel) ||
+            sameRect(command.bounds,
+                     PauseAcdLayout::expanded_weapon_information_panel));
   }));
-  require(std::ranges::count_if(commands, [](const auto &command) {
-            return command.kind == PauseRenderKind::slider;
-          }) == 3);
-  for (const auto label : {"Fire Rate", "Power", "Accuracy"}) {
+  for (const auto label : {"Fire Rate", "Damage", "Clip Size", "Max Rounds"}) {
     require(std::ranges::any_of(commands, [label](const auto &command) {
-      return command.kind == PauseRenderKind::slider && command.text == label;
+      return command.kind == PauseRenderKind::text &&
+             command.panel == PausePanelRole::left_content &&
+             command.text == label;
     }));
   }
-  require(std::ranges::none_of(commands, [](const auto &command) {
-    return command.kind == PauseRenderKind::text &&
-           command.text.find("Submachine gun") != std::string::npos;
-  }));
-  require(!menu.update({.right = true}));
-  commands = menu.buildRenderCommands();
+  for (const auto value : {"30", "150"}) {
+    require(std::ranges::any_of(commands, [value](const auto &command) {
+      return command.kind == PauseRenderKind::text &&
+             command.panel == PausePanelRole::left_content &&
+             command.text == value &&
+             command.alignment == sf::game::PauseTextAlignment::right;
+    }));
+  }
   require(std::ranges::any_of(commands, [](const auto &command) {
     return command.kind == PauseRenderKind::text &&
            command.text.find("Submachine gun") != std::string::npos &&
-           command.bounds.x > 190;
+           command.panel == PausePanelRole::left_content;
   }));
   require(std::ranges::none_of(commands, [](const auto &command) {
     return command.kind == PauseRenderKind::slider;
   }));
+  require(std::ranges::any_of(commands, [](const auto &command) {
+    return command.kind == PauseRenderKind::menu_item &&
+           command.panel == PausePanelRole::right_sections;
+  }));
+  require(!menu.update({.right = true}));
+  require(menu.expanded() && menu.selection() == 1U);
   require(!menu.update({.cancel = true}));
   require(!menu.expanded());
   require(!menu.update({.confirm = true}));
   commands = menu.buildRenderCommands();
-  require(std::ranges::count_if(commands, [](const auto &command) {
-            return command.kind == PauseRenderKind::slider;
-          }) == 3);
+  require(std::ranges::any_of(commands, [](const auto &command) {
+    return command.kind == PauseRenderKind::text &&
+           command.text.find("Submachine gun") != std::string::npos;
+  }));
 }
 
 void testOptionsConfirmationAndBinding() {
@@ -739,18 +790,45 @@ void testDenseObjectivesStayInsidePanel() {
   menu.reset(std::move(data));
   openRootSection(menu, 1);
   requireRetailComposition(menu);
+
+  auto commands = menu.buildRenderCommands();
+  require(std::ranges::any_of(commands, [](const auto &command) {
+    return command.kind == PauseRenderKind::text &&
+           command.panel == PausePanelRole::left_content && command.id == 0U;
+  }));
+  require(!menu.update({.right = true}));
+  commands = menu.buildRenderCommands();
+  require(std::ranges::none_of(commands, [](const auto &command) {
+    return command.kind == PauseRenderKind::text &&
+           command.panel == PausePanelRole::left_content && command.id == 0U;
+  }));
+  require(std::ranges::any_of(commands, [](const auto &command) {
+    return command.kind == PauseRenderKind::text &&
+           command.panel == PausePanelRole::left_content && command.id == 1U;
+  }));
+  require(!menu.update({.left = true}));
+  require(menu.page() == 0U);
 }
 
 void testWeaponLabelsAndControllerRecovery() {
   auto menu = makeMenu();
   openRootSection(menu, 4);
-  const auto weapon_commands = menu.buildRenderCommands();
+  auto weapon_commands = menu.buildRenderCommands();
   require(std::ranges::any_of(weapon_commands, [](const auto &command) {
     return command.kind == PauseRenderKind::text &&
-           command.panel == PausePanelRole::left_content &&
-           command.text.find("Rate: 5/5") != std::string::npos &&
-           command.text.find("Damage: 3/5") != std::string::npos;
+           command.panel == PausePanelRole::right_information &&
+           command.text == "Ammo: 30/150";
   }));
+  require(!menu.update({.confirm = true}));
+  weapon_commands = menu.buildRenderCommands();
+  for (const auto label : {"Fire Rate", "Damage", "Clip Size", "Max Rounds"}) {
+    require(std::ranges::any_of(
+        weapon_commands, [label](const auto &command) {
+          return command.kind == PauseRenderKind::text &&
+                 command.panel == PausePanelRole::left_content &&
+                 command.text == label;
+        }));
+  }
 
   menu = makeMenu();
   openRootSection(menu, 5);
@@ -923,6 +1001,285 @@ void testNoReconnaissanceRootPreview() {
           menu.screen() == PauseScreen::root);
 }
 
+void testCompoundRussianMenuLocalization() {
+  sf::game::setGameLanguage(sf::game::GameLanguage::russian_vit);
+  const auto slots = sf::game::localizeTextCopy("Slot 2  Empty");
+  require(slots.find("Slot") == std::string::npos &&
+          slots.find("Empty") == std::string::npos);
+  const auto status =
+      sf::game::localizeTextCopy("Mission Objectives\nActive: 4\nCompleted: 0");
+  require(status.find("Mission") == std::string::npos &&
+          status.find("Active") == std::string::npos &&
+          status.find("Completed") == std::string::npos);
+  const auto hint = sf::game::localizeTextCopy("%x select   %t back");
+  require(hint.find("select") == std::string::npos &&
+          hint.find("back") == std::string::npos);
+  require(sf::game::localizeTextCopy("Sound") == "zbyk");
+  for (const auto label : {"ARMOR", "HEALTH", "DANGER", "TARGET", "HEAD SHOT",
+                           "HEADSHOT", "BOMB"}) {
+    const auto translated = sf::game::localizeTextCopy(label);
+    require(translated != label && translated.find('?') == std::string::npos);
+  }
+  const auto action = sf::game::localizeTextCopy("Change Weapon: R1");
+  require(action.find("Change Weapon") == std::string::npos &&
+          action.find('?') == std::string::npos && action.ends_with("R1"));
+  const auto ammo = sf::game::localizeTextCopy("Ammo: 15/90");
+  require(ammo.find("Ammo") == std::string::npos &&
+          ammo.find("15/90") != std::string::npos);
+  require(sf::game::localizeTextCopy("Gas Granade") != "Gas Granade");
+  require(sf::game::localizeTextCopy("N/A") != "N/A");
+  require(sf::game::localizeTextCopy("Infinite") != "Infinite");
+  for (const auto description : {
+           "The 9mm handgun is the standard issue side-arm for NATO and all "
+           "five branches of the US armed forces since passing the 1979 MRBF "
+           "(Mean Rounds Before operational Failure) performance test, "
+           "expending 35,000 rounds, six times the pistol's service life.",
+           "Primarily used as a stealth weapon against multiple targets, this "
+           "grenade releases trace amounts of Soman nerve agent into the air. "
+           "The gas quickly dissipates, but not before rendering victims "
+           "unconscious. If no antidote is administered, death follows within "
+           "15 minutes.",
+           "These incendiary blocks are made of a putty-like material which "
+           "can be molded to the user's liking. The C4 explosive putty is then "
+           "wired to a fuse and a friction igniter, allowing the user to "
+           "detonate the explosive from a distant or protected position.",
+           "The overly heavy recoil of this 12 gauge shotgun is more than "
+           "compensated for by it's unparalleled stopping power and its "
+           "recoil-inertia operation which is significantly faster than the "
+           "gas operated system found in most autoloading shotguns.",
+           "The 12-gauge modified choke shotgun is standard issue for the DEA, "
+           "FBI and USSS. In firing tests using tactical 00 shot with nine lead "
+           "on an ISCP regulation target at 25 yards, the payload was delivered "
+           "into the \"A\" kill zone with limited collateral damage.",
+       }) {
+    const auto translated = sf::game::localizeTextCopy(description);
+    require(translated != description &&
+            translated.find('?') == std::string::npos);
+  }
+  const auto confirmation =
+      sf::game::localizeTextCopy("Do you really want to restart this mission?");
+  require(confirmation.find("restart") == std::string::npos &&
+          confirmation.find('?') == confirmation.size() - 1U);
+  for (const auto message :
+       {"9mm taken", "9 mm taken", "Sniper Rifle bullet taken",
+        "Nightvision Rifle shell taken", "Grenade taken",
+        "Gas Grenade taken", "Gas Granade taken", "GAS GRENADE taken",
+        "Objective Updated", "Objective Complete", "OBJECTIVE COMPLETE"}) {
+    const auto translated = sf::game::localizeTextCopy(message);
+    require(translated != message && translated.find('?') == std::string::npos);
+  }
+  const auto gas_grenade_pickup =
+      sf::game::localizeTextCopy("Gas Grenade taken");
+  for (const auto variant : {"GAS GRENADE TAKEN", "GAS GRANADE TAKEN",
+                             "Gas Grenades taken", "Gas Granades Taken",
+                             "Gas Grenade  taken"}) {
+    require(sf::game::localizeTextCopy(variant) == gas_grenade_pickup);
+  }
+  for (const auto message : {
+           "Press Triangle to contact Lian Xing",
+           "Press X to Contact Lian Xing",
+           "Press \x1f"
+           " to Contact Lian Xing",
+           "Flak Jacket Undamaged",
+           "Antigen administered\n6 subjects remaining",
+           "Missile indexed.\n4 remaining",
+           "Eliminate hostile",
+           "Find security cardkey",
+       }) {
+    const auto translated = sf::game::localizeTextCopy(message);
+    require(translated != message &&
+            translated.find("Press") == std::string::npos &&
+            translated.find("Flak") == std::string::npos &&
+            translated.find("Antigen") == std::string::npos &&
+            translated.find("remaining") == std::string::npos &&
+            translated.find('?') == std::string::npos);
+  }
+  for (const auto objective : {
+           "Turn off power to terminal security doors",
+           "Locate explosives cache",
+           "LOCATE EXPLOSIVES CACHE.",
+           "Eliminate Kravitch and destroy comm array",
+           "Do not allow yourself to be spotted until you reach the meeting.  "
+           "Do not shoot Phagan.",
+           "Do not kill Aramov",
+       }) {
+    const auto translated = sf::game::localizeTextCopy(objective);
+    require(translated != objective &&
+            translated.find('?') == std::string::npos);
+  }
+  sf::game::setGameLanguage(sf::game::GameLanguage::english);
+}
+
+void testProofreadRussianCampaignTextIsBuiltIn() {
+  sf::game::setLocalizationRoot({});
+  sf::game::setGameLanguage(sf::game::GameLanguage::russian_vit);
+
+  const auto briefing = sf::game::localizedMissionBriefing(0U);
+  require(briefing &&
+          briefing->location.find("Washington") == std::string::npos &&
+          briefing->mission_title.find("Georgia") == std::string::npos &&
+          briefing->additional_directive.find("Rhoemer") == std::string::npos &&
+          briefing->additional_directive.find('?') == std::string::npos);
+
+  constexpr std::array expected_dates{
+      std::string_view{"08/23 22:45"}, std::string_view{"08/23 23:45"},
+      std::string_view{"08/24 00:30"}, std::string_view{"08/24 00:45"},
+      std::string_view{"08/24 01:15"}, std::string_view{"08/25 19:00"},
+      std::string_view{"08/25 19:15"}, std::string_view{"09/01 21:00"},
+      std::string_view{"09/01 21:30"}, std::string_view{"09/01 21:40"},
+      std::string_view{"09/01 21:45"}, std::string_view{"09/07 06:30"},
+      std::string_view{"09/07 07:15"}, std::string_view{"09/07 08:00"},
+      std::string_view{"09/08 03:00"}, std::string_view{"09/08 03:25"},
+      std::string_view{"09/08 04:00"}, std::string_view{"09/08 04:15"},
+      std::string_view{"09/08 04:45"}, std::string_view{"09/08 05:00"},
+  };
+  std::vector<std::string> full_directives;
+  for (std::uint32_t mission = 0U; mission < expected_dates.size(); ++mission) {
+    const auto localized = sf::game::localizedMissionBriefing(mission);
+    const auto &definition = sf::game::missionDefinition(mission);
+    require(localized && localized->date_time == expected_dates[mission] &&
+            localized->mission_title ==
+                sf::game::localizeText(definition.title) &&
+            localized->directive.find("\n\n") != std::string::npos &&
+            localized->directive.size() > 100U &&
+            localized->additional_directive.size() > 40U &&
+            std::ranges::find(full_directives, localized->directive) ==
+                full_directives.end());
+    full_directives.push_back(localized->directive);
+  }
+
+  const std::vector<std::string> objectives{
+      "Eliminate Kravitch and destroy comm. array",
+      "Protect CBDC bomb squad",
+      "Plant C4 charges at 4 fuel tanks",
+  };
+  const std::vector<std::string> parameters{
+      "Do not kill Aramov",
+      "Do not kill any CBDC agent",
+  };
+  const auto localized =
+      sf::game::localizedMissionMenuTexts(0U, objectives, parameters);
+  require(localized && localized->objectives.size() == objectives.size() &&
+          localized->parameters.size() == parameters.size());
+  for (std::size_t index = 0U; index < objectives.size(); ++index) {
+    require(localized->objectives[index] != objectives[index] &&
+            localized->objectives[index].find('?') == std::string::npos);
+  }
+  for (std::size_t index = 0U; index < parameters.size(); ++index) {
+    require(localized->parameters[index] != parameters[index] &&
+            localized->parameters[index].find('?') == std::string::npos);
+  }
+
+  for (const auto name :
+       {"Mara Aramov", "Anton Girdeux", "Gabriel Logan", "Lian Xing",
+        "Jonathan Phagan", "Erich Rhoemer", "Jorge Marcos", "Pavel Kravitch",
+        "Thomas Markinson", "Edward Benton"}) {
+    const auto translated = sf::game::localizeTextCopy(name);
+    require(translated != name && translated.find('?') == std::string::npos);
+  }
+  const std::vector<std::string> transient_objectives{
+      "transient overlay table contents"};
+  const std::vector<std::string> no_parameters;
+  const auto safe_fallback = sf::game::localizedMissionMenuTexts(
+      0U, transient_objectives, no_parameters);
+  require(safe_fallback && safe_fallback->objectives.size() == 1U &&
+          safe_fallback->objectives.front() != transient_objectives.front() &&
+          safe_fallback->objectives.front().find("transient") ==
+              std::string::npos);
+  sf::game::setGameLanguage(sf::game::GameLanguage::english);
+}
+
+void testFormattedMissionLocalization() {
+  sf::game::setLocalizationRoot({});
+  sf::game::setGameLanguage(sf::game::GameLanguage::russian_vit);
+  const auto authored_briefing = sf::game::localizedMissionBriefing(0U);
+  require(authored_briefing.has_value());
+
+  const auto root = std::filesystem::current_path() / "sf-localization-test";
+  std::filesystem::remove_all(root);
+  std::filesystem::create_directories(root);
+  std::vector<std::byte> bytes{
+      std::byte{'S'}, std::byte{'F'}, std::byte{'L'}, std::byte{'M'},
+      std::byte{'N'}, std::byte{'U'}, std::byte{'2'}, std::byte{0},
+  };
+  const auto append_u32 = [&](std::uint32_t value) {
+    for (auto shift = 0U; shift < 32U; shift += 8U) {
+      bytes.push_back(static_cast<std::byte>((value >> shift) & 0xffU));
+    }
+  };
+  const auto append_string = [&](std::string_view value) {
+    append_u32(static_cast<std::uint32_t>(value.size()));
+    for (const auto character : value) {
+      bytes.push_back(static_cast<std::byte>(character));
+    }
+  };
+  append_u32(2U);
+  append_u32(1U);
+  append_string("Eliminate %d%s scientist%s");
+  append_string("Eliminate translated: %d");
+  append_u32(1U);
+  append_string("Locate explosives cache");
+  append_string("Localized explosives cache");
+  {
+    std::ofstream output{root / "mission_menu.dat", std::ios::binary};
+    output.write(reinterpret_cast<const char *>(bytes.data()),
+                 static_cast<std::streamsize>(bytes.size()));
+  }
+  std::vector<std::byte> briefing_bytes{
+      std::byte{'S'}, std::byte{'F'}, std::byte{'L'}, std::byte{'B'},
+      std::byte{'R'}, std::byte{'F'}, std::byte{'1'}, std::byte{0},
+  };
+  const auto append_briefing_u32 = [&](std::uint32_t value) {
+    for (auto shift = 0U; shift < 32U; shift += 8U) {
+      briefing_bytes.push_back(
+          static_cast<std::byte>((value >> shift) & 0xffU));
+    }
+  };
+  const auto append_briefing_string = [&](std::string_view value) {
+    append_briefing_u32(static_cast<std::uint32_t>(value.size()));
+    for (const auto character : value) {
+      briefing_bytes.push_back(static_cast<std::byte>(character));
+    }
+  };
+  append_briefing_u32(1U);
+  append_briefing_string("PACK LOCATION");
+  append_briefing_string("PACK TITLE");
+  append_briefing_string("PACK DATE");
+  append_briefing_string("PACK DIRECTIVE");
+  append_briefing_string("PACK DETAILS");
+  {
+    std::ofstream output{root / "briefings.dat", std::ios::binary};
+    output.write(reinterpret_cast<const char *>(briefing_bytes.data()),
+                 static_cast<std::streamsize>(briefing_bytes.size()));
+  }
+
+  sf::game::setLocalizationRoot(root);
+  sf::game::setGameLanguage(sf::game::GameLanguage::russian_vit);
+  const auto packed_briefing = sf::game::localizedMissionBriefing(0U);
+  require(packed_briefing &&
+          packed_briefing->location == authored_briefing->location &&
+          packed_briefing->mission_title == authored_briefing->mission_title &&
+          packed_briefing->date_time == authored_briefing->date_time &&
+          packed_briefing->directive == authored_briefing->directive &&
+          packed_briefing->additional_directive ==
+              authored_briefing->additional_directive);
+  const std::vector<std::string> objectives{
+      "Eliminate 6 scientists",
+      "Locate explosives cache.",
+  };
+  const std::vector<std::string> parameters;
+  const auto localized =
+      sf::game::localizedMissionMenuTexts(0U, objectives, parameters);
+  require(localized && localized->objectives.size() == 2U &&
+          localized->objectives.front() == "Eliminate translated: 6" &&
+          localized->objectives.back() == "Localized explosives cache");
+  require(sf::game::localizeTextCopy("Locate explosives cache.") ==
+          "Localized explosives cache");
+  sf::game::setLocalizationRoot({});
+  sf::game::setGameLanguage(sf::game::GameLanguage::english);
+  std::filesystem::remove_all(root);
+}
+
 } // namespace
 
 int main() {
@@ -939,6 +1296,7 @@ int main() {
     testRetailTransitions();
     testRetailMissionSelectCheat();
     testRootAndBriefing();
+    testBriefingPagination();
     testWeaponEquipAndGuard();
     testMapAndWeaponExpandedViews();
     testOptionsConfirmationAndBinding();
@@ -948,6 +1306,9 @@ int main() {
     testRetailControllerTransaction();
     testExactGuestMissionEntries();
     testNoReconnaissanceRootPreview();
+    testCompoundRussianMenuLocalization();
+    testProofreadRussianCampaignTextIsBuiltIn();
+    testFormattedMissionLocalization();
   } catch (const std::exception &error) {
     std::fprintf(stderr, "%s\n", error.what());
     return 1;

@@ -11,6 +11,7 @@ the vcpkg manifest.
 | OpenAL Soft | Native audio output | vcpkg package copyright file |
 | FFmpeg | STR/FM​​V demux/decode and audio conversion | vcpkg package copyright file |
 | fmt | Formatting support used by the backend | vcpkg package copyright file |
+| Industry Bold (RUS by Slavchansky) | User-supplied source face for the generated Russian font atlas; the TTF is not redistributed | `tools/fonts/industry/COPYRIGHT.txt` |
 | Microsoft Visual C++ Runtime | Windows runtime libraries in binary releases | Applicable Microsoft license terms |
 
 The release packager copies the exact dependency notices into its `licenses/`

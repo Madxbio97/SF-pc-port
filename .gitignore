@@ -1,6 +1,7 @@
 /build/
 /out/
 /dist/
+/tmp/
 /.vs/
 /CMakeUserPresets.json
 *.user
@@ -17,3 +18,6 @@
 *.ilk
 *.exp
 *.lib
+*.py[cod]
+__pycache__/
+/tools/fonts/industry/*.ttf

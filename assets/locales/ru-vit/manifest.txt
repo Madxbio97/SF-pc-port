@@ -1,0 +1,6 @@
+SFLANG=1
+Locale=ru-RU
+Source=SCES-01913 ViT Co.
+TextOnly=1
+Audio=Original
+FMV=Original

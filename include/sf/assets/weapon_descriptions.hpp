@@ -21,6 +21,8 @@ struct WeaponDescription {
 class WeaponDescriptionTable final {
 public:
     [[nodiscard]] static WeaponDescriptionTable parse(std::span<const std::byte> bytes);
+    [[nodiscard]] static WeaponDescriptionTable parseRussianVit(
+        std::span<const std::byte> bytes);
 
     [[nodiscard]] const std::vector<WeaponDescription>& entries() const noexcept {
         return entries_;

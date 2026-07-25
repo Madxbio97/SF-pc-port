@@ -10,6 +10,30 @@
 
 namespace sf::game {
 
+// Read-only snapshot used by the host audio trace. It intentionally exposes
+// clocks and queue depths only; diagnostics must never mutate guest state.
+struct LegacyAudioDiagnostics {
+  std::uint64_t machine_tick{};
+  std::uint64_t audio_frame_tick{};
+  std::uint64_t spu_sample_clock{};
+  std::uint64_t spu_mixed_frames{};
+  std::uint64_t spu_dropped_pcm_frames{};
+  std::uint32_t cd_lba{};
+  std::size_t spu_pcm_frames{};
+  std::size_t spu_cd_frames{};
+  std::size_t active_spu_voices{};
+  std::uint16_t spu_control{};
+  std::uint16_t spu_status{};
+  std::uint8_t cd_mode{};
+  std::uint8_t cd_reading{};
+  std::uint8_t cd_muted{};
+  std::uint8_t cd_adpcm_muted{};
+  std::uint8_t xa_stream_set{};
+  std::uint8_t xa_file{};
+  std::uint8_t xa_channel{};
+  bool audio_frame_tick_initialized{};
+};
+
 struct LegacyNativePoint {
   std::int32_t x{};
   std::int32_t y{};
@@ -733,7 +757,11 @@ struct LegacyDroppedItemBridgeState {
   std::uint8_t slot{};
   std::uint16_t room{};
   std::uint16_t item{};
-  LegacyNativePoint position;
+  // FUN_80045f84 moves the display into the fixed pickup MATRIX pool. Type
+  // 0x11 is a camera-facing pickup sprite, but retail links it through the
+  // primary world list so its OT depth is shared with Gabe and the level.
+  // Preserve the complete transform used to project and sort that sprite.
+  LegacyNativeMatrix transform;
 
   [[nodiscard]] friend bool
   operator==(const LegacyDroppedItemBridgeState &,

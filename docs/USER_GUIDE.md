@@ -19,6 +19,11 @@ relative locations. The launcher remembers only the path.
 No original image is included in the release or source repository. Other regions
 and revisions are rejected because their executable and overlays differ.
 
+The bundled Russian option is a text-only language pack extracted from the ViT
+Co. localization. Continue selecting the supported USA v1.1 CUE for gameplay;
+the launcher applies Russian fonts and text on top of it. Voices, music and FMV
+remain unchanged.
+
 ## Launcher options
 
 - **Resolution** controls the internal scene and depth buffers as well as output.
@@ -28,6 +33,12 @@ and revisions are rejected because their executable and overlays differ.
 - **Bilinear filtering** smooths textures while clamping each PS1 atlas tile to
   avoid seams and neighboring-texture bleed.
 - **Anisotropic filtering** independently improves oblique world textures.
+- **Vertical synchronization** presents on the display refresh and removes
+  tearing.
+- **Frame limit** applies a high-resolution cap to every presented frame. Use
+  `Unlimited` when VSYNC or variable-refresh hardware should own the cadence.
+- **Text language** selects English or the Russian ViT Co. text pack. The choice
+  is remembered in `%LOCALAPPDATA%\SyphonFilterPC\launcher.ini`.
 - **Controls** remaps all keyboard and mouse gameplay actions.
 - **DOSSIERS** opens the four-page bonus gallery; use the on-screen buttons,
   Left/Right, A/D or Escape.

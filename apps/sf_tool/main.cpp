@@ -1,11 +1,19 @@
+#include "ui_export.hpp"
+
 #include "sf/assets/emd_scene.hpp"
+#include "sf/assets/fog_archive.hpp"
+#include "sf/assets/hog_archive.hpp"
+#include "sf/assets/mission_briefing.hpp"
+#include "sf/assets/tim_image.hpp"
 #include "sf/core/error.hpp"
+#include "sf/core/file_io.hpp"
 #include "sf/core/sha256.hpp"
 #include "sf/game/actor_animation.hpp"
 #include "sf/game/game_disc.hpp"
 #include "sf/game/gameplay.hpp"
 #include "sf/game/legacy_first_mission_runtime.hpp"
 #include "sf/game/legacy_gameplay_vm.hpp"
+#include "sf/game/localization.hpp"
 #include "sf/game/mission.hpp"
 #include "sf/game/title.hpp"
 #include "sf/psx/function_map.hpp"
@@ -38,7 +46,20 @@ void printUsage() {
       << "  sf_tool list-files <game.cue> [iso-path]\n"
       << "  sf_tool extract-exe <game.cue> <output-file>\n"
       << "  sf_tool extract-file <game.cue> <iso-path> <output-file>\n"
+      << "  sf_tool list-hog <game.cue> <hog-path>\n"
+      << "  sf_tool extract-hog-file <game.cue> <hog-path> <name> "
+         "<output-file>\n"
+      << "  sf_tool list-fog <game.cue> <fog-path>\n"
+      << "  sf_tool extract-fog-file <game.cue> <fog-path> <name> "
+         "<output-file>\n"
+      << "  sf_tool list-fog-hog <game.cue> <fog-path> <hog-name>\n"
+      << "  sf_tool extract-fog-hog-file <game.cue> <fog-path> <hog-name> "
+         "<name> <output-file>\n"
       << "  sf_tool extract-mission-file <game.cue> <fog-name> <output-file>\n"
+      << "  sf_tool export-ui-assets <game.cue> <output-directory>\n"
+      << "  sf_tool export-vit-language-pack <vit.cue> <usa-v1.1.cue> "
+         "<output-directory>\n"
+      << "  sf_tool export-runtime-strings <game.cue> <output.tsv>\n"
       << "  sf_tool map-functions <game.cue> <output.csv>\n"
       << "  sf_tool probe-legacy-vm <game.cue>\n"
       << "  sf_tool probe-legacy-cd <game.cue>\n"
@@ -51,28 +72,6 @@ void printUsage() {
 
 sf::game::GameDisc openDisc(const char *path) {
   return sf::game::GameDisc::open(std::filesystem::path{path});
-}
-
-std::vector<std::byte> readHostFile(const char *path) {
-  std::ifstream input{std::filesystem::path{path},
-                      std::ios::binary | std::ios::ate};
-  if (!input) {
-    throw sf::core::Error{sf::core::ErrorCode::io, "Cannot open host file"};
-  }
-  const auto end = input.tellg();
-  if (end < 0 ||
-      static_cast<std::uint64_t>(end) >
-          static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
-    throw sf::core::Error{sf::core::ErrorCode::io, "Host file is too large"};
-  }
-  std::vector<std::byte> bytes(static_cast<std::size_t>(end));
-  input.seekg(0);
-  input.read(reinterpret_cast<char *>(bytes.data()),
-             static_cast<std::streamsize>(bytes.size()));
-  if (!input) {
-    throw sf::core::Error{sf::core::ErrorCode::io, "Failed to read host file"};
-  }
-  return bytes;
 }
 
 std::uint32_t parseFrameCount(const char *text) {
@@ -115,18 +114,8 @@ int inspect(const char *path) {
 
 int extractExecutable(const char *cue_path, const char *output_path) {
   auto disc = openDisc(cue_path);
-  std::ofstream output{std::filesystem::path{output_path},
-                       std::ios::binary | std::ios::trunc};
-  if (!output) {
-    throw sf::core::Error{sf::core::ErrorCode::io, "Cannot open output file"};
-  }
   const auto &bytes = disc.executableFile();
-  output.write(reinterpret_cast<const char *>(bytes.data()),
-               static_cast<std::streamsize>(bytes.size()));
-  if (!output) {
-    throw sf::core::Error{sf::core::ErrorCode::io,
-                          "Failed to write executable"};
-  }
+  sf::core::writeBinaryFile(std::filesystem::path{output_path}, bytes);
   std::cout << "Extracted " << bytes.size() << " bytes to " << output_path
             << '\n';
   return 0;
@@ -136,19 +125,86 @@ int extractFile(const char *cue_path, const char *iso_path,
                 const char *output_path) {
   auto disc = openDisc(cue_path);
   const auto bytes = disc.image().readFile(iso_path);
-  std::ofstream output{std::filesystem::path{output_path},
-                       std::ios::binary | std::ios::trunc};
-  if (!output) {
-    throw sf::core::Error{sf::core::ErrorCode::io, "Cannot open output file"};
-  }
-  output.write(reinterpret_cast<const char *>(bytes.data()),
-               static_cast<std::streamsize>(bytes.size()));
-  if (!output) {
-    throw sf::core::Error{sf::core::ErrorCode::io,
-                          "Failed to write extracted file"};
-  }
+  sf::core::writeBinaryFile(std::filesystem::path{output_path}, bytes);
   std::cout << "Extracted " << bytes.size() << " bytes from " << iso_path
             << " to " << output_path << '\n';
+  return 0;
+}
+
+int listHog(const char *cue_path, const char *hog_path) {
+  auto disc = openDisc(cue_path);
+  const auto archive =
+      sf::assets::HogArchive::parse(disc.image().readFile(hog_path));
+  std::cout << "name,size\n";
+  for (const auto &entry : archive.entries()) {
+    std::cout << entry.name << ',' << entry.size << '\n';
+  }
+  return 0;
+}
+
+int extractHogFile(const char *cue_path, const char *hog_path, const char *name,
+                   const char *output_path) {
+  auto disc = openDisc(cue_path);
+  const auto archive =
+      sf::assets::HogArchive::parse(disc.image().readFile(hog_path));
+  const auto file = archive.file(name);
+  sf::core::writeBinaryFile(std::filesystem::path{output_path}, file);
+  std::cout << "Extracted " << file.size() << " bytes from " << hog_path << ':'
+            << name << " to " << output_path << '\n';
+  return 0;
+}
+
+int listFog(const char *cue_path, const char *fog_path) {
+  auto disc = openDisc(cue_path);
+  const auto archive =
+      sf::assets::FogArchive::parse(disc.image().readFile(fog_path));
+  std::cout << "name,size\n";
+  for (const auto &entry : archive.entries()) {
+    std::cout << entry.name << ',' << entry.size << '\n';
+  }
+  return 0;
+}
+
+int extractFogFile(const char *cue_path, const char *fog_path, const char *name,
+                   const char *output_path) {
+  auto disc = openDisc(cue_path);
+  const auto archive =
+      sf::assets::FogArchive::parse(disc.image().readFile(fog_path));
+  const auto bytes = archive.file(name);
+  sf::core::writeBinaryFile(std::filesystem::path{output_path}, bytes);
+  std::cout << "Extracted " << bytes.size() << " bytes from " << fog_path << ':'
+            << name << " to " << output_path << '\n';
+  return 0;
+}
+
+int listFogHog(const char *cue_path, const char *fog_path,
+               const char *hog_name) {
+  auto disc = openDisc(cue_path);
+  const auto fog =
+      sf::assets::FogArchive::parse(disc.image().readFile(fog_path));
+  const auto bytes = fog.file(hog_name);
+  const auto archive = sf::assets::HogArchive::parse(
+      std::vector<std::byte>{bytes.begin(), bytes.end()});
+  std::cout << "name,size\n";
+  for (const auto &entry : archive.entries()) {
+    std::cout << entry.name << ',' << entry.size << '\n';
+  }
+  return 0;
+}
+
+int extractFogHogFile(const char *cue_path, const char *fog_path,
+                      const char *hog_name, const char *name,
+                      const char *output_path) {
+  auto disc = openDisc(cue_path);
+  const auto fog =
+      sf::assets::FogArchive::parse(disc.image().readFile(fog_path));
+  const auto bytes = fog.file(hog_name);
+  const auto archive = sf::assets::HogArchive::parse(
+      std::vector<std::byte>{bytes.begin(), bytes.end()});
+  const auto file = archive.file(name);
+  sf::core::writeBinaryFile(std::filesystem::path{output_path}, file);
+  std::cout << "Extracted " << file.size() << " bytes from " << fog_path << ':'
+            << hog_name << ':' << name << " to " << output_path << '\n';
   return 0;
 }
 
@@ -157,19 +213,406 @@ int extractMissionFile(const char *cue_path, const char *name,
   auto disc = openDisc(cue_path);
   const auto mission = sf::game::MissionPackage::loadFirst(disc);
   const auto bytes = mission.archive().file(name);
-  std::ofstream output{std::filesystem::path{output_path},
-                       std::ios::binary | std::ios::trunc};
-  if (!output) {
-    throw sf::core::Error{sf::core::ErrorCode::io, "Cannot open output file"};
-  }
-  output.write(reinterpret_cast<const char *>(bytes.data()),
-               static_cast<std::streamsize>(bytes.size()));
-  if (!output) {
-    throw sf::core::Error{sf::core::ErrorCode::io,
-                          "Failed to write extracted mission file"};
-  }
+  sf::core::writeBinaryFile(std::filesystem::path{output_path}, bytes);
   std::cout << "Extracted " << bytes.size() << " bytes from " << name << " to "
             << output_path << '\n';
+  return 0;
+}
+
+std::vector<std::byte> copyBytes(std::span<const std::byte> source) {
+  return {source.begin(), source.end()};
+}
+
+void appendLe32(std::vector<std::byte> &output, std::uint32_t value) {
+  output.push_back(static_cast<std::byte>(value & 0xffU));
+  output.push_back(static_cast<std::byte>((value >> 8U) & 0xffU));
+  output.push_back(static_cast<std::byte>((value >> 16U) & 0xffU));
+  output.push_back(static_cast<std::byte>((value >> 24U) & 0xffU));
+}
+
+void appendString(std::vector<std::byte> &output, std::string_view value) {
+  if (value.size() > std::numeric_limits<std::uint32_t>::max()) {
+    throw sf::core::Error{sf::core::ErrorCode::invalid_format,
+                          "Localized string is too large"};
+  }
+  appendLe32(output, static_cast<std::uint32_t>(value.size()));
+  output.insert(
+      output.end(), reinterpret_cast<const std::byte *>(value.data()),
+      reinterpret_cast<const std::byte *>(value.data() + value.size()));
+}
+
+bool isVitTextByte(std::byte value) noexcept {
+  const auto character = std::to_integer<unsigned char>(value);
+  return character == '\n' || character == '\r' || character == '\t' ||
+         (character >= 0x20U && character <= 0x7eU) ||
+         (character >= 0xdfU && character <= 0xfcU);
+}
+
+bool isBriefingDate(std::string_view value) noexcept {
+  return value.size() >= 11U && value[2] == '/' && value[5] == ' ' &&
+         value[8] == ':' && value[0] >= '0' && value[0] <= '9' &&
+         value[1] >= '0' && value[1] <= '9' && value[3] >= '0' &&
+         value[3] <= '9' && value[4] >= '0' && value[4] <= '9' &&
+         value[6] >= '0' && value[6] <= '9' && value[7] >= '0' &&
+         value[7] <= '9' && value[9] >= '0' && value[9] <= '9' &&
+         value[10] >= '0' && value[10] <= '9';
+}
+
+std::vector<std::string>
+scanVitOverlayStrings(std::span<const std::byte> bytes) {
+  std::vector<std::string> strings;
+  auto cursor = std::size_t{};
+  while (cursor < bytes.size()) {
+    while (cursor < bytes.size() && !isVitTextByte(bytes[cursor])) {
+      ++cursor;
+    }
+    const auto start = cursor;
+    while (cursor < bytes.size() && isVitTextByte(bytes[cursor])) {
+      ++cursor;
+    }
+    if (cursor - start >= 3U && cursor < bytes.size() &&
+        bytes[cursor] == std::byte{}) {
+      std::string value(cursor - start, '\0');
+      std::ranges::transform(bytes.subspan(start, cursor - start),
+                             value.begin(), [](std::byte character) {
+                               return static_cast<char>(
+                                   std::to_integer<unsigned char>(character));
+                             });
+      while (!value.empty() && (value.back() == '\r' || value.back() == '\n')) {
+        value.pop_back();
+      }
+      strings.push_back(std::move(value));
+    }
+    ++cursor;
+  }
+  return strings;
+}
+
+std::string escapeTsv(std::string_view value) {
+  std::string result;
+  result.reserve(value.size());
+  for (const auto character : value) {
+    switch (character) {
+    case '\\':
+      result += "\\\\";
+      break;
+    case '\t':
+      result += "\\t";
+      break;
+    case '\r':
+      result += "\\r";
+      break;
+    case '\n':
+      result += "\\n";
+      break;
+    default:
+      result.push_back(character);
+      break;
+    }
+  }
+  return result;
+}
+
+int exportRuntimeStrings(const char *cue_path, const char *output_path) {
+  auto disc = openDisc(cue_path);
+  std::ofstream output{std::filesystem::path{output_path}, std::ios::trunc};
+  if (!output) {
+    throw sf::core::Error{sf::core::ErrorCode::io,
+                          "Cannot create runtime-string catalogue"};
+  }
+  output << "SOURCE\tTEXT\n";
+  const auto write_strings = [&](std::string_view source,
+                                 std::span<const std::byte> bytes) {
+    for (const auto &text : scanVitOverlayStrings(bytes)) {
+      const auto alphabetic = std::ranges::count_if(text, [](unsigned char c) {
+        return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+      });
+      if (alphabetic < 2) {
+        continue;
+      }
+      output << escapeTsv(source) << '\t' << escapeTsv(text) << '\n';
+    }
+  };
+  write_strings(disc.bootPath(), disc.executableFile());
+  for (const auto &overlay : disc.overlays()) {
+    const auto bytes = disc.image().readFile(overlay.path);
+    write_strings(overlay.path, bytes);
+  }
+  if (!output) {
+    throw sf::core::Error{sf::core::ErrorCode::io,
+                          "Could not write runtime-string catalogue"};
+  }
+  return 0;
+}
+
+struct VitMissionText {
+  sf::assets::MissionBriefing briefing;
+};
+
+VitMissionText extractVitMissionText(std::span<const std::byte> overlay,
+                                     std::size_t record_index) {
+  const auto strings = scanVitOverlayStrings(overlay);
+  std::vector<std::size_t> dates;
+  for (std::size_t index = 0U; index < strings.size(); ++index) {
+    if (isBriefingDate(strings[index])) {
+      dates.push_back(index);
+    }
+  }
+  if (dates.empty()) {
+    throw sf::core::Error{sf::core::ErrorCode::invalid_format,
+                          "ViT mission overlay briefing is missing"};
+  }
+  // Several localized one-mission overlays collapse the source DLF's shared
+  // record table to one authored record.
+  const auto date = dates[std::min(record_index, dates.size() - 1U)];
+  const auto first_date = dates.front();
+  if (date < 2U || date + 1U >= strings.size() ||
+      first_date + 2U >= strings.size()) {
+    throw sf::core::Error{sf::core::ErrorCode::invalid_format,
+                          "ViT mission overlay text table is truncated"};
+  }
+
+  auto directive = strings[date - 1U];
+  if (const auto separator = directive.find("\r\n\r\n");
+      separator != std::string::npos) {
+    directive.erase(0U, separator + 4U);
+  } else if (const auto line_separator = directive.find("\n\n");
+             line_separator != std::string::npos) {
+    directive.erase(0U, line_separator + 2U);
+  }
+  auto briefing = sf::assets::MissionBriefing::fromFields(
+      strings[first_date + 2U], strings[date + 1U], strings[date],
+      std::move(directive), strings[date - 2U]);
+  return VitMissionText{std::move(briefing)};
+}
+
+std::vector<std::string>
+missionMenuCandidates(std::span<const std::byte> overlay,
+                      std::string_view marker) {
+  auto strings = scanVitOverlayStrings(overlay);
+  std::vector<std::size_t> dates;
+  for (std::size_t index = 0U; index < strings.size(); ++index) {
+    if (isBriefingDate(strings[index])) {
+      dates.push_back(index);
+    }
+  }
+  if (dates.empty()) {
+    return {};
+  }
+  auto cursor = dates.back() + (dates.size() == 1U ? 3U : 2U);
+  std::vector<std::string> result;
+  while (cursor < strings.size()) {
+    auto value = std::move(strings[cursor++]);
+    const auto uppercase_resource =
+        !value.empty() && value.size() <= 16U &&
+        std::ranges::all_of(value, [](unsigned char character) {
+          return (character >= 'A' && character <= 'Z') ||
+                 (character >= '0' && character <= '9') || character == '_';
+        });
+    const auto letter_count = static_cast<std::size_t>(
+        std::count_if(value.begin(), value.end(), [](unsigned char character) {
+          return (character >= 'A' && character <= 'Z') ||
+                 (character >= 'a' && character <= 'z') || character >= 0xdfU;
+        }));
+    const auto binary_punctuation =
+        value.find_first_of("<$!@#^\\") != std::string::npos;
+    const auto source_path = value.starts_with("bin/") || value.ends_with(".c");
+    // The localized root overlays are not named after every mission resource
+    // (LEVSPEC.OVL, for example, reaches CHURCH2 before its binary tables).
+    // Stop at the first resource token instead of scanning machine data as
+    // text and poisoning the English/Russian alignment table.
+    if (value == marker || value == "MOVIE" || value.starts_with('\\') ||
+        source_path || binary_punctuation || letter_count < 2U ||
+        (!result.empty() && uppercase_resource)) {
+      break;
+    }
+    result.push_back(std::move(value));
+  }
+  return result;
+}
+
+std::vector<std::pair<std::string, std::string>>
+alignMissionMenuText(std::span<const std::byte> english_overlay,
+                     std::span<const std::byte> russian_overlay,
+                     std::string_view marker) {
+  auto english = missionMenuCandidates(english_overlay, marker);
+  auto russian = missionMenuCandidates(russian_overlay, marker);
+  if (english.empty() || russian.empty()) {
+    return {};
+  }
+
+  // ViT rebuilt three tables with additional Russian singular/plural forms
+  // and moved a few status labels.  Their order is deterministic for the
+  // supported SCES-01913 image; recording those authored indices is safer
+  // than guessing from string lengths (which previously paired objectives
+  // with Italian fallback text or binary data).
+  constexpr std::array<std::size_t, 19U> baseext_indices{
+      0U,  1U,  2U,  3U,  4U,  5U,  6U,  7U,  8U,  11U,
+      12U, 15U, 16U, 13U, 17U, 18U, 19U, 20U, 14U,
+  };
+  constexpr std::array<std::size_t, 9U> levspec_indices{
+      0U, 1U, 2U, 4U, 6U, 7U, 8U, 9U, 10U,
+  };
+  constexpr std::array<std::size_t, 9U> whouse_indices{
+      0U, 1U, 4U, 5U, 6U, 7U, 8U, 10U, 11U,
+  };
+  std::span<const std::size_t> indices;
+  if (marker == "BASEEXT") {
+    indices = baseext_indices;
+  } else if (marker == "LEVSPEC") {
+    indices = levspec_indices;
+  } else if (marker == "WHOUSE") {
+    indices = whouse_indices;
+  }
+  if (!indices.empty() && indices.size() != english.size()) {
+    return {};
+  }
+
+  std::vector<std::pair<std::string, std::string>> result;
+  result.reserve(english.size());
+  for (auto index = std::size_t{}; index < english.size(); ++index) {
+    const auto russian_index = indices.empty() ? index : indices[index];
+    if (russian_index >= russian.size()) {
+      return {};
+    }
+    result.emplace_back(std::move(english[index]),
+                        std::move(russian[russian_index]));
+  }
+  return result;
+}
+
+int exportVitLanguagePack(const char *cue_path, const char *english_cue_path,
+                          const char *output_path) {
+  auto disc = openDisc(cue_path);
+  auto english_disc = openDisc(english_cue_path);
+  if (disc.bootPath() != "SCES_019.13") {
+    throw sf::core::Error{
+        sf::core::ErrorCode::unsupported,
+        "Language source must be the ViT Co. SCES-01913 image"};
+  }
+  if (!english_disc.game() || english_disc.bootPath() != "SCUS_942.40") {
+    throw sf::core::Error{
+        sf::core::ErrorCode::unsupported,
+        "English mapping source must be Syphon Filter USA v1.1 SCUS-94240"};
+  }
+  sf::game::setGameLanguage(sf::game::GameLanguage::russian_vit);
+
+  const auto root = std::filesystem::path{output_path};
+  const auto &executable = disc.executableFile();
+  struct EmbeddedTim {
+    std::string_view name;
+    std::size_t offset;
+    std::size_t size;
+  };
+  constexpr std::array fonts{
+      EmbeddedTim{"FONTA.TIM", 0x15ba60U, 2592U},
+      EmbeddedTim{"FONTB.TIM", 0x15cc80U, 4640U},
+      EmbeddedTim{"FONTC.TIM", 0x15dea0U, 5710U},
+  };
+  for (const auto &font : fonts) {
+    if (font.offset > executable.size() ||
+        executable.size() - font.offset < font.size) {
+      throw sf::core::Error{sf::core::ErrorCode::invalid_format,
+                            "ViT executable font table is truncated"};
+    }
+    const auto bytes = std::span{executable}.subspan(font.offset, font.size);
+    static_cast<void>(sf::assets::TimImage::parse(bytes));
+    sf::core::writeBinaryFile(root / "fonts" / font.name, bytes, true);
+  }
+
+  const auto title =
+      sf::assets::HogArchive::parse(disc.image().readFile("COMMON/TITLEI.HOG"));
+  constexpr std::array title_names{
+      std::string_view{"NEW.TIM"},
+      std::string_view{"LOAD.TIM"},
+      std::string_view{"VIDEO.TIM"},
+      std::string_view{"SEARCH.TIM"},
+  };
+  for (const auto name : title_names) {
+    const auto bytes = title.file(name);
+    static_cast<void>(sf::assets::TimImage::parse(bytes));
+    sf::core::writeBinaryFile(root / "title" / name, bytes, true);
+  }
+
+  const auto first_fog =
+      sf::assets::FogArchive::parse(disc.image().readFile("FOG/SUBWAY.FOG"));
+  const auto menu =
+      sf::assets::HogArchive::parse(copyBytes(first_fog.file("MENU.HOG")));
+  sf::core::writeBinaryFile(root / "WEAPDESC.TXT", menu.file("WEAPDESC.TXT"),
+                            true);
+
+  constexpr std::array briefing_magic{
+      std::byte{'S'}, std::byte{'F'}, std::byte{'L'}, std::byte{'B'},
+      std::byte{'R'}, std::byte{'F'}, std::byte{'1'}, std::byte{0},
+  };
+  std::vector<std::byte> briefings{briefing_magic.begin(),
+                                   briefing_magic.end()};
+  constexpr std::array menu_magic{
+      std::byte{'S'}, std::byte{'F'}, std::byte{'L'}, std::byte{'M'},
+      std::byte{'N'}, std::byte{'U'}, std::byte{'2'}, std::byte{0},
+  };
+  std::vector<std::byte> mission_menu{menu_magic.begin(), menu_magic.end()};
+  const auto missions = sf::game::missionCatalog();
+  appendLe32(briefings, static_cast<std::uint32_t>(missions.size()));
+  appendLe32(mission_menu, static_cast<std::uint32_t>(missions.size()));
+  for (const auto &definition : missions) {
+    std::cout << "  mission " << (definition.index + 1U) << ": "
+              << definition.resource_name << std::endl;
+    const auto fog_path =
+        "FOG/" + std::string{definition.resource_name} + ".FOG";
+    const auto fog =
+        sf::assets::FogArchive::parse(disc.image().readFile(fog_path));
+    const auto localized_menu =
+        sf::assets::HogArchive::parse(copyBytes(fog.file("MENU.HOG")));
+    for (const auto &entry : localized_menu.entries()) {
+      if (!std::string_view{entry.name}.starts_with("MAP") ||
+          !std::string_view{entry.name}.ends_with(".TIM")) {
+        continue;
+      }
+      const auto bytes = localized_menu.file(entry.name);
+      static_cast<void>(sf::assets::TimImage::parse(bytes));
+      sf::core::writeBinaryFile(
+          root / "maps" / std::to_string(definition.index) / entry.name, bytes,
+          true);
+    }
+    const auto language_overlay_name =
+        std::string{definition.briefing_overlay_name.empty()
+                        ? definition.overlay_name
+                        : definition.briefing_overlay_name};
+    const auto briefing_record = definition.briefing_record;
+    const auto overlay_path = "BIN/" + language_overlay_name;
+    const auto russian_overlay = disc.image().readFile(overlay_path);
+    const auto english_overlay = english_disc.image().readFile(overlay_path);
+    const auto localized =
+        extractVitMissionText(russian_overlay, briefing_record);
+    const auto &briefing = localized.briefing;
+    appendString(briefings, briefing.location());
+    appendString(briefings, sf::game::localizeText(definition.title));
+    appendString(briefings, briefing.dateTime());
+    appendString(briefings, briefing.directive());
+    appendString(briefings, briefing.additionalDirective());
+    const auto mapping = alignMissionMenuText(
+        english_overlay, russian_overlay,
+        std::filesystem::path{language_overlay_name}.stem().string());
+    appendLe32(mission_menu, static_cast<std::uint32_t>(mapping.size()));
+    for (const auto &[source, translated] : mapping) {
+      appendString(mission_menu, source);
+      appendString(mission_menu, translated);
+    }
+  }
+  sf::core::writeBinaryFile(root / "briefings.dat", briefings, true);
+  sf::core::writeBinaryFile(root / "mission_menu.dat", mission_menu, true);
+
+  constexpr std::string_view manifest{
+      "SFLANG=1\r\nLocale=ru-RU\r\nSource=SCES-01913 ViT Co.\r\n"
+      "TextOnly=1\r\nAudio=Original\r\nFMV=Original\r\n"};
+  sf::core::writeBinaryFile(
+      root / "manifest.txt",
+      std::span{reinterpret_cast<const std::byte *>(manifest.data()),
+                manifest.size()},
+      true);
+  std::cout << "Exported ViT text-only language pack for " << missions.size()
+            << " missions to " << root.string() << '\n';
   return 0;
 }
 
@@ -2829,8 +3272,7 @@ int probeLegacyLevel(const char *cue_path, std::uint32_t frame_count) {
         if (descriptor_state_read) {
           auto active = (descriptor_flags & 0x4000U) != 0U;
           if (!active && bank_activation_volume_entered &&
-              bank_current_room == 18U &&
-              !bank_descriptor_fallback_attempted) {
+              bank_current_room == 18U && !bank_descriptor_fallback_attempted) {
             bank_descriptor_fallback_attempted = true;
             const auto activation =
                 vm.invoke(0x8005fd04U, std::array{10U}, 5'000'000U);
@@ -3008,9 +3450,8 @@ int probeLegacyLevel(const char *cue_path, std::uint32_t frame_count) {
               unseen_root = static_cast<std::uint8_t>(root);
             }
           }
-          if (!unseen_root ||
-              !materialize_descriptor_actor(10U, dynamic_first_slot,
-                                            *unseen_root, 0U)) {
+          if (!unseen_root || !materialize_descriptor_actor(
+                                  10U, dynamic_first_slot, *unseen_root, 0U)) {
             record_driver_blocker(
                 "bank-last-root-materialization-continuation-fault");
           } else {
@@ -3064,11 +3505,10 @@ int probeLegacyLevel(const char *cue_path, std::uint32_t frame_count) {
           bomb_29_callback_completed = callback.completed();
           std::cout << "probe-bomb-callback: source=29"
                     << ", production-interaction=0"
-                    << ", completed=" << callback.completed()
-                    << ", reason="
-                    << sf::psx::toString(callback.execution.reason)
-                    << ", pc=0x" << std::hex << std::uppercase
-                    << callback.execution.pc << std::dec << '\n';
+                    << ", completed=" << callback.completed() << ", reason="
+                    << sf::psx::toString(callback.execution.reason) << ", pc=0x"
+                    << std::hex << std::uppercase << callback.execution.pc
+                    << std::dec << '\n';
           if (!callback.completed()) {
             record_driver_blocker("source-29-bomb-callback-fault");
           }
@@ -3105,21 +3545,18 @@ int probeLegacyLevel(const char *cue_path, std::uint32_t frame_count) {
           std::uint32_t word_28{};
           std::uint32_t word_30{};
           std::uint32_t word_34{};
-          const auto raw = vm.runtime().read32(0x80115cccU, records) &&
-                           vm.runtime().read32(
-                               records + 317U * 0x4cU + 0x28U, word_28) &&
-                           vm.runtime().read32(
-                               records + 317U * 0x4cU + 0x30U, word_30) &&
-                           vm.runtime().read32(
-                               records + 317U * 0x4cU + 0x34U, word_34);
+          const auto raw =
+              vm.runtime().read32(0x80115cccU, records) &&
+              vm.runtime().read32(records + 317U * 0x4cU + 0x28U, word_28) &&
+              vm.runtime().read32(records + 317U * 0x4cU + 0x30U, word_30) &&
+              vm.runtime().read32(records + 317U * 0x4cU + 0x34U, word_34);
           const auto record =
               records + static_cast<std::uint32_t>(317U * 0x4cU);
-          std::cout << "power-317-raw: update="
-                    << power_post_transition_updates << ", read=" << raw
-                    << ", base=0x" << std::hex << std::uppercase << records
-                    << ", record=0x" << record << ", +28=0x" << word_28
-                    << ", +30=0x" << word_30 << ", +34=0x" << word_34
-                    << std::dec << '\n';
+          std::cout << "power-317-raw: update=" << power_post_transition_updates
+                    << ", read=" << raw << ", base=0x" << std::hex
+                    << std::uppercase << records << ", record=0x" << record
+                    << ", +28=0x" << word_28 << ", +30=0x" << word_30
+                    << ", +34=0x" << word_34 << std::dec << '\n';
         }
         if (power_post_transition_updates == 4U) {
           driver_pad.buttons = 0x1000U;
@@ -3134,8 +3571,7 @@ int probeLegacyLevel(const char *cue_path, std::uint32_t frame_count) {
           const auto interaction =
               vm.invoke(0x80015364U, arguments, 5'000'000U);
           std::cout << "power-317-event12-continuation: priority=5"
-                    << ", completed=" << interaction.completed()
-                    << ", reason="
+                    << ", completed=" << interaction.completed() << ", reason="
                     << sf::psx::toString(interaction.execution.reason)
                     << ", pc=0x" << std::hex << std::uppercase
                     << interaction.execution.pc << std::dec << '\n';
@@ -3161,8 +3597,7 @@ int probeLegacyLevel(const char *cue_path, std::uint32_t frame_count) {
           std::cout << "probe-power-callback: source=317"
                     << ", link-guard=" << link_guard
                     << ", linked=" << linked_source
-                    << ", completed="
-                    << (callback && callback->completed())
+                    << ", completed=" << (callback && callback->completed())
                     << ", objective2="
                     << (mission_after_callback &&
                         (mission_after_callback->completed_objectives &
@@ -3199,8 +3634,7 @@ int probeLegacyLevel(const char *cue_path, std::uint32_t frame_count) {
               vm.invoke(0x80015364U, arguments, 5'000'000U);
           std::cout << "power-317-event12-continuation: priority=5"
                     << ", phase=revealed"
-                    << ", completed=" << interaction.completed()
-                    << ", reason="
+                    << ", completed=" << interaction.completed() << ", reason="
                     << sf::psx::toString(interaction.execution.reason)
                     << ", pc=0x" << std::hex << std::uppercase
                     << interaction.execution.pc << std::dec << '\n';
@@ -3220,29 +3654,27 @@ int probeLegacyLevel(const char *cue_path, std::uint32_t frame_count) {
               vm.runtime().read32(0x80115cccU, records) &&
               vm.runtime().read32(records + 317U * 0x4cU + 0x30U,
                                   linked_source) &&
-              linked_source == 68U && bridge &&
-              bridge->objects.size() > 68U &&
+              linked_source == 68U && bridge && bridge->objects.size() > 68U &&
               bridge->objects[68U].class_id == 0x54;
           const auto player_source =
               driver_mission->player_slot >= 0
                   ? static_cast<std::uint16_t>(driver_mission->player_slot)
                   : std::numeric_limits<std::uint16_t>::max();
           const auto event_completed =
-              link_guard && player_source !=
-                                std::numeric_limits<std::uint16_t>::max() &&
+              link_guard &&
+              player_source != std::numeric_limits<std::uint16_t>::max() &&
               dispatch_direct_object_event_from(317U, 0x14U, player_source);
           const auto bridge_after_event = vm.readBridgeState();
           const auto mission_after_event = vm.readMissionBridgeState();
           std::uint32_t overlay_flags{};
-          static_cast<void>(
-              vm.runtime().read32(0x80149910U, overlay_flags));
+          static_cast<void>(vm.runtime().read32(0x80149910U, overlay_flags));
           const auto instance_latched =
               bridge_after_event && bridge_after_event->objects.size() > 317U &&
               (bridge_after_event->objects[317U].instance_flags & 0x20U) != 0U;
           std::cout << "probe-power-switch-event14: source=317"
                     << ", link-guard=" << link_guard
-                    << ", linked=" << linked_source
-                    << ", linked-class=0x" << std::hex << std::uppercase
+                    << ", linked=" << linked_source << ", linked-class=0x"
+                    << std::hex << std::uppercase
                     << (bridge && bridge->objects.size() > 68U
                             ? static_cast<std::uint16_t>(
                                   bridge->objects[68U].class_id)
@@ -3252,8 +3684,8 @@ int probeLegacyLevel(const char *cue_path, std::uint32_t frame_count) {
                     << ", instance-latched=" << instance_latched
                     << ", objective2="
                     << (mission_after_event &&
-                        (mission_after_event->completed_objectives &
-                         0x04U) != 0U);
+                        (mission_after_event->completed_objectives & 0x04U) !=
+                            0U);
           std::cout << '\n';
           if (!link_guard) {
             record_driver_blocker("power-317-switch-link-guard-fault");
@@ -3331,8 +3763,8 @@ int probeLegacyLevel(const char *cue_path, std::uint32_t frame_count) {
               (driver_mission->completed_objectives & 0x04U) != 0U &&
               player_source != std::numeric_limits<std::uint16_t>::max();
           elevator_315_event14_completed =
-              guard && dispatch_direct_object_event_from(
-                           315U, 0x14U, player_source);
+              guard &&
+              dispatch_direct_object_event_from(315U, 0x14U, player_source);
           std::cout << "probe-elevator-switch-event14: source=315"
                     << ", guard=" << guard << ", player=" << player_source
                     << ", parameter="
@@ -3348,8 +3780,8 @@ int probeLegacyLevel(const char *cue_path, std::uint32_t frame_count) {
                             ? static_cast<std::uint16_t>(
                                   driver_bridge->objects[62U].class_id)
                             : 0U)
-                    << std::dec << ", completed="
-                    << elevator_315_event14_completed << '\n';
+                    << std::dec
+                    << ", completed=" << elevator_315_event14_completed << '\n';
           if (!guard) {
             record_driver_blocker("elevator-315-switch-event14-guard-fault");
           } else if (!elevator_315_event14_completed) {
@@ -3383,8 +3815,8 @@ int probeLegacyLevel(const char *cue_path, std::uint32_t frame_count) {
               driver_bridge->objects[62U].class_id == 0x0b &&
               player_source != std::numeric_limits<std::uint16_t>::max();
           elevator_316_event14_completed =
-              guard && dispatch_direct_object_event_from(
-                           316U, 0x14U, player_source);
+              guard &&
+              dispatch_direct_object_event_from(316U, 0x14U, player_source);
           std::cout << "probe-elevator-switch-event14: source=316"
                     << ", guard=" << guard << ", player=" << player_source
                     << ", link="
@@ -3396,8 +3828,8 @@ int probeLegacyLevel(const char *cue_path, std::uint32_t frame_count) {
                             ? static_cast<std::uint16_t>(
                                   driver_bridge->objects[62U].class_id)
                             : 0U)
-                    << std::dec << ", completed="
-                    << elevator_316_event14_completed << '\n';
+                    << std::dec
+                    << ", completed=" << elevator_316_event14_completed << '\n';
           if (!guard) {
             record_driver_blocker("elevator-316-switch-event14-guard-fault");
           } else if (!elevator_316_event14_completed) {
@@ -3412,17 +3844,14 @@ int probeLegacyLevel(const char *cue_path, std::uint32_t frame_count) {
           std::cout << "driver-triangle: frame=" << frame
                     << ", stage=bomb-28\n";
         }
-        if (driver_stage_guest_updates == 8U &&
-            !bomb_28_callback_attempted &&
+        if (driver_stage_guest_updates == 8U && !bomb_28_callback_attempted &&
             (driver_mission->completed_objectives & 0x08U) == 0U) {
           bomb_28_callback_attempted = true;
-          const auto guard =
-              driver_bridge->objects.size() > 28U &&
-              driver_bridge->objects[28U].class_id == 0x2e;
+          const auto guard = driver_bridge->objects.size() > 28U &&
+                             driver_bridge->objects[28U].class_id == 0x2e;
           std::optional<sf::game::LegacyGameplayVmResult> callback;
           if (guard) {
-            callback =
-                vm.invoke(0x801485b8U, std::array{28U}, 5'000'000U);
+            callback = vm.invoke(0x801485b8U, std::array{28U}, 5'000'000U);
             bomb_28_callback_completed = callback->completed();
           }
           const auto mission_after_callback = vm.readMissionBridgeState();
@@ -3492,31 +3921,29 @@ int probeLegacyLevel(const char *cue_path, std::uint32_t frame_count) {
           std::optional<sf::game::LegacyGameplayVmResult> event;
           if (guard) {
             const std::array arguments{
-                0x14U, 3U, static_cast<std::uint32_t>(player_source), 318U,
-                0U,    0U, 0U,                                        0U,
+                0x14U, 3U, static_cast<std::uint32_t>(player_source),
+                318U,  0U, 0U,
+                0U,    0U,
             };
             event = vm.invoke(0x80015364U, arguments, 5'000'000U);
             station_318_event14_completed = event->completed();
           }
           std::cout << "probe-station-switch-event14: source=318"
                     << ", mode=event-entry, guard=" << guard
-                    << ", completed=" << station_318_event14_completed
-                    << '\n';
+                    << ", completed=" << station_318_event14_completed << '\n';
           if (!guard || !station_318_event14_completed) {
             record_driver_blocker("station-318-event14-queue-fault");
           }
         }
-        if (driver_stage_guest_updates == 20U &&
-            !station_318_motion_started &&
+        if (driver_stage_guest_updates == 20U && !station_318_motion_started &&
             !station_318_handler_fallback_attempted) {
           station_318_handler_fallback_attempted = true;
           const auto player_source = static_cast<std::uint16_t>(
               std::max<std::int16_t>(driver_mission->player_slot, 0));
-          const auto completed = dispatch_direct_object_event_from(
-              318U, 0x14U, player_source);
+          const auto completed =
+              dispatch_direct_object_event_from(318U, 0x14U, player_source);
           std::cout << "probe-station-switch-event14: source=318"
-                    << ", mode=direct-handler, completed=" << completed
-                    << '\n';
+                    << ", mode=direct-handler, completed=" << completed << '\n';
           if (!completed) {
             record_driver_blocker("station-318-event14-handler-fault");
           }
@@ -3548,31 +3975,29 @@ int probeLegacyLevel(const char *cue_path, std::uint32_t frame_count) {
           std::optional<sf::game::LegacyGameplayVmResult> event;
           if (guard) {
             const std::array arguments{
-                0x14U, 3U, static_cast<std::uint32_t>(player_source), 319U,
-                0U,    0U, 0U,                                        0U,
+                0x14U, 3U, static_cast<std::uint32_t>(player_source),
+                319U,  0U, 0U,
+                0U,    0U,
             };
             event = vm.invoke(0x80015364U, arguments, 5'000'000U);
             station_319_event14_completed = event->completed();
           }
           std::cout << "probe-station-switch-event14: source=319"
                     << ", mode=event-entry, guard=" << guard
-                    << ", completed=" << station_319_event14_completed
-                    << '\n';
+                    << ", completed=" << station_319_event14_completed << '\n';
           if (!guard || !station_319_event14_completed) {
             record_driver_blocker("station-319-event14-queue-fault");
           }
         }
-        if (driver_stage_guest_updates == 20U &&
-            !station_319_motion_started &&
+        if (driver_stage_guest_updates == 20U && !station_319_motion_started &&
             !station_319_handler_fallback_attempted) {
           station_319_handler_fallback_attempted = true;
           const auto player_source = static_cast<std::uint16_t>(
               std::max<std::int16_t>(driver_mission->player_slot, 0));
-          const auto completed = dispatch_direct_object_event_from(
-              319U, 0x14U, player_source);
+          const auto completed =
+              dispatch_direct_object_event_from(319U, 0x14U, player_source);
           std::cout << "probe-station-switch-event14: source=319"
-                    << ", mode=direct-handler, completed=" << completed
-                    << '\n';
+                    << ", mode=direct-handler, completed=" << completed << '\n';
           if (!completed) {
             record_driver_blocker("station-319-event14-handler-fault");
           }
@@ -3598,23 +4023,21 @@ int probeLegacyLevel(const char *cue_path, std::uint32_t frame_count) {
           cross_trigger(30U, outside, inside);
           if (driver_stage_guest_updates == 1U ||
               driver_stage_guest_updates == 3U) {
-            const auto &position = driver_stage_guest_updates == 1U
-                                       ? outside
-                                       : inside;
+            const auto &position =
+                driver_stage_guest_updates == 1U ? outside : inside;
             std::cout << "probe-finale-proximity: source=30, phase="
                       << (driver_stage_guest_updates == 1U ? "outside"
-                                                          : "inside")
+                                                           : "inside")
                       << ", position=(" << position.x << ',' << position.y
                       << ',' << position.z << ")\n";
           }
-          if (driver_stage_guest_updates == 8U &&
-              !finale_callback_attempted) {
+          if (driver_stage_guest_updates == 8U && !finale_callback_attempted) {
             finale_callback_attempted = true;
-            const auto guard = driver_bridge->objects.size() > 30U &&
-                               driver_bridge->objects[30U].class_id == 0x58 &&
-                               driver_bridge->objects[30U].linked_slot == -1 &&
-                               (driver_mission->completed_objectives & 0x08U) !=
-                                   0U;
+            const auto guard =
+                driver_bridge->objects.size() > 30U &&
+                driver_bridge->objects[30U].class_id == 0x58 &&
+                driver_bridge->objects[30U].linked_slot == -1 &&
+                (driver_mission->completed_objectives & 0x08U) != 0U;
             std::optional<sf::game::LegacyGameplayVmResult> callback;
             if (guard) {
               callback.emplace(
@@ -3685,19 +4108,18 @@ int probeLegacyLevel(const char *cue_path, std::uint32_t frame_count) {
       std::uint8_t transition_latch{};
       std::uint8_t failure{};
       std::uint8_t completed{};
-      const auto raw =
-          vm.runtime().read32(0x80115c7cU, next_state) &&
-          vm.runtime().read32(0x80115c74U, state_depth) &&
-          vm.runtime().read32(0x80115c80U, movie_callback) &&
-          vm.runtime().read32(0x80116b04U, loader_callback) &&
-          vm.runtime().read16(0x801164d8U, fade_step) &&
-          vm.runtime().read16(0x801164daU, fade_current) &&
-          vm.runtime().read32(0x801164e0U, fade_callback) &&
-          vm.runtime().read8(0x80115cc8U, terminal) &&
-          vm.runtime().read8(0x80115cc9U, success_latch) &&
-          vm.runtime().read8(0x80115ccaU, transition_latch) &&
-          vm.runtime().read8(0x80116b24U, failure) &&
-          vm.runtime().read8(0x80116b25U, completed);
+      const auto raw = vm.runtime().read32(0x80115c7cU, next_state) &&
+                       vm.runtime().read32(0x80115c74U, state_depth) &&
+                       vm.runtime().read32(0x80115c80U, movie_callback) &&
+                       vm.runtime().read32(0x80116b04U, loader_callback) &&
+                       vm.runtime().read16(0x801164d8U, fade_step) &&
+                       vm.runtime().read16(0x801164daU, fade_current) &&
+                       vm.runtime().read32(0x801164e0U, fade_callback) &&
+                       vm.runtime().read8(0x80115cc8U, terminal) &&
+                       vm.runtime().read8(0x80115cc9U, success_latch) &&
+                       vm.runtime().read8(0x80115ccaU, transition_latch) &&
+                       vm.runtime().read8(0x80116b24U, failure) &&
+                       vm.runtime().read8(0x80116b25U, completed);
       const auto transition_mission = vm.readMissionBridgeState();
       std::cout << "non-gameplay-transition: frame=" << frame
                 << ", stage=" << legacyLevelDriverStageName(driver_stage)
@@ -3720,10 +4142,9 @@ int probeLegacyLevel(const char *cue_path, std::uint32_t frame_count) {
       } else {
         std::cout << "unavailable";
       }
-      std::cout << ", fade=0x" << std::hex << fade_current << "/0x"
-                << fade_step << "/0x" << fade_callback
-                << ", callbacks=0x" << loader_callback << "/0x"
-                << movie_callback << std::dec << '\n';
+      std::cout << ", fade=0x" << std::hex << fade_current << "/0x" << fade_step
+                << "/0x" << fade_callback << ", callbacks=0x" << loader_callback
+                << "/0x" << movie_callback << std::dec << '\n';
     }
     if (state_after_driver == 2U) {
       std::uint32_t radio_state{};
@@ -3759,8 +4180,8 @@ int probeLegacyLevel(const char *cue_path, std::uint32_t frame_count) {
                 << legacyLevelDriverStageName(driver_stage)
                 << ", raw=" << state2_trace_read << ", radio=0x" << std::hex
                 << std::uppercase << radio_state << "/0x" << radio_event
-                << "/0x" << radio_object << "/0x" << radio_id
-                << ", prompt=0x" << prompt << ", transition=0x"
+                << "/0x" << radio_object << "/0x" << radio_id << ", prompt=0x"
+                << prompt << ", transition=0x"
                 << static_cast<unsigned int>(transition_byte)
                 << ", outcome-latches="
                 << static_cast<unsigned int>(terminal_latch) << '/'
@@ -3776,9 +4197,8 @@ int probeLegacyLevel(const char *cue_path, std::uint32_t frame_count) {
         const auto &source_30 = driver_bridge->objects[30U];
         std::cout << ", source30=0x" << std::hex
                   << static_cast<std::uint16_t>(source_30.class_id) << "/0x"
-                  << source_30.attributes << std::dec << '/'
-                  << source_30.health << '/' << source_30.parameter << '/'
-                  << source_30.linked_slot;
+                  << source_30.attributes << std::dec << '/' << source_30.health
+                  << '/' << source_30.parameter << '/' << source_30.linked_slot;
       } else {
         std::cout << ", source30=unavailable";
       }
@@ -3787,16 +4207,15 @@ int probeLegacyLevel(const char *cue_path, std::uint32_t frame_count) {
       const auto dispatch_allowed =
           transition_mission && sf::game::legacyRetailState2DispatchAllowed(
                                     state_after_driver, *transition_mission);
-      const auto transition = dispatch_allowed
-                                  ? vm.dispatchRetailState2Transition()
-                                  : sf::game::LegacyRetailState2TransitionResult{};
+      const auto transition =
+          dispatch_allowed ? vm.dispatchRetailState2Transition()
+                           : sf::game::LegacyRetailState2TransitionResult{};
       if (dispatch_allowed) {
         state_after_driver = transition.final_state;
       }
       std::cout << "probe-state2-dispatch: stage="
                 << legacyLevelDriverStageName(driver_stage)
-                << ", allowed=" << dispatch_allowed
-                << ", completed="
+                << ", allowed=" << dispatch_allowed << ", completed="
                 << (dispatch_allowed && transition.completed())
                 << ", dispatches=" << transition.dispatches
                 << ", final-state=" << transition.final_state << '\n';
@@ -4139,8 +4558,7 @@ int probeLegacyLevel(const char *cue_path, std::uint32_t frame_count) {
     }
     if (driver_stage == LegacyLevelDriverStage::elevator_315 &&
         bridge->objects.size() > 62U) {
-      const auto moving =
-          (bridge->objects[62U].instance_flags & 0x08U) != 0U;
+      const auto moving = (bridge->objects[62U].instance_flags & 0x08U) != 0U;
       if (!elevator_315_motion_completed) {
         elevator_315_motion_started = elevator_315_motion_started || moving;
         if (elevator_315_motion_started && !moving &&
@@ -4158,10 +4576,11 @@ int probeLegacyLevel(const char *cue_path, std::uint32_t frame_count) {
         }
         if (!elevator_return_started && moving) {
           elevator_return_started = true;
-          std::cout << "scripted-elevator-motion: switch=315, phase=return-start"
-                    << ", linked=62, platform-y="
-                    << bridge->objects[62U].position.y << ", player-y="
-                    << (player != nullptr ? player->position.y : 0) << '\n';
+          std::cout
+              << "scripted-elevator-motion: switch=315, phase=return-start"
+              << ", linked=62, platform-y=" << bridge->objects[62U].position.y
+              << ", player-y=" << (player != nullptr ? player->position.y : 0)
+              << '\n';
         }
         if (elevator_return_started && elevator_passenger_board_y &&
             player != nullptr &&
@@ -4169,28 +4588,25 @@ int probeLegacyLevel(const char *cue_path, std::uint32_t frame_count) {
                      *elevator_passenger_board_y) > 512) {
           elevator_passenger_carried = true;
         }
-        if (elevator_return_started && !moving &&
-            !elevator_return_completed) {
+        if (elevator_return_started && !moving && !elevator_return_completed) {
           elevator_return_completed = true;
           std::cout << "scripted-elevator-motion: switch=315, phase=return-end"
                     << ", linked=62, position=("
-                  << bridge->objects[62U].position.x << ','
-                  << bridge->objects[62U].position.y << ','
+                    << bridge->objects[62U].position.x << ','
+                    << bridge->objects[62U].position.y << ','
                     << bridge->objects[62U].position.z << "), player-y="
                     << (player != nullptr ? player->position.y : 0)
-                    << ", passenger-carried="
-                    << elevator_passenger_carried << '\n';
+                    << ", passenger-carried=" << elevator_passenger_carried
+                    << '\n';
         }
       }
     }
     if (driver_stage == LegacyLevelDriverStage::elevator_316 &&
         bridge->objects.size() > 62U) {
-      const auto moving =
-          (bridge->objects[62U].instance_flags & 0x08U) != 0U;
+      const auto moving = (bridge->objects[62U].instance_flags & 0x08U) != 0U;
       elevator_316_motion_started = elevator_316_motion_started || moving;
       if (elevator_316_motion_started && !moving &&
-          driver_stage_guest_updates >= 12U &&
-          !elevator_316_motion_completed) {
+          driver_stage_guest_updates >= 12U && !elevator_316_motion_completed) {
         elevator_316_motion_completed = true;
         std::cout << "scripted-elevator-motion: switch=316, phase=upper"
                   << ", linked=62, position=("
@@ -4202,12 +4618,10 @@ int probeLegacyLevel(const char *cue_path, std::uint32_t frame_count) {
     if ((driver_stage == LegacyLevelDriverStage::station_318 ||
          driver_stage == LegacyLevelDriverStage::station_319) &&
         bridge->objects.size() > 342U) {
-      const auto moving =
-          (bridge->objects[342U].instance_flags & 0x08U) != 0U;
-      auto &motion_started =
-          driver_stage == LegacyLevelDriverStage::station_318
-              ? station_318_motion_started
-              : station_319_motion_started;
+      const auto moving = (bridge->objects[342U].instance_flags & 0x08U) != 0U;
+      auto &motion_started = driver_stage == LegacyLevelDriverStage::station_318
+                                 ? station_318_motion_started
+                                 : station_319_motion_started;
       auto &motion_completed =
           driver_stage == LegacyLevelDriverStage::station_318
               ? station_318_motion_completed
@@ -4216,8 +4630,7 @@ int probeLegacyLevel(const char *cue_path, std::uint32_t frame_count) {
       if (driver_stage == LegacyLevelDriverStage::station_318 &&
           station_318_event14_completed && !motion_started && !moving &&
           driver_stage_guest_updates >= 24U && !motion_completed &&
-          std::abs(static_cast<std::int64_t>(
-                       bridge->objects[342U].position.y) -
+          std::abs(static_cast<std::int64_t>(bridge->objects[342U].position.y) -
                    bridge->objects[318U].position.y) <= 256) {
         motion_completed = true;
         std::cout << "scripted-station-motion: switch=318"
@@ -4631,9 +5044,10 @@ int probeLegacyLevel(const char *cue_path, std::uint32_t frame_count) {
             << ", objectives=" << objectives_asserted
             << ", checkpoint=" << (checkpoints != 0U)
             << ", finale-callback=" << finale_callback_attempted << '/'
-            << finale_callback_completed << ", finale-state9="
-            << finale_state9_seen << '/' << finale_state9_returned
-            << ", success=" << success_asserted << '\n';
+            << finale_callback_completed
+            << ", finale-state9=" << finale_state9_seen << '/'
+            << finale_state9_returned << ", success=" << success_asserted
+            << '\n';
 
   std::string_view first_blocker{"none"};
   std::string synthesized_blocker;
@@ -4690,7 +5104,7 @@ int probeLegacyMission(const char *cue_path, const char *ram_path) {
         "Legacy mission probe requires Syphon Filter USA v1.1"};
   }
 
-  const auto ram = readHostFile(ram_path);
+  const auto ram = sf::core::readBinaryFile(std::filesystem::path{ram_path});
   sf::game::LegacyGameplayVm vm{disc.executable()};
   vm.bindPsxBiosRandomCalls();
   vm.bindPsxVideoTimingCall();
@@ -4755,7 +5169,7 @@ int probeLegacyFrame(const char *cue_path, const char *ram_path,
                           "Legacy frame probe requires Syphon Filter USA v1.1"};
   }
 
-  const auto ram = readHostFile(ram_path);
+  const auto ram = sf::core::readBinaryFile(std::filesystem::path{ram_path});
   sf::game::LegacyGameplayVm vm{disc.executable()};
   vm.bindSyphonFilterUsaV11PlatformCalls();
   if (!vm.runtime().restoreRam(ram)) {
@@ -4856,8 +5270,35 @@ int main(int argc, char **argv) {
     if (argc == 5 && std::string_view{argv[1]} == "extract-file") {
       return extractFile(argv[2], argv[3], argv[4]);
     }
+    if (argc == 4 && std::string_view{argv[1]} == "list-hog") {
+      return listHog(argv[2], argv[3]);
+    }
+    if (argc == 6 && std::string_view{argv[1]} == "extract-hog-file") {
+      return extractHogFile(argv[2], argv[3], argv[4], argv[5]);
+    }
+    if (argc == 4 && std::string_view{argv[1]} == "list-fog") {
+      return listFog(argv[2], argv[3]);
+    }
+    if (argc == 6 && std::string_view{argv[1]} == "extract-fog-file") {
+      return extractFogFile(argv[2], argv[3], argv[4], argv[5]);
+    }
+    if (argc == 5 && std::string_view{argv[1]} == "list-fog-hog") {
+      return listFogHog(argv[2], argv[3], argv[4]);
+    }
+    if (argc == 7 && std::string_view{argv[1]} == "extract-fog-hog-file") {
+      return extractFogHogFile(argv[2], argv[3], argv[4], argv[5], argv[6]);
+    }
     if (argc == 5 && std::string_view{argv[1]} == "extract-mission-file") {
       return extractMissionFile(argv[2], argv[3], argv[4]);
+    }
+    if (argc == 4 && std::string_view{argv[1]} == "export-ui-assets") {
+      return sf::tool::exportUiAssets(argv[2], argv[3]);
+    }
+    if (argc == 5 && std::string_view{argv[1]} == "export-vit-language-pack") {
+      return exportVitLanguagePack(argv[2], argv[3], argv[4]);
+    }
+    if (argc == 4 && std::string_view{argv[1]} == "export-runtime-strings") {
+      return exportRuntimeStrings(argv[2], argv[3]);
     }
     printUsage();
     return 64;

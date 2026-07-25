@@ -72,11 +72,15 @@ FogArchive FogArchive::parse(std::vector<std::byte> bytes) {
     const auto view = std::span<const std::byte>{bytes};
     const auto flags = readLe32(view, 0);
     const auto declared_sector_count = readLe32(view, 4);
+    const auto available_sector_count = bytes.size() / sector_size;
     if (readLe32(view, 8) != 0 || readLe32(view, 12) != 0) {
         throw core::Error{core::ErrorCode::invalid_format, "FOG reserved header fields are invalid"};
     }
+    const auto pal_truncated_tail =
+        declared_sector_count == available_sector_count + 1U;
     if (declared_sector_count <= 1U ||
-        declared_sector_count > bytes.size() / sector_size) {
+        (declared_sector_count > available_sector_count &&
+         !pal_truncated_tail)) {
         throw core::Error{core::ErrorCode::invalid_format, "FOG declared size is invalid"};
     }
 
@@ -93,12 +97,17 @@ FogArchive FogArchive::parse(std::vector<std::byte> bytes) {
         auto name = readName(view, offset);
         const auto start_sector = readLe32(view, offset + name_size);
         const auto sector_count = readLe32(view, offset + name_size + sizeof(std::uint32_t));
-        if (start_sector == 0U && sector_count == 0U) {
+        // Retail PAL tables leave optional banks as a named start marker with
+        // a zero extent. They are absent files, not corrupt archive entries.
+        if (sector_count == 0U) {
             continue;
         }
         const auto end_sector = static_cast<std::uint64_t>(start_sector) + sector_count;
+        // Some retail PAL/localized archives under-report their last padded
+        // sector by one. Trust the validated physical extent here; callers
+        // still receive the original header value for diagnostics.
         if (start_sector < 1U || sector_count == 0U ||
-            end_sector > declared_sector_count) {
+            end_sector > available_sector_count) {
             throw core::Error{core::ErrorCode::invalid_format,
                 "FOG entry extent is invalid: " + name + " start=" +
                     std::to_string(start_sector) + " count=" +
@@ -124,7 +133,15 @@ FogArchive FogArchive::parse(std::vector<std::byte> bytes) {
             std::move(name), start_sector, sector_count, data_offset, data_size});
         maximum_end = std::max(maximum_end, end_sector);
     }
-    if (entries.empty() || maximum_end != declared_sector_count) {
+    const auto complete_declared_extent = maximum_end == declared_sector_count;
+    const auto complete_pal_padded_extent =
+        maximum_end == static_cast<std::uint64_t>(declared_sector_count) + 1U &&
+        maximum_end == available_sector_count;
+    const auto complete_pal_truncated_extent =
+        maximum_end == available_sector_count && pal_truncated_tail;
+    if (entries.empty() ||
+        (!complete_declared_extent && !complete_pal_padded_extent &&
+         !complete_pal_truncated_extent)) {
         throw core::Error{core::ErrorCode::invalid_format, "FOG file table is incomplete"};
     }
 

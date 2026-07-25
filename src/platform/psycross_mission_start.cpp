@@ -49,11 +49,10 @@ PsyCrossMissionStart::takePreloadedAudio() noexcept {
   return std::move(preloaded_audio_);
 }
 
-std::uint16_t PsyCrossMissionStart::run(const game::MissionPackage &mission,
-                                        PADRAW &pad,
-                                        std::uint16_t previous_buttons,
-                                        std::optional<game::CampaignCarryState>
-                                            carry) {
+std::uint16_t
+PsyCrossMissionStart::run(const game::MissionPackage &mission, PADRAW &pad,
+                          std::uint16_t previous_buttons,
+                          std::optional<game::CampaignCarryState> carry) {
   // The retail briefing is also the level-loading boundary. Remove the STR
   // framebuffer and its texture-page residue before presenting it; the
   // scene viewer uploads a fresh mission working set after confirmation.
@@ -77,14 +76,28 @@ std::uint16_t PsyCrossMissionStart::run(const game::MissionPackage &mission,
       false));
   const auto performance_frequency = SDL_GetPerformanceFrequency();
   auto animation_start = std::optional<std::uint64_t>{};
-  auto audio_retail_tick = std::optional<std::uint32_t>{};
+  auto audio_callback_tick = std::optional<std::uint64_t>{};
   auto audio_clock_started = false;
+  constexpr std::uint32_t retail_audio_callback_hz = 120U;
+  AudioOutputCatchUpPolicy audio_catch_up{retail_audio_callback_hz / 20U};
   std::array<psx::SpuPcmFrame, 4096U> briefing_pcm{};
+  std::uint64_t audio_slices_completed{};
+  std::uint64_t audio_pcm_frames_pumped{};
+  std::uint64_t audio_pcm_blocks_pumped{};
+  std::uint64_t audio_guest_clear_events{};
+  std::uint64_t audio_catch_up_events{};
+  std::uint64_t audio_diagnostic_sequence{};
+  const auto periodic_audio_diagnostics = psyCrossAudioDiagnosticsEnabled();
+  auto next_audio_diagnostic_counter =
+      SDL_GetPerformanceCounter() + performance_frequency;
   const auto pump_audio = [&] {
     while (const auto count = preloaded_gameplay_->takePcm(briefing_pcm)) {
+      audio_pcm_frames_pumped += count;
+      ++audio_pcm_blocks_pumped;
       preloaded_audio_->queue(
           std::span<const psx::SpuPcmFrame>{briefing_pcm}.first(count));
     }
+    preloaded_audio_->flush();
     preloaded_audio_->update();
   };
   PsyX_Log_Info(
@@ -102,26 +115,89 @@ std::uint16_t PsyCrossMissionStart::run(const game::MissionPackage &mission,
       PsyX_Log_Info("Mission briefing: gameplay preload complete\n");
     }
 
+    const auto current_counter = SDL_GetPerformanceCounter();
     const auto elapsed =
-        animation_start ? SDL_GetPerformanceCounter() - *animation_start : 0U;
+        animation_start ? current_counter - *animation_start : 0U;
     const auto retail_time =
         performance_frequency == 0U
             ? 0.0
             : static_cast<double>(elapsed) * 20.0 /
                   static_cast<double>(performance_frequency);
-    const auto retail_tick = static_cast<std::uint32_t>(retail_time);
     if (audio_clock_started) {
-      if (!audio_retail_tick) {
-        audio_retail_tick = retail_tick;
+      const auto audio_time =
+          performance_frequency == 0U
+              ? 0.0
+              : static_cast<double>(elapsed) *
+                    static_cast<double>(retail_audio_callback_hz) /
+                    static_cast<double>(performance_frequency);
+      const auto callback_tick = static_cast<std::uint64_t>(audio_time);
+      if (!audio_callback_tick) {
+        audio_callback_tick = callback_tick;
       }
-      while (*audio_retail_tick < retail_tick) {
-        if (!preloaded_gameplay_->advanceAudioFrameClock()) {
+      const auto pending_audio_updates =
+          static_cast<std::size_t>(callback_tick - *audio_callback_tick);
+      if (audio_catch_up.beginFrame(pending_audio_updates)) {
+        ++audio_catch_up_events;
+        PsyX_Log_Warning(
+            "[AudioDiag][briefing-catch-up] sequence=%llu pending=%zu\n",
+            static_cast<unsigned long long>(audio_catch_up_events),
+            pending_audio_updates);
+        // Preserve the live host queue. Only stale guest PCM is discarded;
+        // resetting OpenAL here extends a loading hitch into audible silence.
+        preloaded_gameplay_->clearPcm();
+        ++audio_guest_clear_events;
+      }
+      while (*audio_callback_tick < callback_tick) {
+        if (!preloaded_gameplay_->advanceAudioSliceClock()) {
           throw core::Error{core::ErrorCode::invalid_format,
                             "Mission briefing audio clock failed"};
         }
-        ++*audio_retail_tick;
+        ++*audio_callback_tick;
+        ++audio_slices_completed;
+        if (!audio_catch_up.retainCompletedUpdate(static_cast<std::size_t>(
+                callback_tick - *audio_callback_tick))) {
+          preloaded_gameplay_->clearPcm();
+          ++audio_guest_clear_events;
+        }
       }
       pump_audio();
+      if (periodic_audio_diagnostics && performance_frequency != 0U &&
+          current_counter >= next_audio_diagnostic_counter) {
+        ++audio_diagnostic_sequence;
+        preloaded_audio_->logDiagnostics("briefing-periodic");
+        PsyX_Log_Info(
+            "[AudioDiag][briefing-clock] sequence=%llu callback_tick=%llu "
+            "pending=%zu slices=%llu pcm_frames=%llu pcm_blocks=%llu "
+            "guest_clears=%llu catch_ups=%llu\n",
+            static_cast<unsigned long long>(audio_diagnostic_sequence),
+            static_cast<unsigned long long>(*audio_callback_tick),
+            pending_audio_updates,
+            static_cast<unsigned long long>(audio_slices_completed),
+            static_cast<unsigned long long>(audio_pcm_frames_pumped),
+            static_cast<unsigned long long>(audio_pcm_blocks_pumped),
+            static_cast<unsigned long long>(audio_guest_clear_events),
+            static_cast<unsigned long long>(audio_catch_up_events));
+        if (const auto guest = preloaded_gameplay_->audioDiagnostics()) {
+          PsyX_Log_Info(
+              "[AudioDiag][briefing-guest] sequence=%llu machine_tick=%llu "
+              "audio_tick=%llu spu_sample=%llu mixed=%llu pcm_queued=%zu "
+              "pcm_dropped=%llu cd_queued=%zu voices=%zu cd_read=%u "
+              "cd_lba=%u xa_set=%u xa_file=%u xa_channel=%u\n",
+              static_cast<unsigned long long>(audio_diagnostic_sequence),
+              static_cast<unsigned long long>(guest->machine_tick),
+              static_cast<unsigned long long>(guest->audio_frame_tick),
+              static_cast<unsigned long long>(guest->spu_sample_clock),
+              static_cast<unsigned long long>(guest->spu_mixed_frames),
+              guest->spu_pcm_frames,
+              static_cast<unsigned long long>(guest->spu_dropped_pcm_frames),
+              guest->spu_cd_frames, guest->active_spu_voices,
+              static_cast<unsigned int>(guest->cd_reading), guest->cd_lba,
+              static_cast<unsigned int>(guest->xa_stream_set),
+              static_cast<unsigned int>(guest->xa_file),
+              static_cast<unsigned int>(guest->xa_channel));
+        }
+        next_audio_diagnostic_counter = current_counter + performance_frequency;
+      }
     }
     auto text_animation_complete = false;
     if (PsyX_BeginScene() != 0) {

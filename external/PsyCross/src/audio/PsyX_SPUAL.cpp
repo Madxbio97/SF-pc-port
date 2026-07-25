@@ -173,6 +173,11 @@ int PsyX_SPUAL_InitSound()
 	static int al_context_params[] =
 	{
 		ALC_FREQUENCY, 44100,
+		// Use a small host mixing period which is an exact multiple of the
+		// retail 120 Hz timer. The old coarse refresh added a full backend
+		// period after the bounded SPU queue and made high-refresh video lead.
+		ALC_REFRESH, 240,
+		ALC_SYNC, ALC_FALSE,
 #ifndef __EMSCRIPTEN__
 		ALC_MAX_AUXILIARY_SENDS, 2,
 #endif

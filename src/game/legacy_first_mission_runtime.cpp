@@ -14,12 +14,6 @@
 namespace sf::game {
 namespace {
 
-// Give the interpreted guest the same kind of CPU headroom as DuckStation's
-// overclock control. PsxMachine converts elapsed CPU ticks back to retail
-// device time, so SPU/CD timing and the outer 20 Hz gameplay cadence remain
-// unchanged.
-constexpr psx::CpuClockScale gameplay_cpu_clock_scale{6U, 1U};
-
 void appendExecutionFault(std::string &detail, std::string_view stage,
                           const LegacyGameplayVmResult &result) {
   char buffer[192]{};
@@ -147,10 +141,10 @@ LegacyFirstMissionRuntime::LegacyFirstMissionRuntime(
     : mission_index_(mission.index) {
   try {
     virtual_cd_ = image.createVirtualCd();
-    // Scripts, AI and triggers still advance exactly once per retail frame;
-    // only the guest CPU instruction room between hardware deadlines grows.
-    vm_ = std::make_unique<LegacyGameplayVm>(image.executable(),
-                                             gameplay_cpu_clock_scale);
+    // The outer runtime owns the exact 20 Hz hardware cadence. Guest frame
+    // functions execute atomically between those boundaries, so shipping
+    // gameplay uses the real PSX CPU clock without an overclock multiplier.
+    vm_ = std::make_unique<LegacyGameplayVm>(image.executable());
     vm_->bindSyphonFilterUsaV11BootstrapPlatformCalls();
     vm_->bindSyphonFilterUsaV11VirtualCdCalls(virtual_cd_);
 
@@ -204,11 +198,6 @@ LegacyFirstMissionRuntime::LegacyFirstMissionRuntime(
       markFault();
       return;
     }
-    if (!vm_->advanceAudioFrameClock()) {
-      markFault();
-      return;
-    }
-
     if (!publishPresentationFrame()) {
       markFault();
       return;
@@ -634,10 +623,6 @@ void LegacyFirstMissionRuntime::advanceHostUpdate() noexcept {
       markFault();
       return;
     }
-    if (!vm_->advanceAudioFrameClock()) {
-      markFault();
-      return;
-    }
     latched_pad_buttons_ = 0U;
 
     if (legacyRetailStreamingState(frame.state_after)) {
@@ -737,6 +722,17 @@ bool LegacyFirstMissionRuntime::advanceAudioFrameClock() noexcept {
   return true;
 }
 
+bool LegacyFirstMissionRuntime::advanceAudioSliceClock() noexcept {
+  if (!ready_ || finished_ || faulted_ || !vm_) {
+    return false;
+  }
+  if (!vm_->advanceAudioSliceClock()) {
+    markFault();
+    return false;
+  }
+  return true;
+}
+
 bool LegacyFirstMissionRuntime::applyRetailAudioVolumes() noexcept {
   return !retail_audio_volumes_ ||
          (vm_ && vm_->setRetailAudioVolumes(*retail_audio_volumes_));
@@ -751,6 +747,11 @@ void LegacyFirstMissionRuntime::clearPcm() noexcept {
   if (vm_) {
     vm_->clearPcm();
   }
+}
+
+std::optional<LegacyAudioDiagnostics>
+LegacyFirstMissionRuntime::audioDiagnostics() const noexcept {
+  return vm_ ? std::optional{vm_->audioDiagnostics()} : std::nullopt;
 }
 
 bool LegacyFirstMissionRuntime::detectCheckpointCommit() noexcept {

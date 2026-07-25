@@ -104,6 +104,8 @@ struct OriginalHudGlyph {
 
 [[nodiscard]] std::optional<OriginalHudGlyph>
 originalHudGlyph(char value) noexcept;
+[[nodiscard]] std::optional<OriginalHudGlyph>
+originalEnglishHudGlyph(char value) noexcept;
 [[nodiscard]] int originalHudTextWidth(std::string_view text) noexcept;
 [[nodiscard]] std::string originalAmmoText(const WeaponDefinition &definition,
                                            const WeaponState &weapon);

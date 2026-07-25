@@ -11,32 +11,32 @@ a native Windows host for rendering, input, menus, audio and FMV playback.
 ## Public test
 
 The current build is
-[Public Test 0.1.0-PT6](https://github.com/Madxbio97/SF-pc-port/releases/tag/v0.1.0-public-test.6).
+[Public Test 0.1.0-PT7](https://github.com/Madxbio97/SF-pc-port/releases/tag/v0.1.0-public-test.7).
 Download the Windows x64 ZIP from the release page and verify it against the
 published `.sha256` file before extracting it.
 
-PT6 includes the integrated launcher, full-resolution internal rendering,
-seam-safe bilinear filtering, optional anisotropic filtering and MSAA, improved
-FMV presentation, the restored PS1-style pause menu and maps, persistent campaign
-progress, corrected weapon/particle/depth behavior, restored destructible glass,
-the four-page DOSSIERS bonus gallery, and a renderer-bridge streaming fix for
-the PHARCOM warehouse missions.
+PT7 adds the complete Russian text pack and unified 2x font atlas, restores full
+mission briefings and weapon information, finishes the PS1-style pause-menu
+layout, replaces the gameplay audio queue workaround with continuous callback
+streaming, and adds working VSYNC/frame limiting. It also includes the renderer,
+campaign, destructible-state and PHARCOM streaming fixes from the previous public
+tests.
 
 See [CHANGELOG.md](CHANGELOG.md) for the complete release summary.
 
 ## Quick start
 
-1. Download `SyphonFilterPC-0.1.0-public-test.6-win64.zip` from the release page.
+1. Download `SyphonFilterPC-0.1.0-public-test.7-win64.zip` from the release page.
 2. Verify its SHA-256 checksum:
 
    ```powershell
-   Get-FileHash .\SyphonFilterPC-0.1.0-public-test.6-win64.zip -Algorithm SHA256
+   Get-FileHash .\SyphonFilterPC-0.1.0-public-test.7-win64.zip -Algorithm SHA256
    ```
 
 3. Extract the ZIP into a new folder.
 4. Run `syphon_filter.exe`.
 5. Select **BROWSE**, choose the CUE file for *Syphon Filter* USA v1.1, configure
-   graphics and controls, then select **DEPLOY**.
+   graphics, controls and **Text language**, then select **DEPLOY**.
 
 Keep every BIN file next to its CUE file and do not rename the files referenced
 by the CUE sheet. The launcher remembers the selected image but never copies it
@@ -64,6 +64,12 @@ revisions, repacks and modified images are not expected to work.
   unlock progress.
 - Integrated English launcher with game-image selection, arbitrary internal
   resolution, aspect mode, fullscreen, MSAA, bilinear and anisotropic filtering.
+- Optional Russian ViT Co. text pack for all 20 missions, menus, briefings,
+  weapon descriptions and baked map labels, with a unified Industry Bold 2x
+  pixel atlas matching the original Industria-style interface for Latin and
+  Cyrillic text.
+  Speech, music and FMV remain sourced from the selected USA v1.1 image and are
+  never replaced.
 - Remappable keyboard/mouse controls and retail-style gamepad controls.
 - Native OpenAL presentation of game audio and FFmpeg-backed PS1 STR playback.
 - High-resolution, perspective-correct and Z-buffered scene rendering with PGXP
@@ -171,6 +177,9 @@ Selected options can also be specified directly:
 --bilinear | --nearest
 --anisotropic | --no-anisotropic
 --aspect-adaptive | --aspect-4-3
+--vsync | --no-vsync
+--fps-limit=0|20..1000
+--language=en | --language=ru
 ```
 
 Development modes:

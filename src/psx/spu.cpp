@@ -198,7 +198,12 @@ constexpr bool validPhase(SpuAdsrPhase phase) noexcept {
 
 } // namespace
 
-Spu::Spu() : state_(std::make_unique<SpuState>()) { reset(); }
+Spu::Spu()
+    : state_(std::make_unique<SpuState>()),
+      pcm_queue_(
+          std::make_unique<std::array<SpuPcmFrame, pcm_queue_capacity>>()) {
+  reset();
+}
 
 void Spu::reset() noexcept {
   *state_ = {};
@@ -641,8 +646,8 @@ void Spu::clearCdAudio() noexcept {
 std::size_t Spu::takePcm(std::span<SpuPcmFrame> destination) noexcept {
   const auto count = std::min(destination.size(), pcm_frame_count_);
   for (std::size_t index = 0U; index < count; ++index) {
-    destination[index] = pcm_queue_[pcm_read_position_];
-    pcm_queue_[pcm_read_position_] = {};
+    destination[index] = (*pcm_queue_)[pcm_read_position_];
+    (*pcm_queue_)[pcm_read_position_] = {};
     pcm_read_position_ = (pcm_read_position_ + 1U) % pcm_queue_capacity;
   }
   pcm_frame_count_ -= count;
@@ -653,7 +658,7 @@ std::size_t Spu::copyPcm(std::span<SpuPcmFrame> destination) const noexcept {
   const auto count = std::min(destination.size(), pcm_frame_count_);
   for (std::size_t index = 0U; index < count; ++index) {
     destination[index] =
-        pcm_queue_[(pcm_read_position_ + index) % pcm_queue_capacity];
+        (*pcm_queue_)[(pcm_read_position_ + index) % pcm_queue_capacity];
   }
   return count;
 }
@@ -663,8 +668,8 @@ bool Spu::restorePcm(std::span<const SpuPcmFrame> frames,
   if (frames.size() > pcm_queue_capacity) {
     return false;
   }
-  pcm_queue_.fill({});
-  std::copy(frames.begin(), frames.end(), pcm_queue_.begin());
+  pcm_queue_->fill({});
+  std::copy(frames.begin(), frames.end(), pcm_queue_->begin());
   pcm_read_position_ = 0U;
   pcm_write_position_ = frames.size() % pcm_queue_capacity;
   pcm_frame_count_ = frames.size();
@@ -673,7 +678,7 @@ bool Spu::restorePcm(std::span<const SpuPcmFrame> frames,
 }
 
 void Spu::clearPcm() noexcept {
-  pcm_queue_.fill({});
+  pcm_queue_->fill({});
   pcm_read_position_ = 0U;
   pcm_write_position_ = 0U;
   pcm_frame_count_ = 0U;
@@ -1588,12 +1593,12 @@ SpuPcmFrame Spu::popCdFrame() noexcept {
 
 void Spu::pushPcmFrame(SpuPcmFrame frame) noexcept {
   if (pcm_frame_count_ == pcm_queue_capacity) {
-    pcm_queue_[pcm_read_position_] = {};
+    (*pcm_queue_)[pcm_read_position_] = {};
     pcm_read_position_ = (pcm_read_position_ + 1U) % pcm_queue_capacity;
     --pcm_frame_count_;
     ++dropped_pcm_frames_;
   }
-  pcm_queue_[pcm_write_position_] = frame;
+  (*pcm_queue_)[pcm_write_position_] = frame;
   pcm_write_position_ = (pcm_write_position_ + 1U) % pcm_queue_capacity;
   ++pcm_frame_count_;
 }
@@ -1642,7 +1647,7 @@ void Spu::fastForwardSilentFrames(std::uint64_t frames) noexcept {
 
   dropped_pcm_frames_ += static_cast<std::uint64_t>(pcm_frame_count_) + frames -
                          pcm_queue_capacity;
-  pcm_queue_.fill({});
+  pcm_queue_->fill({});
   pcm_read_position_ = 0U;
   pcm_write_position_ = 0U;
   pcm_frame_count_ = pcm_queue_capacity;

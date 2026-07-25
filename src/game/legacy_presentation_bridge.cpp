@@ -262,7 +262,10 @@ bool validDroppedItems(std::span<const LegacyDroppedItemBridgeState> items,
         item.item < legacy_inventory_weapon_count || item.item == 0x80U;
     if (item.slot >= seen.size() || seen[item.slot] ||
         item.room >= world_model_count || !valid_selector ||
-        item.position.y == std::numeric_limits<std::int32_t>::min()) {
+        item.transform.translation.y ==
+            std::numeric_limits<std::int32_t>::min() ||
+        std::ranges::none_of(item.transform.rotation,
+                             [](std::int16_t value) { return value != 0; })) {
       return false;
     }
     seen[item.slot] = true;

@@ -43,6 +43,17 @@ if(SF_BUILD_TESTS)
         LIBRARIES sf::psx)
     sf_add_unit_test(sf_stable_frame_vector_tests
         tests/stable_frame_vector_tests.cpp)
+    sf_add_unit_test(sf_file_io_tests tests/file_io_tests.cpp
+        LIBRARIES sf::core)
+    sf_add_unit_test(sf_retail_pause_map_tests
+        tests/retail_pause_map_tests.cpp LIBRARIES sf::game)
+
+    add_test(NAME sf_architecture_check
+        COMMAND "${CMAKE_COMMAND}"
+            "-DSF_SOURCE_ROOT=${CMAKE_SOURCE_DIR}"
+            -P "${CMAKE_SOURCE_DIR}/cmake/CheckArchitecture.cmake")
+    set_tests_properties(sf_architecture_check PROPERTIES
+        LABELS "architecture;static")
 
     sf_register_supported_rom_tests()
 
@@ -51,6 +62,10 @@ if(SF_BUILD_TESTS)
             LIBRARIES psycross_static)
         sf_add_unit_test(sf_pgxp_precision_tests tests/pgxp_precision_tests.cpp
             LIBRARIES psycross_static)
+        sf_add_unit_test(sf_psycross_vram_tests
+            tests/psycross_vram_tests.cpp LIBRARIES sf::psycross_backend)
+        target_include_directories(sf_psycross_vram_tests
+            PRIVATE "${CMAKE_SOURCE_DIR}/src/platform")
         if(SF_SUPPORTED_ROM_CUE)
             add_test(NAME sf_g4_fmv_rom
                 COMMAND sf_movie_probe "${SF_SUPPORTED_ROM_CUE}")

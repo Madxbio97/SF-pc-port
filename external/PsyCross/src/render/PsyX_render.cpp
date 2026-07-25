@@ -1117,6 +1117,7 @@ const char* gpu_shader_32_rgba =
 	"	void main() {\n"\
 	"		vec2 tc = v_texcoord.xy * texelSize + texelSize * 0.5;\n"\
 	"		vec4 color = texture2D(s_texture, tc);\n"\
+	"		if (color.a <= 0.0) discard;\n"\
 	"		fragColor = dither(color * v_color);\n"\
 	"	}\n";
 
@@ -2371,9 +2372,9 @@ void GR_SetDepthState(int testEnable, int writeEnable)
 	const int appliedWrite = appliedTest && writeEnable ? 1 : 0;
 
 #if USE_OPENGL
-	// Reversed floating-point depth keeps precision where distant coplanar
-	// surfaces previously fought. Opaque surfaces remain strict and transparent
-	// overlays preserve their authored painter order without depth writes.
+	// Opaque geometry owns depth and therefore remains strict. Transparent
+	// polygons only test the established depth; equal values retain PS1 OT
+	// painter order without allowing them to occlude later geometry.
 	const int depthFunc = appliedWrite ? GL_GREATER : GL_GEQUAL;
 	if (appliedTest && g_PreviousDepthFunc != depthFunc)
 	{
@@ -2393,6 +2394,24 @@ void GR_SetDepthState(int testEnable, int writeEnable)
 		g_PreviousDepthWrite = appliedWrite;
 		glDepthMask(appliedWrite ? GL_TRUE : GL_FALSE);
 	}
+#endif
+}
+
+void GR_ClearDepthBuffer(void)
+{
+#if USE_OPENGL
+	// glClear obeys the depth write mask. Preserve the caller's write state so a
+	// transparent run stays test-only after an OT depth discontinuity.
+	const int restoreWrite = g_PreviousDepthWrite;
+	glDepthMask(GL_TRUE);
+#ifdef RENDERER_OGLES
+	glClearDepthf(0.0f);
+#else
+	glClearDepth(0.0f);
+#endif
+	glClear(GL_DEPTH_BUFFER_BIT);
+	if(restoreWrite == 0)
+		glDepthMask(GL_FALSE);
 #endif
 }
 

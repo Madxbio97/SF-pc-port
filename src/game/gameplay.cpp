@@ -1502,6 +1502,11 @@ bool GameplaySession::advanceAudioFrameClock() noexcept {
          legacy_first_mission_->advanceAudioFrameClock();
 }
 
+bool GameplaySession::advanceAudioSliceClock() noexcept {
+  return legacy_first_mission_ &&
+         legacy_first_mission_->advanceAudioSliceClock();
+}
+
 std::size_t
 GameplaySession::takePcm(std::span<psx::SpuPcmFrame> destination) noexcept {
   return legacy_first_mission_ ? legacy_first_mission_->takePcm(destination)
@@ -1512,6 +1517,12 @@ void GameplaySession::clearPcm() noexcept {
   if (legacy_first_mission_) {
     legacy_first_mission_->clearPcm();
   }
+}
+
+std::optional<LegacyAudioDiagnostics>
+GameplaySession::audioDiagnostics() const noexcept {
+  return legacy_first_mission_ ? legacy_first_mission_->audioDiagnostics()
+                               : std::nullopt;
 }
 
 void GameplaySession::resetLegacyWorldVertexColors() {

@@ -265,9 +265,12 @@ public:
   // Advances only the retail audio/SPU clock. Mission-start UI uses this
   // after bootstrap so level music can play without advancing gameplay.
   [[nodiscard]] bool advanceAudioFrameClock() noexcept;
+  [[nodiscard]] bool advanceAudioSliceClock() noexcept;
   [[nodiscard]] std::size_t
   takePcm(std::span<psx::SpuPcmFrame> destination) noexcept;
   void clearPcm() noexcept;
+  [[nodiscard]] std::optional<LegacyAudioDiagnostics>
+  audioDiagnostics() const noexcept;
 
 private:
   friend class G4CampaignTransitionProbeAccess;

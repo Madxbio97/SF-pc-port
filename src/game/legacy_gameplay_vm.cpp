@@ -16,6 +16,15 @@ namespace {
 
 constexpr std::uint32_t cd_lead_in_sectors = 150U;
 
+std::uint8_t legacyTextChecksum(std::string_view text) noexcept {
+  auto checksum = std::uint8_t{};
+  for (const auto character : text) {
+    checksum = static_cast<std::uint8_t>(checksum +
+                                         static_cast<unsigned char>(character));
+  }
+  return checksum;
+}
+
 bool advanceRetailRendererVblank(
     psx::R3000Runtime &runtime,
     const LegacyRetailOuterFrameProfile &profile) noexcept {
@@ -2043,16 +2052,18 @@ void LegacyGameplayVm::bindSyphonFilterUsaV11GameplayTextHooks(
             text.empty()) {
           return;
         }
+        const auto text_checksum = legacyTextChecksum(text);
         const auto cached = std::ranges::find_if(
             attached_text_sources_, [selected_object](const auto &entry) {
               return entry.text_object == *selected_object;
             });
         if (cached != attached_text_sources_.end()) {
           cached->text = std::move(text);
+          cached->text_checksum = text_checksum;
         } else {
           attached_text_sources_.push_back(
-              LegacyGameplayVmSnapshot::AttachedTextSource{*selected_object,
-                                                           std::move(text)});
+              LegacyGameplayVmSnapshot::AttachedTextSource{
+                  *selected_object, std::move(text), text_checksum});
         }
       });
 }
@@ -2205,8 +2216,8 @@ bool LegacyGameplayVm::finalizeDeadActorDropsBeforeRenderer(
       if (std::bit_cast<std::int16_t>(health_bits) >= 1) {
         continue;
       }
-      if (!invoke(profile.dropped_item_detach_entry, std::array{owner, 1U},
-                  execution_budget)
+      if (!invokeFrameCall(profile.dropped_item_detach_entry,
+                           std::array{owner, 1U}, execution_budget)
                .completed()) {
         return false;
       }
@@ -2332,13 +2343,14 @@ bool LegacyGameplayVm::finalizeDeadActorDropsBeforeRenderer(
       if (!owner_read_ok) {
         return false;
       }
-      if (!already_attached && !invoke(profile.dropped_item_attach_entry,
-                                       std::array{instance}, execution_budget)
-                                    .completed()) {
+      if (!already_attached &&
+          !invokeFrameCall(profile.dropped_item_attach_entry,
+                           std::array{instance}, execution_budget)
+               .completed()) {
         return false;
       }
-      if (!invoke(profile.dropped_item_detach_entry, std::array{instance, 1U},
-                  execution_budget)
+      if (!invokeFrameCall(profile.dropped_item_detach_entry,
+                           std::array{instance, 1U}, execution_budget)
                .completed()) {
         return false;
       }
@@ -2410,8 +2422,8 @@ bool LegacyGameplayVm::finalizeDeadActorDropsBeforeRenderer(
           return false;
         }
         attach_complete =
-            invoke(profile.dropped_item_attach_entry,
-                   std::array{candidate.instance}, execution_budget)
+            invokeFrameCall(profile.dropped_item_attach_entry,
+                            std::array{candidate.instance}, execution_budget)
                 .completed();
         if (current_attributes != candidate.attributes &&
             !runtime_.write16(record + object_attributes_offset,
@@ -2420,8 +2432,8 @@ bool LegacyGameplayVm::finalizeDeadActorDropsBeforeRenderer(
         }
       }
       if (!attach_complete ||
-          !invoke(profile.dropped_item_detach_entry,
-                  std::array{candidate.instance, 1U}, execution_budget)
+          !invokeFrameCall(profile.dropped_item_detach_entry,
+                           std::array{candidate.instance, 1U}, execution_budget)
                .completed()) {
         return false;
       }
@@ -3078,7 +3090,7 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
     }
     std::uint16_t item{};
     std::uint32_t matrix{};
-    LegacyNativePoint position;
+    LegacyNativeMatrix transform;
     // Descriptor+0x0c is the live retail bridge. The allocator can expose a
     // non-negative owner while recycling a detached descriptor; that slot is
     // not a drawable pickup until its fixed MATRIX and selector agree again.
@@ -3094,54 +3106,52 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
         !expected_matrix || !runtime_.read32(*descriptor_matrix, matrix) ||
         matrix != *expected_matrix || !readable_ram_pointer(matrix, 0x20U) ||
         !runtime_.read16(descriptor + 0x16U, item) ||
-        !read_signed32(matrix + 0x14U, position.x) ||
-        !read_signed32(matrix + 0x18U, position.y) ||
-        !read_signed32(matrix + 0x1cU, position.z) ||
+        !read_matrix(matrix, transform) ||
         (item >= legacy_inventory_weapon_count && item != 0x80U)) {
       continue;
     }
     state.dropped_items.push_back(LegacyDroppedItemBridgeState{
         static_cast<std::uint8_t>(slot), static_cast<std::uint16_t>(owner),
-        item, position});
+        item, transform});
   }
   const auto read_thrown_projectile =
       [&](std::uint32_t pointer_address, std::uint32_t &descriptor,
           std::optional<LegacyThrownProjectileBridgeState> &output) {
-    if (!runtime_.read32(pointer_address, descriptor)) {
-      return false;
-    }
-    if (!readable_ram_pointer(descriptor, 0x10U)) {
-      return true;
-    }
-    std::uint8_t age{};
-    std::uint32_t weapon{};
-    std::uint32_t render_object{};
-    if (!runtime_.read8(descriptor + 1U, age) ||
-        !runtime_.read32(descriptor + 4U, weapon) ||
-        !runtime_.read32(descriptor + 8U, render_object)) {
-      return false;
-    }
-    std::uint32_t renderer_link{};
-    constexpr std::uint32_t object_matrix_offset = 0x1cU;
-    if (readable_ram_pointer(render_object, object_matrix_offset + 0x20U) &&
-        runtime_.read32(render_object, renderer_link) && renderer_link != 0U &&
-        age <= 60U && (weapon == 19U || weapon == 20U)) {
-      LegacyThrownProjectileBridgeState projectile;
-      projectile.age = age;
-      projectile.weapon = static_cast<std::uint8_t>(weapon);
-      if (!read_matrix(render_object + object_matrix_offset,
-                       projectile.transform)) {
-        return false;
-      }
-      output = std::move(projectile);
-    }
-    return true;
-  };
+        if (!runtime_.read32(pointer_address, descriptor)) {
+          return false;
+        }
+        if (!readable_ram_pointer(descriptor, 0x10U)) {
+          return true;
+        }
+        std::uint8_t age{};
+        std::uint32_t weapon{};
+        std::uint32_t render_object{};
+        if (!runtime_.read8(descriptor + 1U, age) ||
+            !runtime_.read32(descriptor + 4U, weapon) ||
+            !runtime_.read32(descriptor + 8U, render_object)) {
+          return false;
+        }
+        std::uint32_t renderer_link{};
+        constexpr std::uint32_t object_matrix_offset = 0x1cU;
+        if (readable_ram_pointer(render_object, object_matrix_offset + 0x20U) &&
+            runtime_.read32(render_object, renderer_link) &&
+            renderer_link != 0U && age <= 60U &&
+            (weapon == 19U || weapon == 20U)) {
+          LegacyThrownProjectileBridgeState projectile;
+          projectile.age = age;
+          projectile.weapon = static_cast<std::uint8_t>(weapon);
+          if (!read_matrix(render_object + object_matrix_offset,
+                           projectile.transform)) {
+            return false;
+          }
+          output = std::move(projectile);
+        }
+        return true;
+      };
   std::uint32_t projectile_descriptor{};
   std::uint32_t enemy_projectile_descriptor{};
   if (!read_thrown_projectile(profile.player_thrown_projectile_pointer,
-                              projectile_descriptor,
-                              state.thrown_projectile) ||
+                              projectile_descriptor, state.thrown_projectile) ||
       !read_thrown_projectile(profile.enemy_thrown_projectile_pointer,
                               enemy_projectile_descriptor,
                               state.enemy_thrown_projectile)) {
@@ -4092,10 +4102,15 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
           is_headshot = handle == headshot_text_handle;
         }
       }
+      std::uint8_t text_checksum{};
+      const auto has_text_checksum =
+          runtime_.read8(text_object + 0x15U, text_checksum);
       std::optional<std::string> text;
       const auto cached = std::ranges::find_if(
-          attached_text_sources_, [text_object](const auto &entry) {
-            return entry.text_object == text_object;
+          attached_text_sources_,
+          [text_object, text_checksum, has_text_checksum](const auto &entry) {
+            return has_text_checksum && entry.text_object == text_object &&
+                   entry.text_checksum == text_checksum;
           });
       if (cached != attached_text_sources_.end() && !cached->text.empty()) {
         text = cached->text;
@@ -5826,6 +5841,13 @@ LegacyGameplayVm::readMissionBridgeState(
   } catch (...) {
     return std::nullopt;
   }
+  // The retail centered/status builders compile their source strings into
+  // glyph packets and retain only an additive byte checksum in TEXT+0x15.
+  // Keep each observed builder call single-use while associating the live
+  // packets below. Without this bridge the Russian presentation sees an
+  // empty source and replays English glyph UVs through the Cyrillic atlas
+  // (for example "9mm TAKEN" becomes pseudo-Cyrillic garbage).
+  std::vector<bool> used_ui_message_sources(ui_messages_.size(), false);
   for (std::uint32_t slot = 0U; slot < profile.text_slot_count; ++slot) {
     const auto slot_address =
         profile.text_slot_table + slot * profile.text_slot_stride;
@@ -5861,12 +5883,49 @@ LegacyGameplayVm::readMissionBridgeState(
                          profile.message_glyph_capacity, message.glyphs)) {
           return std::nullopt;
         }
-        const auto source = std::ranges::find_if(
-            attached_text_sources_, [object](const auto &entry) {
-              return entry.text_object == object;
-            });
-        if (source != attached_text_sources_.end()) {
-          message.text = source->text;
+        std::uint8_t text_checksum{};
+        if (!runtime_.read8(object + 0x15U, text_checksum)) {
+          return std::nullopt;
+        }
+        // A TEXT object is recycled frequently and its generation field is
+        // only an additive 8-bit source checksum. A new builder call must win
+        // over the persistent cache; otherwise an equal-sum historical string
+        // is incorrectly attached to the new glyph packet and English bytes
+        // are replayed through the Russian atlas.
+        for (std::size_t index = 0U; index < ui_messages_.size(); ++index) {
+          const auto &candidate = ui_messages_[index];
+          if (used_ui_message_sources[index] ||
+              candidate.channel != message.channel ||
+              legacyTextChecksum(candidate.text) != text_checksum) {
+            continue;
+          }
+          message.text = candidate.text;
+          used_ui_message_sources[index] = true;
+          const auto cached = std::ranges::find_if(
+              attached_text_sources_, [object](const auto &entry) {
+                return entry.text_object == object;
+              });
+          if (cached != attached_text_sources_.end()) {
+            cached->text = candidate.text;
+            cached->text_checksum = text_checksum;
+          } else if (attached_text_sources_.size() <
+                     profile.text_object_capacity) {
+            attached_text_sources_.push_back(
+                LegacyGameplayVmSnapshot::AttachedTextSource{
+                    object, candidate.text, text_checksum});
+          }
+          break;
+        }
+        if (message.text.empty()) {
+          const auto source = std::ranges::find_if(
+              attached_text_sources_,
+              [object, text_checksum](const auto &entry) {
+                return entry.text_object == object &&
+                       entry.text_checksum == text_checksum;
+              });
+          if (source != attached_text_sources_.end()) {
+            message.text = source->text;
+          }
         }
         state.messages.push_back(std::move(message));
         if (!runtime_.read32(object + 0x18U, object)) {
@@ -5954,10 +6013,6 @@ LegacyGameplayVmSnapshot LegacyGameplayVm::captureSnapshot() const {
   snapshot.attached_text_sources = attached_text_sources_;
   snapshot.ui_messages = ui_messages_;
   snapshot.pending_actor_drops = pending_actor_drops_;
-  const auto &spu = machine_.spu();
-  snapshot.pending_pcm.resize(spu.queuedPcmFrames());
-  snapshot.pending_pcm.resize(spu.copyPcm(snapshot.pending_pcm));
-  snapshot.dropped_pcm_frames = spu.droppedPcmFrames();
   snapshot.video_timing_baseline_initialized =
       video_timing_baseline_initialized_;
   snapshot.audio_frame_tick_initialized = audio_frame_tick_initialized_;
@@ -6026,7 +6081,6 @@ bool LegacyGameplayVm::restoreSnapshot(
   };
   if (snapshot.ram.size() != psx::R3000Runtime::ram_size ||
       snapshot.virtual_cd.has_value() != static_cast<bool>(virtual_cd_) ||
-      snapshot.pending_pcm.size() > psx::Spu::pcm_queue_capacity ||
       !valid_attached_text_sources() || !valid_ui_messages() ||
       !valid_pending_actor_drops() || !validCpuSnapshot(snapshot.cpu) ||
       !std::ranges::all_of(snapshot.interrupt_callbacks,
@@ -6044,9 +6098,11 @@ bool LegacyGameplayVm::restoreSnapshot(
     return false;
   }
   runtime_.restoreCpuState(snapshot.cpu);
-  if (!machine_.restoreState(snapshot.machine) ||
-      !machine_.spu().restorePcm(snapshot.pending_pcm,
-                                 snapshot.dropped_pcm_frames)) {
+  // Host PCM has already been submitted to the audio device and is not guest
+  // state. PsxMachine::restoreState() restores the SPU voices/CD FIFO but
+  // deliberately clears this presentation queue, matching a save-state load
+  // in hardware emulators and preventing pre-checkpoint audio from replaying.
+  if (!machine_.restoreState(snapshot.machine)) {
     return false;
   }
   video_timing_baseline_ = snapshot.video_timing_baseline;
@@ -6062,17 +6118,16 @@ bool LegacyGameplayVm::restoreSnapshot(
   return true;
 }
 
-bool LegacyGameplayVm::advanceAudioFrameClock(
-    const LegacyRetailAudioProfile &profile) noexcept {
-  if (profile.callback_hz == 0U ||
-      profile.callback_hz % updates_per_second != 0U ||
+bool LegacyGameplayVm::advanceAudioClockCallbacks(
+    const LegacyRetailAudioProfile &profile,
+    std::uint32_t callback_count) noexcept {
+  if (callback_count == 0U || profile.callback_hz == 0U ||
       machine_.cpuTicksPerSecond() % profile.callback_hz != 0U ||
       profile.timer_irq >= interrupt_callbacks_.size()) {
     return false;
   }
 
   try {
-    const auto callbacks_per_frame = profile.callback_hz / updates_per_second;
     const auto ticks_per_callback =
         machine_.cpuTicksPerSecond() / profile.callback_hz;
     if (!audio_frame_tick_initialized_) {
@@ -6080,17 +6135,7 @@ bool LegacyGameplayVm::advanceAudioFrameClock(
       audio_frame_tick_initialized_ = true;
     }
 
-    const auto maximum = std::numeric_limits<std::uint64_t>::max();
-    for (std::uint32_t tick = 0U; tick < callbacks_per_frame; ++tick) {
-      const auto now = machine_.currentTick();
-      auto target = audio_frame_tick_ > maximum - ticks_per_callback
-                        ? maximum
-                        : audio_frame_tick_ + ticks_per_callback;
-      if (now < target) {
-        machine_.advanceTicks(target - now);
-      }
-      audio_frame_tick_ = target;
-
+    const auto dispatch_callback = [&]() {
       if (!dispatchCdRomReadyCallback()) {
         return false;
       }
@@ -6099,15 +6144,67 @@ bool LegacyGameplayVm::advanceAudioFrameClock(
       if (callback != 0U) {
         if ((profile.expected_tick_callback != 0U &&
              callback != profile.expected_tick_callback) ||
-            !invoke(callback, {}, 5'000'000U).completed()) {
+            !invokeFrameCall(callback, {}, 5'000'000U).completed()) {
           return false;
         }
+      }
+      return true;
+    };
+
+    const auto maximum = std::numeric_limits<std::uint64_t>::max();
+    const auto frame_ticks =
+        static_cast<std::uint64_t>(callback_count) * ticks_per_callback;
+    const auto frame_deadline = audio_frame_tick_ > maximum - frame_ticks
+                                    ? maximum
+                                    : audio_frame_tick_ + frame_ticks;
+
+    while (audio_frame_tick_ < frame_deadline) {
+      const auto now = machine_.currentTick();
+      const auto next = audio_frame_tick_ > maximum - ticks_per_callback
+                            ? maximum
+                            : audio_frame_tick_ + ticks_per_callback;
+      if (now >= next) {
+        // A PSX timer IRQ is level-latched, not an unbounded callback queue.
+        // Streaming work can advance several 120 Hz periods before the HLE
+        // boundary is reached; coalesce those missed edges into one pending
+        // callback and re-anchor at the latest elapsed cadence boundary.
+        const auto elapsed_callbacks =
+            (now - audio_frame_tick_) / ticks_per_callback;
+        audio_frame_tick_ =
+            elapsed_callbacks == 0U
+                ? next
+                : audio_frame_tick_ + elapsed_callbacks * ticks_per_callback;
+        if (!dispatch_callback()) {
+          return false;
+        }
+        continue;
+      }
+
+      machine_.advanceTicks(next - now);
+      audio_frame_tick_ = next;
+      if (!dispatch_callback()) {
+        return false;
       }
     }
     return true;
   } catch (...) {
     return false;
   }
+}
+
+bool LegacyGameplayVm::advanceAudioFrameClock(
+    const LegacyRetailAudioProfile &profile) noexcept {
+  if (profile.callback_hz == 0U ||
+      profile.callback_hz % updates_per_second != 0U) {
+    return false;
+  }
+  return advanceAudioClockCallbacks(
+      profile, profile.callback_hz / updates_per_second);
+}
+
+bool LegacyGameplayVm::advanceAudioSliceClock(
+    const LegacyRetailAudioProfile &profile) noexcept {
+  return advanceAudioClockCallbacks(profile, 1U);
 }
 
 bool LegacyGameplayVm::setRetailAudioVolumes(
@@ -6218,6 +6315,37 @@ void LegacyGameplayVm::clearPcm() noexcept {
   audio_frame_tick_initialized_ = true;
 }
 
+LegacyAudioDiagnostics LegacyGameplayVm::audioDiagnostics() const noexcept {
+  const auto &spu = machine_.spu();
+  const auto &spu_state = spu.state();
+  const auto cd_state = machine_.cdrom().captureState();
+  auto active_voices = std::size_t{};
+  for (const auto &voice : spu_state.voices) {
+    active_voices += voice.active != 0U ? 1U : 0U;
+  }
+  return LegacyAudioDiagnostics{
+      .machine_tick = machine_.currentTick(),
+      .audio_frame_tick = audio_frame_tick_,
+      .spu_sample_clock = spu_state.sample_clock,
+      .spu_mixed_frames = spu_state.mixed_frames,
+      .spu_dropped_pcm_frames = spu.droppedPcmFrames(),
+      .cd_lba = cd_state.current_lba,
+      .spu_pcm_frames = spu.queuedPcmFrames(),
+      .spu_cd_frames = spu.queuedCdFrames(),
+      .active_spu_voices = active_voices,
+      .spu_control = spu.control(),
+      .spu_status = spu.status(),
+      .cd_mode = cd_state.mode,
+      .cd_reading = cd_state.reading,
+      .cd_muted = cd_state.muted,
+      .cd_adpcm_muted = cd_state.adpcm_muted,
+      .xa_stream_set = cd_state.xa_current_set,
+      .xa_file = cd_state.xa_current_file,
+      .xa_channel = cd_state.xa_current_channel,
+      .audio_frame_tick_initialized = audio_frame_tick_initialized_,
+  };
+}
+
 LegacyGameplayVmResult
 LegacyGameplayVm::invoke(std::uint32_t address,
                          std::span<const std::uint32_t> arguments,
@@ -6231,6 +6359,26 @@ LegacyGameplayVm::invoke(std::uint32_t address,
     };
   }
   return runExecutionPump(std::nullopt, execution_budget);
+}
+
+LegacyGameplayVmResult
+LegacyGameplayVm::invokeFrameCall(std::uint32_t address,
+                                  std::span<const std::uint32_t> arguments,
+                                  std::uint64_t execution_budget) {
+  if (!runtime_.beginCall(address, arguments)) {
+    return LegacyGameplayVmResult{
+        {psx::R3000StopReason::memory_fault, 0U, address, 0U},
+        runtime_.state().gpr[2],
+        0U,
+        std::nullopt,
+    };
+  }
+  // Native presentation fixes the retail simulation at 20 Hz. Running a
+  // decoded frame's functions atomically prevents their host instruction
+  // count from consuming extra emulated hardware time (the old reason for
+  // the 6x CPU clock). The realtime host advances SPU/CD/timers separately
+  // in exact 120 Hz slices; the offline frame helper groups six such slices.
+  return runExecutionPump(std::nullopt, execution_budget, false);
 }
 
 LegacyGameplayVmResult
@@ -6448,7 +6596,8 @@ LegacyGameplayVm::dispatchRetailState2Transition(
 
   const auto call = [&](std::uint32_t address,
                         std::span<const std::uint32_t> arguments = {}) {
-    result.guest_calls.push_back(invoke(address, arguments, execution_budget));
+    result.guest_calls.push_back(
+        invokeFrameCall(address, arguments, execution_budget));
     return result.guest_calls.back().completed();
   };
 
@@ -6509,7 +6658,8 @@ LegacyRetailOuterFrameResult LegacyGameplayVm::tickRetailOuterFrame(
   };
   const auto call = [&](std::uint32_t address,
                         std::span<const std::uint32_t> arguments) {
-    result.guest_calls.push_back(invoke(address, arguments, execution_budget));
+    result.guest_calls.push_back(
+        invokeFrameCall(address, arguments, execution_budget));
     return result.guest_calls.back().completed();
   };
   const auto call_without_arguments = [&](std::uint32_t address) {
@@ -6698,8 +6848,8 @@ LegacyRetailOuterFrameResult LegacyGameplayVm::tickRetailOuterFrame(
     // array empty and strands dynamically spawned actors outside the event
     // loop.
     const std::array renderer_arguments{1U, gameplay_frame};
-    result.renderer_tail = invoke(profile.renderer_frame_entry,
-                                  renderer_arguments, execution_budget);
+    result.renderer_tail = invokeFrameCall(
+        profile.renderer_frame_entry, renderer_arguments, execution_budget);
     if (result.renderer_tail->completed() &&
         !runtime_.read32(profile.current_state, result.state_after)) {
       result.bridge_fault = true;

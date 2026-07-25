@@ -140,6 +140,15 @@ void testAtomicDeepCopy() {
   guest_raw.opcode = 0x22U;
   guest_raw.words[0] = 0x22112233U;
   render.guest_raw_packets.push_back(guest_raw);
+  sf::game::LegacyDroppedItemBridgeState dropped_item;
+  dropped_item.slot = 3U;
+  dropped_item.room = 2U;
+  dropped_item.item = 1U;
+  dropped_item.transform.rotation = {
+      4096, 0, 0, 0, 4096, 0, 0, 0, 4096,
+  };
+  dropped_item.transform.translation = {120, -340, 560};
+  render.dropped_items.push_back(dropped_item);
   sf::game::LegacyThrownProjectileBridgeState thrown_projectile;
   thrown_projectile.age = 7U;
   thrown_projectile.weapon = 19U;
@@ -311,6 +320,7 @@ void testAtomicDeepCopy() {
   render.guest_sprites[0].tpage = 0U;
   render.renderer_sprite_fast_path = false;
   render.guest_raw_packets[0].words[0] = 0x20112233U;
+  render.dropped_items[0].transform.translation.x = 999;
   render.thrown_projectile->transform.translation = {};
   ui.player_health = 1;
   ui.objective_texts[0] = "mutated objective";
@@ -329,6 +339,11 @@ void testAtomicDeepCopy() {
               frame->renderer->state.objects[0].target_meter == 73 &&
               frame->renderer->state.weapon_events[0].weapon == 1U &&
               frame->renderer->state.weapon_events[0].origin.y == -200 &&
+              frame->renderer->state.dropped_items.size() == 1U &&
+              frame->renderer->state.dropped_items[0]
+                      .transform.translation.x == 120 &&
+              frame->renderer->state.dropped_items[0].transform.rotation[4] ==
+                  4096 &&
               frame->renderer->state.line_particles[0].first.y == -800 &&
               frame->renderer->state.line_particles[0].first_color ==
                   sf::game::LegacyRgbBridgeState{255U, 255U, 192U} &&
@@ -434,6 +449,23 @@ void testInvalidAndFaultFrames() {
   require(!sf::game::buildLegacyPresentationFrame(1U, 0U, render, ui),
           "Presentation bridge accepted an unknown combat-particle kind");
   render.combat_particles.clear();
+
+  sf::game::LegacyDroppedItemBridgeState dropped_item;
+  dropped_item.slot = 2U;
+  dropped_item.room = 0U;
+  dropped_item.item = 1U;
+  dropped_item.transform.rotation = {
+      4096, 0, 0, 0, 4096, 0, 0, 0, 4096,
+  };
+  dropped_item.transform.translation = {100, -200, 300};
+  render.dropped_items.push_back(dropped_item);
+  require(static_cast<bool>(
+              sf::game::buildLegacyPresentationFrame(1U, 0U, render, ui)),
+          "Presentation bridge rejected a valid 3D pickup transform");
+  render.dropped_items[0].transform.rotation = {};
+  require(!sf::game::buildLegacyPresentationFrame(1U, 0U, render, ui),
+          "Presentation bridge accepted an empty pickup transform");
+  render.dropped_items.clear();
 
   sf::game::LegacyThrownProjectileBridgeState thrown_projectile;
   thrown_projectile.age = 7U;

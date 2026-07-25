@@ -28,6 +28,7 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(SfWarnings)
 
 add_library(sf_core
+    src/core/file_io.cpp
     src/core/sha256.cpp
 )
 add_library(sf::core ALIAS sf_core)
@@ -109,12 +110,15 @@ add_library(sf_game
     src/game/legacy_mission_image.cpp
     src/game/legacy_presentation_bridge.cpp
     src/game/legacy_virtual_cd.cpp
+    src/game/localization.cpp
     src/game/mission.cpp
     src/game/mission_start.cpp
     src/game/mission_scripts.cpp
     src/game/npc_ai.cpp
     src/game/pause_menu.cpp
+    src/game/pause_menu_data.cpp
     src/game/player_controller.cpp
+    src/game/retail_pause_map.cpp
     src/game/state_stack.cpp
     src/game/supported_games.cpp
     src/game/system.cpp
@@ -124,9 +128,15 @@ add_library(sf::game ALIAS sf_game)
 target_include_directories(sf_game PUBLIC include)
 target_compile_features(sf_game PUBLIC cxx_std_20)
 target_link_libraries(sf_game PUBLIC sf::assets sf::core sf::disc sf::psx)
+if(MSVC)
+    target_compile_options(sf_game PRIVATE /utf-8)
+endif()
 sf_set_project_warnings(sf_game)
 
-add_executable(sf_tool apps/sf_tool/main.cpp)
+add_executable(sf_tool
+    apps/sf_tool/main.cpp
+    apps/sf_tool/ui_export.cpp
+)
 target_link_libraries(sf_tool PRIVATE sf::game)
 sf_set_project_warnings(sf_tool)
 
@@ -167,11 +177,14 @@ if(SF_ENABLE_PSYCROSS)
 
     add_library(sf_psycross_backend
         src/platform/psycross_audio_output.cpp
+        src/platform/psycross_font_texture.cpp
         src/platform/psycross_host.cpp
         src/platform/psycross_mission_start.cpp
         src/platform/psycross_movie_player.cpp
         src/platform/psycross_retail_briefing.cpp
+        src/platform/psycross_runtime_guards.cpp
         src/platform/psycross_scene_viewer.cpp
+        src/platform/psycross_vram.cpp
         src/platform/psycross_window_mode.cpp
     )
     add_library(sf::psycross_backend ALIAS sf_psycross_backend)
@@ -213,6 +226,11 @@ if(SF_ENABLE_PSYCROSS)
             "${CMAKE_CURRENT_BINARY_DIR}/syphon_filter.rc")
     endif()
     target_link_libraries(syphon_filter PRIVATE sf::psycross_backend)
+    add_custom_command(TARGET syphon_filter POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/assets/locales"
+            "$<TARGET_FILE_DIR:syphon_filter>/locales"
+        VERBATIM)
     if(WIN32)
         target_link_libraries(syphon_filter PRIVATE user32 comdlg32 gdiplus)
         set(SF_DOSSIER_SCREEN_DIR

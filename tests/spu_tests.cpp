@@ -536,10 +536,10 @@ void testSnapshotRestoresNextPcmExactly() {
   require(*actual == *expected,
           "Restored SPU did not reproduce the next PCM bit-exactly");
 
-  // Machine state deliberately excludes the host-facing mixer queue, while
-  // gameplay checkpoints retain it as a separate presentation boundary.
-  // Verify that copying is non-destructive and restoration preserves both
-  // ordering and overflow diagnostics.
+  // Machine/gameplay snapshots deliberately exclude the host-facing mixer
+  // queue. The explicit copy/restore API remains useful to host sinks that
+  // own an unsubmitted presentation boundary, so verify its ordering and
+  // overflow diagnostics independently.
   spu->mixFrames(12U);
   std::vector<sf::psx::SpuPcmFrame> pending(spu->queuedPcmFrames());
   require(spu->copyPcm(pending) == pending.size(),

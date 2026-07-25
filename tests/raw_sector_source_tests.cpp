@@ -1,9 +1,9 @@
 #include "sf/core/error.hpp"
 #include "sf/disc/raw_sector_source.hpp"
+#include "test_support.hpp"
 
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -12,7 +12,6 @@
 #include <span>
 #include <stdexcept>
 #include <string>
-#include <system_error>
 #include <vector>
 
 namespace {
@@ -22,26 +21,6 @@ void require(bool condition, const char* message) {
         throw std::runtime_error{message};
     }
 }
-
-class TemporaryDirectory final {
-public:
-    TemporaryDirectory() {
-        const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
-        path_ = std::filesystem::temp_directory_path() /
-            ("sf_raw_sector_tests_" + std::to_string(stamp));
-        std::filesystem::create_directories(path_);
-    }
-
-    ~TemporaryDirectory() {
-        std::error_code ignored;
-        std::filesystem::remove_all(path_, ignored);
-    }
-
-    [[nodiscard]] const std::filesystem::path& path() const noexcept { return path_; }
-
-private:
-    std::filesystem::path path_;
-};
 
 void writeTrack(const std::filesystem::path& path) {
     std::vector<std::byte> bytes(3U * sf::disc::RawSectorSource::raw_sector_size);
@@ -114,7 +93,7 @@ void writeCue(
 }
 
 void testStreamingAndBounds() {
-    TemporaryDirectory temporary;
+    sf::test::TemporaryDirectory temporary{"sf_raw_sector_tests"};
     const auto cue_path = temporary.path() / "disc.cue";
     writeTrack(temporary.path() / "track.bin");
     writeCue(cue_path);
@@ -151,7 +130,7 @@ void testStreamingAndBounds() {
 }
 
 void testModeValidation() {
-    TemporaryDirectory temporary;
+    sf::test::TemporaryDirectory temporary{"sf_raw_sector_tests"};
     const auto cue_path = temporary.path() / "disc.cue";
     writeTrack(temporary.path() / "track.bin");
     writeCue(cue_path, "MODE1/2352");
@@ -167,7 +146,7 @@ void testModeValidation() {
 
 void testReadAheadAndRandomReadSemantics() {
     constexpr std::uint32_t sector_count = 96U;
-    TemporaryDirectory temporary;
+    sf::test::TemporaryDirectory temporary{"sf_raw_sector_tests"};
     const auto cue_path = temporary.path() / "disc.cue";
     writePatternedTrack(temporary.path() / "track.bin", sector_count);
     writeCue(cue_path);

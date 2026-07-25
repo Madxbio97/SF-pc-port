@@ -91,6 +91,7 @@ struct PauseWeaponData {
   std::uint32_t id{};
   std::string name;
   std::string icon_asset;
+  // Canonical source text; the platform renderer applies the active locale.
   std::string description;
   std::int32_t ammo{};
   std::int32_t maximum_ammo{};
@@ -100,6 +101,10 @@ struct PauseWeaponData {
   bool available{};
   bool equipped{};
   bool equip_allowed{true};
+  // Keep the authored WEAPDESC values: the retail details page presents
+  // these fields verbatim instead of deriving them from the HUD counter.
+  std::string clip_size;
+  std::string maximum_rounds;
 };
 
 enum class ControllerPreset {
@@ -285,6 +290,7 @@ enum class PauseRenderKind {
   divider,
   slider,
   asset,
+  weapon_icon,
   map_marker,
   button_hint,
   dialog,

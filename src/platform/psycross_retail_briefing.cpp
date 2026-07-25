@@ -1,9 +1,11 @@
 #include "psycross_retail_briefing.hpp"
+#include "psycross_font_texture.hpp"
 
 #include "sf/assets/mission_briefing.hpp"
 #include "sf/assets/tim_image.hpp"
 #include "sf/core/error.hpp"
 #include "sf/game/hud.hpp"
+#include "sf/game/localization.hpp"
 #include "sf/game/mission.hpp"
 #include "sf/game/mission_start.hpp"
 
@@ -16,6 +18,8 @@
 #include <cstdint>
 #include <cmath>
 #include <limits>
+#include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -273,7 +277,7 @@ int characterAdvance(char value) noexcept {
 
 int promptTextWidth() noexcept {
   auto width = 0;
-  const auto source = assets::RetailBriefingLayout::prompt;
+  const auto source = game::localizeText(assets::RetailBriefingLayout::prompt);
   for (std::size_t index = 0U; index < source.size(); ++index) {
     if (source[index] == '%' && index + 1U < source.size() &&
         source[index + 1U] == 'x') {
@@ -400,7 +404,9 @@ std::uint8_t settleChannel(std::uint8_t target,
 int drawTextObject(const assets::TimImage &font, std::string_view text,
                    int left, int top, int right, int bottom,
                    std::uint32_t retail_tick,
+                   const PsyCrossFontTexture *native_font,
                    bool *animation_complete = nullptr) {
+  const ScopedPsyCrossFontTexture font_binding{native_font};
   const auto layout = layoutTextObject(text, left, top, right, bottom);
   const auto glyphs_per_tick =
       static_cast<std::size_t>(std::max(layout.lines, 1));
@@ -426,7 +432,8 @@ int drawTextObject(const assets::TimImage &font, std::string_view text,
 }
 
 void drawPrompt(const std::vector<BriefingTexture> &textures,
-                std::uint32_t retail_tick) {
+                std::uint32_t retail_tick,
+                const PsyCrossFontTexture *native_font) {
   const auto find = [&](std::string_view name) -> const assets::TimImage & {
     const auto match =
         std::find_if(textures.begin(), textures.end(),
@@ -444,7 +451,8 @@ void drawPrompt(const std::vector<BriefingTexture> &textures,
                          : Rgb{};
   const auto right = screen_center_x + assets::RetailBriefingLayout::prompt_x;
   const auto prompt_width = promptTextWidth();
-  if (prompt_width != assets::RetailBriefingLayout::prompt_width) {
+  if (!game::russianLanguageActive() &&
+      prompt_width != assets::RetailBriefingLayout::prompt_width) {
     throw core::Error{core::ErrorCode::invalid_format,
                       "Retail briefing prompt metrics do not match SCUS"};
   }
@@ -452,14 +460,21 @@ void drawPrompt(const std::vector<BriefingTexture> &textures,
   const auto y = screen_center_y + assets::RetailBriefingLayout::prompt_y;
   const auto &font = find("FONTA.TIM");
   const auto &symbols = find("SYMBOL.TIM");
-  const auto source = assets::RetailBriefingLayout::prompt;
+  const ScopedPsyCrossFontTexture font_binding{native_font};
+  const auto source = game::localizeText(assets::RetailBriefingLayout::prompt);
   for (std::size_t index = 0U; index < source.size(); ++index) {
     if (source[index] == '%' && index + 1U < source.size() &&
         source[index + 1U] == 'x') {
+      if (native_font != nullptr) {
+        PsyCrossFontTexture::restoreVram();
+      }
       drawTextureRegion(symbols, x, y, assets::RetailBriefingLayout::cross_u,
                         assets::RetailBriefingLayout::cross_v,
                         assets::RetailBriefingLayout::cross_width,
                         assets::RetailBriefingLayout::cross_height, color);
+      if (native_font != nullptr) {
+        native_font->bind();
+      }
       x += assets::RetailBriefingLayout::cross_advance;
       ++index;
       continue;
@@ -489,8 +504,13 @@ struct PsyCrossRetailBriefing::Impl final {
         std::string_view{"SYMBOL.TIM"},
     };
     for (const auto name : required) {
-      auto image =
-          assets::TimImage::parse(mission.interfaceAssets().file(name));
+      const auto localized = name != "SYMBOL.TIM"
+                                 ? game::readLocalizedAsset(
+                                       std::string{"fonts/"} + std::string{name})
+                                 : std::nullopt;
+      auto image = assets::TimImage::parse(
+          localized ? std::span<const std::byte>{*localized}
+                    : mission.interfaceAssets().file(name));
       if (image.mode() != assets::TimPixelMode::indexed8 || !image.clut()) {
         throw core::Error{core::ErrorCode::invalid_format,
                           "Retail briefing font is not indexed 8-bit TIM"};
@@ -504,16 +524,25 @@ struct PsyCrossRetailBriefing::Impl final {
     }
 
     const auto &font = image("FONTA.TIM");
+    if (game::russianLanguageActive()) {
+      native_font = std::make_unique<PsyCrossFontTexture>(
+          font, image("FONTB.TIM"), image("FONTC.TIM"));
+    }
     const auto page_x = font.pixels().x & ~std::uint16_t{63U};
     const auto page_y = font.pixels().y & ~std::uint16_t{255U};
-    for (const auto &texture : textures) {
-      if ((texture.image.pixels().x & ~std::uint16_t{63U}) != page_x ||
-          (texture.image.pixels().y & ~std::uint16_t{255U}) != page_y) {
-        throw core::Error{core::ErrorCode::invalid_format,
-                          "Retail briefing TIMs do not share one page"};
+    if (native_font == nullptr) {
+      for (const auto &texture : textures) {
+        if ((texture.image.pixels().x & ~std::uint16_t{63U}) != page_x ||
+            (texture.image.pixels().y & ~std::uint16_t{255U}) != page_y) {
+          throw core::Error{core::ErrorCode::invalid_format,
+                            "Retail briefing TIMs do not share one page"};
+        }
       }
     }
     for (const auto &texture : textures) {
+      if (native_font != nullptr && texture.name.starts_with("FONT")) {
+        continue;
+      }
       uploadTimBlock(texture.image.pixels());
     }
     uploadTimBlock(*textures.front().image.clut());
@@ -533,6 +562,7 @@ struct PsyCrossRetailBriefing::Impl final {
   }
 
   std::vector<BriefingTexture> textures;
+  std::unique_ptr<PsyCrossFontTexture> native_font;
 };
 
 PsyCrossRetailBriefing::PsyCrossRetailBriefing(
@@ -561,18 +591,19 @@ bool PsyCrossRetailBriefing::draw(const assets::MissionBriefing &briefing,
   auto text_animation_complete = true;
   auto y = top;
   y += drawTextObject(font, briefing.retailTitle(), left, y, right, bottom,
-                      retail_tick, &text_animation_complete) *
+                      retail_tick, impl_->native_font.get(),
+                      &text_animation_complete) *
        retail_line_height;
   for (const auto directive : briefing.retailDirectives()) {
     if (directive.empty()) {
       continue;
     }
     y += drawTextObject(font, directive, left, y, right, bottom, retail_tick,
-                        &text_animation_complete) *
+                        impl_->native_font.get(), &text_animation_complete) *
          retail_line_height;
   }
   if (text_animation_complete) {
-    drawPrompt(impl_->textures, retail_tick);
+    drawPrompt(impl_->textures, retail_tick, impl_->native_font.get());
   }
 
   DrawSync(0);

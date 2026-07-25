@@ -118,6 +118,45 @@ The supported PS-X executable SHA-256 is:
 bac292061ad5bc718ce137ef5b43d3d7e9b1b65248fb0d52229f328ccfe4ab4e
 ```
 
+## Regenerating the Russian text pack
+
+The checked-in Russian pack changes text only: authored mission tables and
+the map images whose labels are baked into their pixels. Regenerate it from a
+legal ViT Co. image while using USA v1.1 as the English key source:
+
+```powershell
+.\build\windows-msvc\Release\sf_tool.exe export-vit-language-pack `
+  'D:/Games/Syphon Filter ViT/Syphon Filter.cue' `
+  'D:/Games/Syphon Filter (USA) (v1.1).cue' `
+  '.\assets\locales\ru-vit'
+```
+
+The export step restores the retail ViT font sheets. The checked-in atlas is
+then regenerated from the user-supplied Industry Bold Cyrillic face. The generator
+preserves the one-byte ViT Cyrillic map, retail advances and logical UVs while
+building a 2x physical atlas. The native UI renderer samples the 16-pixel
+glyphs through the original 8-pixel coordinate system, so existing layout and
+backdrop bounds remain stable:
+
+```powershell
+python tools/generate_sf_cyrillic_fonts.py `
+  --source assets/locales/ru-vit/fonts `
+  --output assets/locales/ru-vit/fonts `
+  --font tools/fonts/industry/Industry-Bold_RUS.ttf `
+  --font-size 15 `
+  --font-weight 700 `
+  --atlas-scale 2 `
+  --metrics docs/images/sf-cyrillic-font-metrics.json `
+  --preview docs/images/sf-cyrillic-font-atlas-preview-v6.png `
+  --contact docs/images/sf-cyrillic-font-contact-v6.png
+```
+
+The resulting nearest-neighbour atlas preview, contact sheet and advance table
+are stored under `docs/images/`. `Industry-Bold_RUS.ttf` must be supplied by the
+developer and is deliberately ignored by Git; only its copyright notice and the
+generated game atlas are kept in the project. Neither command copies audio,
+voices, FMV or a game image.
+
 ## Packaging a public test
 
 Build `syphon_filter` first, then run:
@@ -125,7 +164,7 @@ Build `syphon_filter` first, then run:
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File tools/package_windows_release.ps1 `
-  -Version 0.1.0-public-test.6 `
+  -Version 0.1.0-public-test.7 `
   -Configuration Release
 ```
 

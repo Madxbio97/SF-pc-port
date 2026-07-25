@@ -512,9 +512,12 @@ public:
   [[nodiscard]] std::optional<GameplayAudioVolumes>
   audioVolumes() const noexcept;
   [[nodiscard]] bool advanceAudioFrameClock() noexcept;
+  [[nodiscard]] bool advanceAudioSliceClock() noexcept;
   [[nodiscard]] std::size_t
   takePcm(std::span<psx::SpuPcmFrame> destination) noexcept;
   void clearPcm() noexcept;
+  [[nodiscard]] std::optional<LegacyAudioDiagnostics>
+  audioDiagnostics() const noexcept;
 
   [[nodiscard]] const PlayerState &player() const noexcept {
     return player_controller_.state();

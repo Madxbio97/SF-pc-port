@@ -11,7 +11,8 @@ There must be only one writer for gameplay state. Native code may observe guest 
 through typed bridges, but must not overwrite player position, physics, combat,
 inventory, room, AI or animation state.
 
-- `sf_core`: errors, hashes and platform-neutral geometry utilities.
+- `sf_core`: errors, checked host-file I/O, hashes and platform-neutral geometry
+  utilities.
 - `sf_assets`: bounds-checked FOG/HOG/TIM ingestion plus EMD/GMD/HMD geometry,
   compressed HMD animation, mission-object and room-visibility decoding without
   a rendering dependency.
@@ -19,10 +20,19 @@ inventory, room, AI or animation state.
   assets stay on the user's disc image.
 - `sf_psx`: PS-X EXE, R3000A/GTE execution, machine bus/IRQ/DMA/CD-ROM, SPU and XA.
 - `sf_game`: supported-build identification, campaign mission packages,
-  guest-runtime orchestration and the platform-neutral gameplay session.
+  guest-runtime orchestration, the platform-neutral gameplay session and retail
+  pause-map/menu presentation data.
 - `sf_media`: optional FFmpeg-backed PSX STR/MDEC/XA decoder with host-neutral frames.
 - `sf_psycross_backend`: optional PsyCross adapter. This is the only project-owned layer allowed to include PsyCross headers.
 - `sf_tool`: development-time image inspection and extraction.
+
+These dependency directions are executable policy, not only documentation.
+`sf_architecture_check` rejects platform/PsyCross dependencies in the portable
+layers and rejects project-owned `.cpp` files that are not assigned to a CMake
+target. Development-only UI extraction is isolated in `apps/sf_tool/ui_export`
+instead of adding disc/file-system responsibilities to the playable renderer.
+The current cleanup inventory and remaining safe extraction seams are recorded
+in [REFACTOR_AUDIT.md](REFACTOR_AUDIT.md).
 
 The supplied DuckStation tree is CC-BY-NC-ND-4.0. It is used as a behavioral
 reference only; its implementation is not copied or adapted without a separate
@@ -44,20 +54,34 @@ remains future work. GPU work is terminated at a native-render boundary, PAD is
 supplied by the host and movie overlay requests are dispatched to the native
 decoder. Disc assets stay on the user-supplied image.
 
-One scheduler tick currently represents one interpreted instruction or HLE call.
-Device deadlines use CPU-clock ticks and can fast-forward independently. The VM can
-now resume its current PC without `beginCall`, stop before the native GPU submit
-hook, present/pulse VBlank on the host and continue the same guest call frame.
+Outside the native gameplay frame, one scheduler tick represents one interpreted
+instruction or HLE call and device deadlines use CPU-clock ticks. The decoded
+retail gameplay frame itself executes atomically at the stock PSX CPU clock;
+SPU/CD/timers advance independently in exact 120 Hz slices. This replaces the
+former guest overclock while preventing instruction-heavy retail scenes from
+reintroducing console frame drops or holding sound behind a 50 ms gameplay block.
+The VM can now resume its current PC without `beginCall`, stop before the native
+GPU submit hook, present/pulse VBlank on the host and continue the same guest call
+frame.
 Pending CD and DMA events are part of VM snapshots and are validated one-to-one
 against their device generations before restore. SPU RAM/voices/CD input and XA
 predictor history are serialized; the bounded host PCM queue is excluded and
 cleared on restore. The retail IRQ6 sound callback runs at 120 Hz (six guest
 `SsSeqCalledTbyT` calls per 20 Hz update); its registration and absolute clock
-anchor are serialized. At each 20 Hz boundary the gameplay shell drains PCM to a
-bounded PsyCross/OpenAL source. It shares one reference-counted context with native
-FMV audio and is reset at checkpoint, mission and FMV transitions. Restoring a
-checkpoint republishes its immutable renderer/UI state without executing guest
-presentation helpers, so future PCM replay remains bit-exact.
+anchor are serialized. Every 120 Hz slice is drained into a bounded
+single-producer/single-consumer PCM ring. OpenAL Soft's callback-buffer extension
+consumes that ring continuously, so a renderer stall cannot stop and repeatedly
+restart the device source; an empty interval is emitted as silence and recovery
+resumes from current PCM without replaying a stale queue. Startup waits for one
+device update quantum and the ring is capped at roughly 70 ms, making latency
+bounded at every presentation rate. The mixer remains fixed at 44.1 kHz: no
+resampling, pitch correction or time stretching is applied. A queued-source
+fallback remains for OpenAL implementations without the callback extension, and
+finite UI cues use that path intentionally. All sources share one
+reference-counted context with native FMV audio and are reset at checkpoint,
+mission and FMV transitions. Restoring a checkpoint republishes its immutable
+renderer/UI state without executing guest presentation helpers, so future PCM
+replay remains bit-exact.
 
 `syphon_filter --platform-test` remains a link/initialization smoke test.
 `syphon_filter --game <game.cue>` (or the single positional `<game.cue>` alias)
@@ -93,6 +117,14 @@ submission. Polygons crossing the camera near plane are clipped in world space;
 fire clips its complete quad perimeter before triangulation. Generated vertices
 then pass through the normal GTE/PGXP path. Collision still has access to the
 complete parsed terrain.
+
+Low-level VLF validation, physical page remapping and TIM uploads are isolated
+in `psycross_vram`; the scene viewer consumes that interface and no longer owns
+byte packing or raw `LoadImage` setup. Retail MENU.OVL map projection and pause
+data construction live in `sf_game`, so the PsyCross backend draws an immutable
+menu model instead of deriving gameplay/menu state itself. The recovered ACD
+topology, fixed layout, PC-only extensions and text-flow invariants are recorded
+in `PAUSE_MENU_PARITY.md`.
 
 `GameplaySession` is a host presentation shell around the guest-authoritative
 mission runtime. It translates physical controls to PAD state and projects

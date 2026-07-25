@@ -1,5 +1,5 @@
-param(
-    [string]$Version = "0.1.0-public-test.6",
+﻿param(
+    [string]$Version = "0.1.0-public-test.7",
     [string]$Configuration = "Release"
 )
 
@@ -81,6 +81,28 @@ foreach ($file in $runtimeFiles) {
     Copy-Item -LiteralPath (Join-Path $buildDir $file) -Destination $packageDir
 }
 
+$localeSource = Join-Path $buildDir "locales"
+$localeDestination = Join-Path $packageDir "locales"
+if (-not (Test-Path -LiteralPath $localeSource -PathType Container)) {
+    throw "Required language-pack directory is missing: $localeSource"
+}
+Copy-Item -LiteralPath $localeSource -Destination $localeDestination -Recurse
+
+foreach ($file in @(
+    "ru-vit\manifest.txt",
+    "ru-vit\briefings.dat",
+    "ru-vit\mission_menu.dat",
+    "ru-vit\WEAPDESC.TXT",
+    "ru-vit\fonts\FONTA.TIM",
+    "ru-vit\fonts\FONTB.TIM",
+    "ru-vit\fonts\FONTC.TIM"
+)) {
+    $path = Join-Path $localeDestination $file
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw "Required Russian language-pack file is missing: $path"
+    }
+}
+
 $dossierSource = Join-Path $buildDir "assets\dossiers\screens"
 $dossierDestination = Join-Path $packageDir "assets\dossiers\screens"
 New-Item -ItemType Directory -Path $dossierDestination | Out-Null
@@ -108,6 +130,7 @@ $licenseSources = @{
     "FFmpeg.txt" = Join-Path $vcpkgShare "ffmpeg\copyright"
     "fmt.txt" = Join-Path $vcpkgShare "fmt\copyright"
     "OpenAL-Soft.txt" = Join-Path $vcpkgShare "openal-soft\copyright"
+    "Industry-Font-COPYRIGHT.txt" = Join-Path $repoRoot "tools\fonts\industry\COPYRIGHT.txt"
     "SDL2.txt" = Join-Path $vcpkgShare "sdl2\copyright"
 }
 
@@ -118,9 +141,11 @@ foreach ($entry in $licenseSources.GetEnumerator()) {
     Copy-Item -LiteralPath $entry.Value -Destination (Join-Path $packageDir "licenses\$($entry.Key)")
 }
 
+$buildDate = Get-Date -Format "yyyy-MM-dd"
+
 $readme = @"
-SYPHON FILTER PC — PUBLIC TEST 0.1.0-PT6
-Windows x64, 24 July 2026
+SYPHON FILTER PC — $Version
+Windows x64, $buildDate
 
 ВАЖНО
 ======
@@ -133,6 +158,10 @@ Syphon Filter USA v1.1: SCUS-94240, BIN/CUE.
 2. Запустите syphon_filter.exe.
 3. Нажмите BROWSE и выберите CUE-файл образа игры.
 4. Настройте графику и управление, затем нажмите DEPLOY.
+
+Русская локализация выбирается в поле TEXT LANGUAGE. Пакет содержит только
+текст, шрифты и локализованные элементы интерфейса; озвучка, музыка и FMV
+остаются оригинальными.
 
 BIN-файлы должны оставаться рядом с CUE-файлом согласно его содержимому.
 Путь к образу запоминается лаунчером. CMD-скрипт не требуется.
@@ -165,25 +194,25 @@ affiliated with or endorsed by Sony Interactive Entertainment.
 "@
 
 $notes = @"
-PUBLIC TEST 0.1.0-PT6
+PUBLIC TEST $Version
 =====================
 
-- Встроенный лаунчер с выбором CUE, иконкой и единым оформлением окон.
-- В лаунчер добавлен бонусный архив DOSSIERS с четырьмя страницами материалов.
-- Иконка лаунчера заменена на портрет Гейба и содержит полный DPI-набор.
-- Страницы досье получили лёгкое повышение резкости для читаемости текста.
-- Настройки внутреннего рендера применяются ко всей сцене; добавлены бесшовная
-  билинейная и анизотропная фильтрация.
-- Улучшено FMV-видео и устранён лишний дизеринг.
-- Переработано игровое меню: карта, цели, оружие, параметры и звук паузы.
-- Исправлено сохранение прогресса и последовательное открытие пройденных миссий.
-- Исправлены вспышки оружия игрока и противников, предметы, частицы и гранаты.
-- Исправлены исчезающие модели, разрушаемые объекты и их состояние после рестарта.
-- Восстановлено разрушение окон, стеклянных панелей и витражей на осколки.
-- Исправлено восстановление разрушаемых объектов после провала миссии.
-- Убран отладочный счётчик FPS из игрового изображения.
-- Исправлены освещение оружейных ящиков и ряд ошибок текстур/моделей уровней.
-- Устранён вылет renderer/UI bridge при потоковой загрузке секций складов PHARCOM.
+- Добавлен полный русский текстовый пакет: 20 миссий, меню, брифинги,
+  цели, параметры, сообщения, описания оружия, карты и единый 2x-атлас шрифта.
+- Исправлены варианты сообщений о газовой гранате, неполные брифинги,
+  перепутанные описания оружия и потерянные таблицы характеристик.
+- Игровое меню приведено к структуре PS1: карта, цели, условия, брифинг,
+  двухстраничный раздел оружия и настройки с корректным размещением текста.
+- Переработана подача SPU-аудио: непрерывный callback-буфер без разгона,
+  растягивания и повторного воспроизведения устаревших очередей.
+- Добавлены рабочие VSYNC и независимый ограничитель кадров; выбранное
+  разрешение и фильтрация применяются ко всему внутреннему рендерингу.
+- Исправлены порядок и глубина прозрачных полигонов, спрайтов предметов,
+  гранат, частиц и других объектов сцены.
+- Исправлены восстановление разрушаемых объектов, стеклянные осколки,
+  связность завершения миссий, сохранение прогресса и выбор миссий.
+- Приведены в порядок лаунчер, локализованный список языков и архитектурные
+  границы между гостевой логикой, меню, рендерером, VRAM и аудиовыводом.
 
 Архив не содержит образ игры, сохранения, настройки или syphon_filter_cheats.
 "@
@@ -197,7 +226,7 @@ Channel: Public Test
 Version: $Version
 Platform: Windows x64
 Build type: $Configuration
-Build date: 2026-07-24
+Build date: $buildDate
 Source revision: $commit
 Supported disc: Syphon Filter USA v1.1, SCUS-94240, BIN/CUE
 Launcher: integrated; no CMD bootstrap
@@ -214,6 +243,8 @@ SDL2 — zlib license.
 OpenAL Soft — LGPL license.
 fmt — MIT license.
 PsyCross — MIT license.
+Industry Bold (RUS by Slavchansky) — used to generate the Russian font atlas;
+the source TTF is not included in this package.
 Microsoft Visual C++ Runtime — redistributed under the applicable Microsoft
 Visual Studio license terms.
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "sf/platform/host.hpp"
+#include "sf/game/localization.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -10,12 +11,14 @@ namespace sf::platform {
 
 void loadLauncherSettings(
     GraphicsSettings& graphics,
-    KeyboardMouseBindings& input) noexcept;
+    KeyboardMouseBindings& input,
+    game::GameLanguage& language) noexcept;
 
 [[nodiscard]] bool showGraphicsLauncher(
     GraphicsSettings& settings,
     KeyboardMouseBindings& input,
     GameplayTestSettings& tests,
+    game::GameLanguage& language,
     std::filesystem::path& cue_path,
     std::uint32_t& mission_index,
     bool mission_selection_enabled);

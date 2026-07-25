@@ -1,19 +1,23 @@
 #include "psycross_scene_viewer.hpp"
 #include "muzzle_flash_texture.hpp"
 #include "psycross_audio_output.hpp"
+#include "psycross_font_texture.hpp"
 #include "psycross_movie_player.hpp"
+#include "psycross_runtime_guards.hpp"
+#include "psycross_vram.hpp"
 #include "psycross_window_mode.hpp"
 
 #include "sf/assets/tim_image.hpp"
-#include "sf/assets/weapon_descriptions.hpp"
 #include "sf/core/error.hpp"
 #include "sf/core/polygon_clipper.hpp"
 #include "sf/game/dynamic_lighting.hpp"
 #include "sf/game/effects.hpp"
 #include "sf/game/gameplay.hpp"
 #include "sf/game/legacy_presentation_bridge.hpp"
+#include "sf/game/localization.hpp"
 #include "sf/game/mission.hpp"
 #include "sf/game/pause_menu.hpp"
+#include "sf/game/pause_menu_data.hpp"
 #include "sf/platform/player_input.hpp"
 #include "sf/platform/stable_frame_vector.hpp"
 
@@ -28,13 +32,13 @@
 
 #include <algorithm>
 #include <array>
-#include <bit>
-#include <cctype>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <limits>
+#include <memory>
 #include <numbers>
 #include <optional>
 #include <ranges>
@@ -66,17 +70,11 @@ constexpr double near_clip_depth = static_cast<double>(near_plane) + 2.0;
 constexpr double first_person_near_clip_depth = near_clip_depth;
 double active_near_clip_depth = near_clip_depth;
 constexpr std::uint32_t retail_flashlight_source = 0x8012f9b8U;
-constexpr std::size_t texture_page_bytes = 64U * 256U * 2U;
-constexpr std::size_t clut_bytes = 256U * 32U * 2U;
 constexpr std::uint16_t mission_clut_source_x = 768U;
 constexpr std::uint16_t mission_clut_source_y = 480U;
-constexpr std::uint16_t mission_clut_resident_x = 0U;
-constexpr std::uint16_t mission_clut_resident_y = 192U;
 // Mission residency can use every physical page 6..31. Keep the PC HUD
 // copy in framebuffer pages 0..3 instead of restoring its retail page-12
 // atlas over streamed wall textures.
-constexpr std::uint16_t hud_source_vram_x = 768U;
-constexpr std::uint16_t hud_resident_vram_x = 0U;
 constexpr std::uint16_t hud_resident_clut_x = 0U;
 constexpr std::uint16_t hud_resident_clut_y = 254U;
 // Combat sprites occupy the unused bottom 64 rows of native CFIRE page 5.
@@ -122,152 +120,6 @@ constexpr std::array<std::uint16_t, 5> nightvision_resident_x{
 };
 constexpr std::uint16_t nightvision_resident_y = 0U;
 
-class RelativeMouseCapture final {
-public:
-  ~RelativeMouseCapture() { set(false); }
-
-  void set(bool enabled) noexcept {
-    if (enabled_ == enabled) {
-      return;
-    }
-    if (SDL_SetRelativeMouseMode(enabled ? SDL_TRUE : SDL_FALSE) == 0) {
-      enabled_ = enabled;
-    }
-    SDL_GetRelativeMouseState(nullptr, nullptr);
-  }
-
-  [[nodiscard]] bool enabled() const noexcept { return enabled_; }
-
-private:
-  bool enabled_{};
-};
-
-class GameplaySwapIntervalScope final {
-public:
-  GameplaySwapIntervalScope() { PsyX_SetSwapInterval(0); }
-  ~GameplaySwapIntervalScope() { PsyX_SetSwapInterval(1); }
-
-  GameplaySwapIntervalScope(const GameplaySwapIntervalScope &) = delete;
-  GameplaySwapIntervalScope &
-  operator=(const GameplaySwapIntervalScope &) = delete;
-};
-
-class FixedPresentationPacer final {
-public:
-  explicit FixedPresentationPacer(std::uint32_t frames_per_second)
-      : frequency_(SDL_GetPerformanceFrequency()),
-        frames_per_second_(frames_per_second),
-        base_interval_(
-            frames_per_second == 0U ? 0U : frequency_ / frames_per_second),
-        interval_remainder_(
-            frames_per_second == 0U ? 0U : frequency_ % frames_per_second) {
-    reset();
-  }
-
-  void reset() noexcept {
-    remainder_accumulator_ = 0U;
-    next_counter_ = SDL_GetPerformanceCounter() + nextInterval();
-  }
-
-  void wait() noexcept {
-    if (frequency_ == 0U || frames_per_second_ == 0U) {
-      return;
-    }
-    auto now = SDL_GetPerformanceCounter();
-    const auto maximum_lateness = base_interval_ * 4U;
-    if (now > next_counter_ && now - next_counter_ > maximum_lateness) {
-      reset();
-      return;
-    }
-    while (now < next_counter_) {
-      const auto remaining = next_counter_ - now;
-      const auto remaining_ms = remaining * 1000U / frequency_;
-      if (remaining_ms > 1U) {
-        SDL_Delay(static_cast<std::uint32_t>(remaining_ms - 1U));
-      } else {
-        SDL_Delay(0U);
-      }
-      now = SDL_GetPerformanceCounter();
-    }
-    next_counter_ += nextInterval();
-  }
-
-private:
-  [[nodiscard]] std::uint64_t nextInterval() noexcept {
-    if (frames_per_second_ == 0U) {
-      return 0U;
-    }
-    auto interval = base_interval_;
-    remainder_accumulator_ += interval_remainder_;
-    if (remainder_accumulator_ >= frames_per_second_) {
-      remainder_accumulator_ -= frames_per_second_;
-      ++interval;
-    }
-    return interval;
-  }
-
-  std::uint64_t frequency_{};
-  std::uint32_t frames_per_second_{};
-  std::uint64_t base_interval_{};
-  std::uint64_t interval_remainder_{};
-  std::uint64_t remainder_accumulator_{};
-  std::uint64_t next_counter_{};
-};
-
-std::uint16_t readLe16(std::span<const std::byte> bytes, std::size_t offset) {
-  return static_cast<std::uint16_t>(
-      std::to_integer<std::uint16_t>(bytes[offset]) |
-      (std::to_integer<std::uint16_t>(bytes[offset + 1]) << 8U));
-}
-
-std::uint32_t readLe32(std::span<const std::byte> bytes, std::size_t offset) {
-  return std::to_integer<std::uint32_t>(bytes[offset]) |
-         (std::to_integer<std::uint32_t>(bytes[offset + 1]) << 8U) |
-         (std::to_integer<std::uint32_t>(bytes[offset + 2]) << 16U) |
-         (std::to_integer<std::uint32_t>(bytes[offset + 3]) << 24U);
-}
-
-std::vector<u_long> packVramWords(std::span<const std::byte> bytes) {
-  if ((bytes.size() & 1U) != 0) {
-    throw core::Error{core::ErrorCode::invalid_format,
-                      "VRAM payload has an odd byte count"};
-  }
-  const auto word_count = bytes.size() / 2U;
-  std::vector<u_long> result((word_count + 1U) / 2U);
-  for (std::size_t index = 0; index < word_count; ++index) {
-    const auto value = readLe16(bytes, index * 2U);
-    result[index / 2U] |= static_cast<u_long>(value) << ((index & 1U) * 16U);
-  }
-  return result;
-}
-
-unsigned int physicalTexturePage(unsigned int page) {
-  auto physical_page = page;
-  if ((page & 15U) < 6U) {
-    physical_page += 6U;
-  }
-  return physical_page;
-}
-
-RECT16 texturePageRect(unsigned int page) {
-  const auto physical_page = physicalTexturePage(page);
-  return RECT16{
-      static_cast<short>((physical_page & 15U) * 64U),
-      static_cast<short>(physical_page > 15U ? 256 : 0),
-      64,
-      256,
-  };
-}
-
-RECT16 physicalTexturePageRect(unsigned int physical_page) {
-  return RECT16{
-      static_cast<short>((physical_page & 15U) * 64U),
-      static_cast<short>(physical_page > 15U ? 256 : 0),
-      64,
-      256,
-  };
-}
-
 std::array<std::array<unsigned int, 32>, 2> streamed_texture_page_remap = [] {
   std::array<std::array<unsigned int, 32>, 2> result{};
   for (auto &bank : result) {
@@ -289,134 +141,6 @@ std::array<std::array<unsigned int, 32>, 2> streamed_clut_row_remap = [] {
 }();
 
 std::uint32_t streamed_vlf_page_mask{};
-
-std::uint32_t validateVlf(std::span<const std::byte> bytes) {
-  if (bytes.size() < 4) {
-    throw core::Error{core::ErrorCode::invalid_format,
-                      "VLF texture map is truncated"};
-  }
-  const auto page_mask = readLe32(bytes, 0);
-  const auto page_count = static_cast<std::size_t>(std::popcount(page_mask));
-  const auto expected_size = page_count * texture_page_bytes + clut_bytes;
-  if (bytes.size() != expected_size) {
-    throw core::Error{core::ErrorCode::invalid_format,
-                      "VLF texture map size is inconsistent"};
-  }
-  return page_mask;
-}
-
-std::span<const std::byte> vlfPage(std::span<const std::byte> bytes,
-                                   std::uint32_t page_mask, unsigned int page) {
-  if (page >= 32U || (page_mask & (1U << page)) == 0) {
-    throw core::Error{core::ErrorCode::invalid_argument,
-                      "VLF texture page is not present"};
-  }
-  const auto preceding = page == 0U ? 0U : page_mask & ((1U << page) - 1U);
-  const auto offset =
-      static_cast<std::size_t>(std::popcount(preceding)) * texture_page_bytes;
-  return bytes.subspan(offset, texture_page_bytes);
-}
-
-std::span<const std::byte> vlfClut(std::span<const std::byte> bytes,
-                                   std::uint32_t page_mask) {
-  const auto offset =
-      static_cast<std::size_t>(std::popcount(page_mask)) * texture_page_bytes;
-  return bytes.subspan(offset, clut_bytes);
-}
-
-void uploadTexturePage(unsigned int page, std::span<const std::byte> bytes) {
-  if (bytes.size() != texture_page_bytes) {
-    throw core::Error{core::ErrorCode::invalid_format,
-                      "Mission texture page size is invalid"};
-  }
-  auto rect = texturePageRect(page);
-  auto packed = packVramWords(bytes);
-  LoadImage(&rect, packed.data());
-}
-
-void uploadTexturePageAt(unsigned int physical_page,
-                         std::span<const std::byte> bytes) {
-  if (physical_page >= 32U || bytes.size() != texture_page_bytes) {
-    throw core::Error{core::ErrorCode::invalid_format,
-                      "Mission texture page size is invalid"};
-  }
-  auto rect = physicalTexturePageRect(physical_page);
-  auto packed = packVramWords(bytes);
-  LoadImage(&rect, packed.data());
-}
-
-void uploadClut(std::span<const std::byte> bytes) {
-  if (bytes.size() != clut_bytes) {
-    throw core::Error{core::ErrorCode::invalid_format,
-                      "Mission CLUT size is invalid"};
-  }
-  // Retail ZCLUT overlaps the lower rows of TP28..31. Native presentation
-  // needs every non-framebuffer page for simultaneous dual-bank residency,
-  // so keep the same 256x32 palette in the unused HUD gap instead. All CLUT
-  // identifiers are relocated by relocateClut().
-  RECT16 rect{static_cast<short>(mission_clut_resident_x),
-              static_cast<short>(mission_clut_resident_y), 256, 32};
-  auto packed = packVramWords(bytes);
-  LoadImage(&rect, packed.data());
-}
-
-int texturePageMode(assets::TimPixelMode mode) {
-  switch (mode) {
-  case assets::TimPixelMode::indexed4:
-    return 0;
-  case assets::TimPixelMode::indexed8:
-    return 1;
-  case assets::TimPixelMode::direct16:
-    return 2;
-  case assets::TimPixelMode::direct24:
-    return 3;
-  }
-  return 2;
-}
-
-unsigned int timTexturePage(const assets::TimImage &image) {
-  const auto &pixels = image.pixels();
-  return static_cast<unsigned int>(pixels.x / 64U) +
-         (static_cast<unsigned int>(pixels.y / 256U) * 16U);
-}
-
-void uploadTimBlockAt(const assets::TimBlock &block,
-                      std::uint16_t destination_x,
-                      std::uint16_t destination_y) {
-  const auto checked = [](std::uint16_t value) {
-    if (value > static_cast<std::uint16_t>(std::numeric_limits<short>::max())) {
-      throw core::Error{core::ErrorCode::unsupported,
-                        "Effect TIM VRAM coordinate exceeds PsyCross range"};
-    }
-    return static_cast<short>(value);
-  };
-  RECT16 rect{
-      checked(destination_x),
-      checked(destination_y),
-      checked(block.width_words),
-      checked(block.height),
-  };
-  // PsyCross's LoadImage immediately views this pointer as a 16-bit VRAM
-  // stream and copies it; it never reads u_long values or mutates the source.
-  // Pass the already contiguous TIM storage directly instead of allocating
-  // and repacking every HUD/effect image on every presentation frame.
-  LoadImage(&rect, reinterpret_cast<u_long *>(
-                       const_cast<std::uint16_t *>(block.words.data())));
-}
-
-void uploadTimBlock(const assets::TimBlock &block) {
-  uploadTimBlockAt(block, block.x, block.y);
-}
-
-[[nodiscard]] constexpr std::uint16_t
-hudResidentX(std::uint16_t source_x) noexcept {
-  return static_cast<std::uint16_t>(hud_resident_vram_x + source_x -
-                                    hud_source_vram_x);
-}
-
-void uploadHudPixels(const assets::TimBlock &block) {
-  uploadTimBlockAt(block, hudResidentX(block.x), block.y);
-}
 
 class RetailCrateTextureOverlay final {
 public:
@@ -882,8 +606,12 @@ struct FireGuestSpriteMatch {
   const auto page = timTexturePage(image);
   const auto page_x = (page & 15U) * 64U;
   const auto page_y = page > 15U ? 256U : 0U;
+  const auto pixels_per_word =
+      image.mode() == assets::TimPixelMode::indexed4   ? 4U
+      : image.mode() == assets::TimPixelMode::indexed8 ? 2U
+                                                       : 1U;
   const auto source_u =
-      (static_cast<unsigned int>(image.pixels().x) - page_x) * 2U;
+      (static_cast<unsigned int>(image.pixels().x) - page_x) * pixels_per_word;
   const auto source_v = static_cast<unsigned int>(image.pixels().y) - page_y;
   return (sprite.tpage & 0x1fU) == page && sprite.center_x == image.clut()->x &&
          sprite.center_y == image.clut()->y && sprite.u >= source_u &&
@@ -1307,23 +1035,6 @@ public:
         // state. Keep FLASHLT resident even if the interpolated native HUD
         // selection trails the guest by one presentation frame.
         require_player_weapon(game::WeaponId::flashlight);
-      }
-      for (const auto &projectile : gameplay.projectiles()) {
-        if (!projectile.active ||
-            projectile.phase != game::ProjectilePhase::flying) {
-          continue;
-        }
-        const auto model_weapon = projectile.weapon == game::WeaponId::m_79
-                                      ? game::WeaponId::fragmentation_grenade
-                                      : projectile.weapon;
-        if (const auto *weapon = gameplay.weaponModel(model_weapon)) {
-          requirement_context =
-              "projectile-weapon-" +
-              std::to_string(static_cast<unsigned int>(model_weapon));
-          require_object_geometry(
-              weapon->geometry,
-              gameplay.textureBankAt(projectile.x, projectile.z));
-        }
       }
       const auto needs_dynamic_fire = needsDynamicFire(gameplay);
       if (needs_dynamic_fire) {
@@ -1767,8 +1478,6 @@ private:
     player_model,
     player_texture_bank,
     player_weapon,
-    projectile_weapon,
-    projectile_texture_bank,
     dynamic_fire,
     guest_sprite_material,
     guest_sprite_rectangle,
@@ -1805,13 +1514,12 @@ private:
                });
   }
 
-  [[nodiscard]] bool
-  requirementsChanged(const game::GameplaySession &gameplay, int object_bank,
-                      int guest_sprite_bank,
-                      std::span<const game::LegacyGuestSpritePresentationState>
-                          retained_sprites,
-                      std::span<const GlassShardPresentationState>
-                          glass_shards) {
+  [[nodiscard]] bool requirementsChanged(
+      const game::GameplaySession &gameplay, int object_bank,
+      int guest_sprite_bank,
+      std::span<const game::LegacyGuestSpritePresentationState>
+          retained_sprites,
+      std::span<const GlassShardPresentationState> glass_shards) {
     scratch_requirement_inputs_.clear();
     const auto append = [this](RequirementInputKind kind,
                                std::uintptr_t value) {
@@ -1871,19 +1579,6 @@ private:
            gameplay.textureBankAt(gameplay.player().x, gameplay.player().z));
     append(RequirementInputKind::player_weapon,
            static_cast<std::uintptr_t>(gameplay.hud().inventory().current()));
-    for (const auto &projectile : gameplay.projectiles()) {
-      if (!projectile.active ||
-          projectile.phase != game::ProjectilePhase::flying) {
-        continue;
-      }
-      const auto model_weapon = projectile.weapon == game::WeaponId::m_79
-                                    ? game::WeaponId::fragmentation_grenade
-                                    : projectile.weapon;
-      append(RequirementInputKind::projectile_weapon,
-             static_cast<std::uintptr_t>(model_weapon));
-      append(RequirementInputKind::projectile_texture_bank,
-             gameplay.textureBankAt(projectile.x, projectile.z));
-    }
     append(RequirementInputKind::dynamic_fire,
            needsDynamicFire(gameplay) ? 1U : 0U);
     if (const auto frame = gameplay.legacyPresentationFrame();
@@ -1965,6 +1660,27 @@ struct HudTextureAsset {
   assets::TimImage image;
 };
 
+[[nodiscard]] bool isNativeHdFontSheet(std::string_view name,
+                                       const assets::TimImage &image) noexcept {
+  if (image.mode() != assets::TimPixelMode::indexed8 || !image.clut() ||
+      image.pixels().y != 0U) {
+    return false;
+  }
+  if (name == "FONTA.TIM") {
+    return image.pixels().x == 832U && image.displayWidth() == 64U &&
+           image.displayHeight() == 128U;
+  }
+  if (name == "FONTB.TIM") {
+    return image.pixels().x == 864U && image.displayWidth() == 64U &&
+           image.displayHeight() == 128U;
+  }
+  if (name == "FONTC.TIM") {
+    return image.pixels().x == 896U && image.displayWidth() == 84U &&
+           image.displayHeight() == 246U;
+  }
+  return false;
+}
+
 class HudTextureAtlas final {
 public:
   explicit HudTextureAtlas(const game::MissionPackage &mission) {
@@ -1998,8 +1714,15 @@ public:
       if (!required(entry.name)) {
         continue;
       }
-      auto image =
-          assets::TimImage::parse(mission.interfaceAssets().file(entry.name));
+      auto localized = (entry.name == "FONTA.TIM" ||
+                        entry.name == "FONTB.TIM" || entry.name == "FONTC.TIM")
+                           ? game::readLocalizedAsset("fonts/" + entry.name)
+                           : std::nullopt;
+      auto image = localized ? assets::TimImage::parse(*localized)
+                             : assets::TimImage::parse(
+                                   mission.interfaceAssets().file(entry.name));
+      const auto native_hd_font_layout =
+          localized.has_value() && isNativeHdFontSheet(entry.name, image);
       const auto nightvision_layer =
           std::ranges::find(nightvision_scope_layers, entry.name) !=
           nightvision_scope_layers.end();
@@ -2019,17 +1742,18 @@ public:
           static_cast<unsigned int>(image.pixels().y) + image.pixels().height <=
               502U;
       if (image.mode() != assets::TimPixelMode::indexed8 || !image.clut() ||
-          (!regular_hud_layout && !nightvision_layout) ||
+          (!regular_hud_layout && !nightvision_layout &&
+           !native_hd_font_layout) ||
           image.clut()->x != 768U || image.clut()->y != 483U ||
           image.clut()->width_words != 256U || image.clut()->height != 1U) {
         throw core::Error{core::ErrorCode::invalid_format,
-                          "INTRFACE HUD atlas uses an unexpected VRAM layout"};
+                          "INTERFACE HUD atlas uses an unexpected VRAM layout"};
       }
       if (!assets_.empty() &&
           image.clut()->words != assets_.front().image.clut()->words) {
         throw core::Error{
             core::ErrorCode::invalid_format,
-            "INTRFACE HUD assets do not share the original palette"};
+            "INTERFACE HUD assets do not share the original palette"};
       }
       assets_.push_back(HudTextureAsset{entry.name, std::move(image)});
     }
@@ -2085,7 +1809,7 @@ public:
                                       std::move(armor_pickup)});
     if (assets_.empty()) {
       throw core::Error{core::ErrorCode::not_found,
-                        "INTRFACE HUD atlas is empty"};
+                        "INTERFACE HUD atlas is empty"};
     }
     static_cast<void>(image("FONTA.TIM"));
     static_cast<void>(image("FONTB.TIM"));
@@ -2098,6 +1822,14 @@ public:
     for (const auto layer : nightvision_scope_layers) {
       static_cast<void>(image(layer));
     }
+    if (game::russianLanguageActive()) {
+      native_font_ = std::make_unique<PsyCrossFontTexture>(
+          image("FONTA.TIM"), image("FONTB.TIM"), image("FONTC.TIM"));
+    }
+  }
+
+  [[nodiscard]] const PsyCrossFontTexture *nativeFont() const noexcept {
+    return native_font_.get();
   }
 
   void invalidate() const noexcept {
@@ -2169,9 +1901,11 @@ public:
     // Upload the complete authored font page once here and keep the single
     // palette upload/DrawSync below as the batch boundary.
     if (!gameplay_font_resident_) {
-      upload("FONTA.TIM");
-      upload("FONTB.TIM");
-      upload("FONTC.TIM");
+      if (native_font_ == nullptr) {
+        upload("FONTA.TIM");
+        upload("FONTB.TIM");
+        upload("FONTC.TIM");
+      }
       gameplay_font_resident_ = true;
     }
     const auto &definition = hud.inventory().currentDefinition();
@@ -2201,8 +1935,8 @@ public:
       uploadTimBlockAt(armor_pickup_palette_, hud_resident_clut_x,
                        pickup_resident_clut_y);
     }
-    for (std::size_t weapon_index = 0U;
-         weapon_index < game::weapon_slot_count; ++weapon_index) {
+    for (std::size_t weapon_index = 0U; weapon_index < game::weapon_slot_count;
+         ++weapon_index) {
       if ((projectile_mask & (std::uint32_t{1U} << weapon_index)) == 0U) {
         continue;
       }
@@ -2245,7 +1979,20 @@ public:
         std::string_view{"SYMBOL.TIM"},
     };
     for (const auto name : names) {
+      if (native_font_ != nullptr && name.starts_with("FONT")) {
+        continue;
+      }
       uploadHudPixels(image(name).pixels());
+    }
+    uploadTimBlockAt(*image("FONTA.TIM").clut(), hud_resident_clut_x,
+                     hud_resident_clut_y);
+    DrawSync(0);
+  }
+
+  void restoreWeaponIcon(game::WeaponId weapon) const {
+    for (const auto layer :
+         game::droppedItemIconLayers(static_cast<std::uint16_t>(weapon))) {
+      uploadHudPixels(image(layer).pixels());
     }
     uploadTimBlockAt(*image("FONTA.TIM").clut(), hud_resident_clut_x,
                      hud_resident_clut_y);
@@ -2320,6 +2067,7 @@ private:
   };
 
   std::vector<HudTextureAsset> assets_;
+  std::unique_ptr<PsyCrossFontTexture> native_font_;
   assets::TimBlock armor_pickup_pixels_;
   assets::TimBlock armor_pickup_palette_;
   mutable std::optional<GameplayResidentState> gameplay_state_;
@@ -2339,9 +2087,17 @@ public:
       if (!std::string_view{entry.name}.ends_with(".TIM")) {
         continue;
       }
+      const auto map_asset = std::string_view{entry.name}.starts_with("MAP");
+      auto localized =
+          map_asset ? game::readLocalizedAsset(
+                          "maps/" + std::to_string(mission.definition().index) +
+                          "/" + entry.name)
+                    : std::nullopt;
       assets_.push_back(PauseTextureAsset{
           entry.name,
-          assets::TimImage::parse(mission.menuAssets().file(entry.name)),
+          localized
+              ? assets::TimImage::parse(*localized)
+              : assets::TimImage::parse(mission.menuAssets().file(entry.name)),
       });
     }
     if (image("GLOKSIL.TIM") == nullptr) {
@@ -3357,6 +3113,8 @@ struct PrimitiveBuffer {
   StableFrameVector<POLY_GT4> effect_sprite_quads{"Effect sprite quads"};
   StableFrameVector<POLY_FT4> park2_flamethrower_ribbons{
       "PARK2 flamethrower ribbons"};
+  StableFrameVector<POLY_FT4> pickup_sprites{"Retail pickup sprites"};
+  StableFrameVector<POLY_FT4> projectile_sprites{"Projectile sprites"};
   StableFrameVector<POLY_FT4> guest_sprites{"Retail guest sprites"};
   StableFrameVector<LINE_G2> guest_lines{"Retail guest lines"};
   StableFrameVector<DR_TPAGE> guest_line_modes{"Retail guest line modes"};
@@ -3383,6 +3141,8 @@ struct PrimitiveBuffer {
     flashlight_cone_quads.reset();
     effect_sprite_quads.reset();
     park2_flamethrower_ribbons.reset();
+    pickup_sprites.reset();
+    projectile_sprites.reset();
     guest_sprites.reset();
     guest_lines.reset();
     guest_line_modes.reset();
@@ -3407,6 +3167,8 @@ struct PrimitiveBuffer {
     flashlight_cone_quads.lockStorage();
     effect_sprite_quads.lockStorage();
     park2_flamethrower_ribbons.lockStorage();
+    pickup_sprites.lockStorage();
+    projectile_sprites.lockStorage();
     guest_sprites.lockStorage();
     guest_lines.lockStorage();
     guest_line_modes.lockStorage();
@@ -3428,6 +3190,8 @@ struct PrimitiveBuffer {
            flashlight_cone_quads.storageStable() &&
            effect_sprite_quads.storageStable() &&
            park2_flamethrower_ribbons.storageStable() &&
+           pickup_sprites.storageStable() &&
+           projectile_sprites.storageStable() &&
            guest_sprites.storageStable() && guest_lines.storageStable() &&
            guest_line_modes.storageStable() &&
            guest_raw_tiles.storageStable() &&
@@ -3933,7 +3697,8 @@ public:
     shards_.clear();
     destroyed_.resize(gameplay.objects().size());
     identities_.resize(gameplay.objects().size());
-    for (std::size_t object = 0U; object < gameplay.objects().size(); ++object) {
+    for (std::size_t object = 0U; object < gameplay.objects().size();
+         ++object) {
       destroyed_[object] =
           gameplay.objectDestroyed(static_cast<std::uint16_t>(object));
       identities_[object] = identity(gameplay.objects()[object]);
@@ -3953,8 +3718,8 @@ public:
         identities_[object] = identity(gameplay.objects()[object]);
       }
     }
-    const auto count = std::min(gameplay.objects().size(),
-                                presentation.objects.size());
+    const auto count =
+        std::min(gameplay.objects().size(), presentation.objects.size());
     for (std::size_t object = 0U; object < count; ++object) {
       const auto &scene_object = gameplay.objects()[object];
       const auto current_identity = identity(scene_object);
@@ -3977,9 +3742,8 @@ public:
     for (auto &shard : shards_) {
       ++shard.age;
     }
-    std::erase_if(shards_, [](const auto &shard) {
-      return shard.age >= shard.lifetime;
-    });
+    std::erase_if(
+        shards_, [](const auto &shard) { return shard.age >= shard.lifetime; });
   }
 
   [[nodiscard]] std::span<const GlassShardPresentationState>
@@ -4014,8 +3778,8 @@ private:
 
   void appendShard(const std::array<SourceVertex, 3U> &vertices,
                    const assets::GmdTriangle &material,
-                   std::uint8_t texture_bank,
-                   const game::CameraState &camera, std::uint32_t seed) {
+                   std::uint8_t texture_bank, const game::CameraState &camera,
+                   std::uint32_t seed) {
     constexpr auto maximum_active_shards = std::size_t{256U};
     if (shards_.size() == maximum_active_shards) {
       shards_.erase(shards_.begin());
@@ -4038,9 +3802,8 @@ private:
                                vertices[2].position.y - vertices[0].position.y,
                                vertices[2].position.z - vertices[0].position.z};
     auto normal = cross(edge1, edge2);
-    const auto normal_length =
-        std::sqrt(normal.x * normal.x + normal.y * normal.y +
-                  normal.z * normal.z);
+    const auto normal_length = std::sqrt(
+        normal.x * normal.x + normal.y * normal.y + normal.z * normal.z);
     if (normal_length > 0.0001) {
       normal.x /= normal_length;
       normal.y /= normal_length;
@@ -4048,8 +3811,8 @@ private:
     } else {
       normal = {0.0, 0.0, 1.0};
     }
-    const auto to_camera = Vector3{camera.x - centre.x, camera.y - centre.y,
-                                   camera.z - centre.z};
+    const auto to_camera =
+        Vector3{camera.x - centre.x, camera.y - centre.y, camera.z - centre.z};
     if (normal.x * to_camera.x + normal.y * to_camera.y +
             normal.z * to_camera.z <
         0.0) {
@@ -4062,25 +3825,21 @@ private:
       return static_cast<double>((seed >> 8U) & 0xffffU) / 65535.0;
     };
     const auto outward_speed = 42.0 + random() * 58.0;
-    const auto spin_axis_raw = Vector3{random() * 2.0 - 1.0,
-                                       random() * 2.0 - 1.0,
-                                       random() * 2.0 - 1.0};
-    const auto spin_length =
-        std::sqrt(spin_axis_raw.x * spin_axis_raw.x +
-                  spin_axis_raw.y * spin_axis_raw.y +
-                  spin_axis_raw.z * spin_axis_raw.z);
-    const auto spin_axis =
-        spin_length > 0.0001
-            ? Vector3{spin_axis_raw.x / spin_length,
-                      spin_axis_raw.y / spin_length,
-                      spin_axis_raw.z / spin_length}
-            : Vector3{0.0, 1.0, 0.0};
+    const auto spin_axis_raw = Vector3{
+        random() * 2.0 - 1.0, random() * 2.0 - 1.0, random() * 2.0 - 1.0};
+    const auto spin_length = std::sqrt(spin_axis_raw.x * spin_axis_raw.x +
+                                       spin_axis_raw.y * spin_axis_raw.y +
+                                       spin_axis_raw.z * spin_axis_raw.z);
+    const auto spin_axis = spin_length > 0.0001
+                               ? Vector3{spin_axis_raw.x / spin_length,
+                                         spin_axis_raw.y / spin_length,
+                                         spin_axis_raw.z / spin_length}
+                               : Vector3{0.0, 1.0, 0.0};
     GlassShardPresentationState shard;
     for (std::size_t corner = 0U; corner < vertices.size(); ++corner) {
       shard.vertices[corner] = GlassShardVertexState{
           vertices[corner].position.x, vertices[corner].position.y,
-          vertices[corner].position.z, vertices[corner].u,
-          vertices[corner].v};
+          vertices[corner].position.z, vertices[corner].u, vertices[corner].v};
     }
     shard.centre = {centre.x, centre.y, centre.z};
     shard.velocity = {
@@ -4117,10 +3876,9 @@ private:
       return;
     }
     const auto renderable_count = static_cast<std::size_t>(
-        std::ranges::count_if(model->triangles(),
-                              [](const auto &triangle) {
-                                return triangle.flags != 0U;
-                              }));
+        std::ranges::count_if(model->triangles(), [](const auto &triangle) {
+          return triangle.flags != 0U;
+        }));
     const auto subdivide = renderable_count <= 20U;
     auto emitted = std::size_t{};
     constexpr auto maximum_shards_per_break = std::size_t{80U};
@@ -4134,8 +3892,7 @@ private:
       }
       std::array<SourceVertex, 3U> source{};
       for (std::size_t corner = 0U; corner < source.size(); ++corner) {
-        const auto &vertex =
-            model->vertices()[triangle.vertex_indices[corner]];
+        const auto &vertex = model->vertices()[triangle.vertex_indices[corner]];
         source[corner] = SourceVertex{
             transformPoint(vertex.x, vertex.y, vertex.z, object.transform),
             static_cast<double>(triangle.uv[corner].u),
@@ -4163,11 +3920,10 @@ private:
       for (std::size_t fragment = 0U;
            fragment < fragments.size() && emitted < maximum_shards_per_break;
            ++fragment) {
-        appendShard(fragments[fragment], triangle,
-                    gameplay.objectTextureBank(object_index),
-                    presentation.camera,
-                    base_seed ^ static_cast<std::uint32_t>(fragment *
-                                                           0x85ebca6bU));
+        appendShard(
+            fragments[fragment], triangle,
+            gameplay.objectTextureBank(object_index), presentation.camera,
+            base_seed ^ static_cast<std::uint32_t>(fragment * 0x85ebca6bU));
         ++emitted;
       }
     }
@@ -5026,11 +4782,10 @@ void submitClippedTriangle(
   }
 }
 
-void renderGlassShards(
-    std::span<const GlassShardPresentationState> shards,
-    double interpolation_amount, const MATRIX &view,
-    std::vector<OT_TAG> &ordering_table, PrimitiveBuffer &primitives,
-    RenderStats &stats) {
+void renderGlassShards(std::span<const GlassShardPresentationState> shards,
+                       double interpolation_amount, const MATRIX &view,
+                       std::vector<OT_TAG> &ordering_table,
+                       PrimitiveBuffer &primitives, RenderStats &stats) {
   interpolation_amount = std::clamp(interpolation_amount, 0.0, 1.0);
   constexpr auto gravity_per_update = 11.0;
   for (const auto &shard : shards) {
@@ -5038,10 +4793,9 @@ void renderGlassShards(
     const auto angle = shard.angular_speed * time;
     const auto cosine = std::cos(angle);
     const auto sine = std::sin(angle);
-    const auto axis = Vector3{shard.spin_axis.x, shard.spin_axis.y,
-                              shard.spin_axis.z};
-    const auto centre =
-        Vector3{shard.centre.x, shard.centre.y, shard.centre.z};
+    const auto axis =
+        Vector3{shard.spin_axis.x, shard.spin_axis.y, shard.spin_axis.z};
+    const auto centre = Vector3{shard.centre.x, shard.centre.y, shard.centre.z};
     const auto translation = Vector3{
         shard.velocity.x * time,
         shard.velocity.y * time + gravity_per_update * time * time * 0.5,
@@ -5069,10 +4823,10 @@ void renderGlassShards(
                                     centre.z + rotated.z + translation.z};
       auto lit = makeTexturedVertex(
           makeVertex(position.x, position.y, position.z),
-          assets::EmdUv{static_cast<std::uint8_t>(std::clamp(
-                            std::lround(source.u), 0L, 255L)),
-                        static_cast<std::uint8_t>(std::clamp(
-                            std::lround(source.v), 0L, 255L))},
+          assets::EmdUv{static_cast<std::uint8_t>(
+                            std::clamp(std::lround(source.u), 0L, 255L)),
+                        static_cast<std::uint8_t>(
+                            std::clamp(std::lround(source.v), 0L, 255L))},
           VertexColor{128U, 128U, 128U});
       lit.x = position.x;
       lit.y = position.y;
@@ -5083,8 +4837,8 @@ void renderGlassShards(
     }
     submitClippedTriangle(
         vertices,
-        TexturedMaterial{shard.texture_page, shard.clut,
-                         shard.semi_transparent, false, shard.texture_bank},
+        TexturedMaterial{shard.texture_page, shard.clut, shard.semi_transparent,
+                         false, shard.texture_bank},
         true, false, view, ordering_table, primitives.objects, stats);
   }
 }
@@ -6782,6 +6536,191 @@ void renderObjects(const game::GameplaySession &gameplay,
   }
 }
 
+void renderDroppedItemSprites(const HudTextureAtlas &textures,
+                              const game::GameplaySession &gameplay,
+                              const RenderPresentationSnapshot &presentation,
+                              const MATRIX &view,
+                              std::vector<OT_TAG> &ordering_table,
+                              PrimitiveBuffer &primitives, RenderStats &stats) {
+  const auto &camera = presentation.camera;
+  const auto basis = viewBasis(camera);
+  const auto projection = static_cast<double>(std::max(camera.projection, 1));
+  constexpr auto center_x = static_cast<double>(screen_width) * 0.5;
+  constexpr auto center_y = static_cast<double>(screen_height) * 0.5;
+  constexpr double pickup_world_extent = 96.0;
+  constexpr double maximum_screen_extent = 34.0;
+  constexpr double pickup_center_clearance = 72.0;
+  constexpr double fallback_visual_lift = 96.0;
+  constexpr std::uint64_t pickup_pulse_half_ticks = 12U;
+  constexpr std::uint8_t pickup_minimum_brightness = 160U;
+  constexpr std::uint8_t pickup_brightness_range = 48U;
+  const auto pickup_pulse_phase =
+      presentation.guest_frame % (pickup_pulse_half_ticks * 2U);
+  const auto pickup_pulse_rise =
+      pickup_pulse_phase <= pickup_pulse_half_ticks
+          ? pickup_pulse_phase
+          : pickup_pulse_half_ticks * 2U - pickup_pulse_phase;
+  const auto pickup_brightness = static_cast<std::uint8_t>(
+      pickup_minimum_brightness +
+      pickup_brightness_range * pickup_pulse_rise / pickup_pulse_half_ticks);
+
+  for (const auto &item : presentation.dropped_items) {
+    const auto layers = game::droppedItemIconLayers(item.item);
+    if (layers.empty()) {
+      continue;
+    }
+    const auto &position = item.transform.translation;
+    const auto raw_world_y = -static_cast<double>(position.y);
+    const auto ground_y = gameplay.droppedItemGroundY(
+        static_cast<double>(position.x), static_cast<double>(position.z),
+        raw_world_y, item.room);
+    const auto world = Vector3{static_cast<double>(position.x),
+                               ground_y ? *ground_y - pickup_center_clearance
+                                        : raw_world_y - fallback_visual_lift,
+                               static_cast<double>(position.z)};
+    if (!gameplay.droppedItemVisibleFrom(camera.x, camera.y, camera.z, world.x,
+                                         world.y, world.z, item.room)) {
+      continue;
+    }
+    const auto delta =
+        Vector3{world.x - camera.x, world.y - camera.y, world.z - camera.z};
+    const auto component = [&delta](const Vector3 &axis) {
+      return delta.x * axis.x + delta.y * axis.y + delta.z * axis.z;
+    };
+    const auto depth = preciseCameraDepth(view, world.x, world.y, world.z);
+    if (depth <= active_near_clip_depth) {
+      continue;
+    }
+    const auto projected_x =
+        center_x + component(basis[0]) * projection / depth;
+    const auto projected_y =
+        center_y + component(basis[1]) * projection / depth;
+    if (projected_x < -64.0 || projected_x > screen_width + 64.0 ||
+        projected_y < -64.0 || projected_y > screen_height + 64.0) {
+      continue;
+    }
+
+    std::array<int, game::maximum_weapon_icon_layers> widths{};
+    std::array<int, game::maximum_weapon_icon_layers> heights{};
+    for (std::size_t layer = 0U; layer < layers.size(); ++layer) {
+      const auto &image = textures.image(layers[layer]);
+      widths[layer] = static_cast<int>(image.displayWidth());
+      heights[layer] = static_cast<int>(image.displayHeight());
+    }
+    const auto offsets = game::originalWeaponIconOffsets(
+        std::span<const int>{widths.data(), layers.size()});
+    auto group_left = offsets[0];
+    auto group_right = offsets[0] + widths[0];
+    for (std::size_t layer = 1U; layer < layers.size(); ++layer) {
+      group_left = std::min(group_left, offsets[layer]);
+      group_right = std::max(group_right, offsets[layer] + widths[layer]);
+    }
+    const auto group_center =
+        (static_cast<double>(group_left) + group_right) * 0.5;
+    const auto group_width = std::max(group_right - group_left, 1);
+    const auto maximum_height = *std::max_element(
+        heights.begin(),
+        heights.begin() + static_cast<std::ptrdiff_t>(layers.size()));
+    const auto source_extent =
+        static_cast<double>(std::max(group_width, maximum_height));
+    const auto compact_pistol = [&item] {
+      if (item.item >= game::weapon_slot_count) {
+        return false;
+      }
+      switch (static_cast<game::WeaponId>(item.item)) {
+      case game::WeaponId::silenced_9mm:
+      case game::WeaponId::pistol_9mm:
+      case game::WeaponId::unused_357:
+      case game::WeaponId::pistol_45:
+      case game::WeaponId::g_18:
+        return true;
+      default:
+        return false;
+      }
+    }();
+    const auto category_scale = compact_pistol ? 0.48 : 1.0;
+    const auto scale =
+        std::min({projection * pickup_world_extent * category_scale /
+                      (depth * source_extent),
+                  maximum_screen_extent * category_scale / source_extent, 1.0});
+    const auto sort_depth =
+        std::clamp(static_cast<int>(std::lround(depth * 0.25)), 1,
+                   ordering_table_size - 1);
+
+    for (std::size_t layer = 0U; layer < layers.size(); ++layer) {
+      const auto &image = textures.image(layers[layer]);
+      const auto armor_pickup = layers[layer] == armor_pickup_texture;
+      const auto resident_x =
+          armor_pickup ? pickup_resident_x : hudResidentX(image.pixels().x);
+      const auto resident_y =
+          armor_pickup ? pickup_resident_y : image.pixels().y;
+      const auto page_x =
+          static_cast<int>(resident_x & static_cast<std::uint16_t>(~63U));
+      const auto page_y =
+          static_cast<int>(resident_y & static_cast<std::uint16_t>(~255U));
+      const auto pixels_per_word =
+          image.mode() == assets::TimPixelMode::indexed4   ? 4
+          : image.mode() == assets::TimPixelMode::indexed8 ? 2
+                                                           : 1;
+      const auto u0 = (static_cast<int>(resident_x) - page_x) * pixels_per_word;
+      const auto v0 = static_cast<int>(resident_y) - page_y;
+      const auto texture_page =
+          GetTPage(texturePageMode(image.mode()), 0, page_x, page_y);
+      // PGXP marks this as world geometry, so PsyCross treats its UV bounds as
+      // inclusive. Point the far corners at the final authored texel; using
+      // the HUD-style exclusive edge sampled the neighbouring atlas tile and
+      // produced a bright rectangular seam around multi-part pickups.
+      const auto source_right = u0 + widths[layer] - 1;
+      const auto source_bottom = v0 + heights[layer] - 1;
+      const auto left = projected_x + (offsets[layer] - group_center) * scale;
+      const auto top = projected_y - heights[layer] * scale * 0.5;
+      const auto right = left + widths[layer] * scale;
+      const auto bottom = top + heights[layer] * scale;
+
+      auto &polygon = primitives.pickup_sprites.emplace_back();
+      setPolyFT4(&polygon);
+      polygon.tpage = texture_page;
+      polygon.clut =
+          GetClut(hud_resident_clut_x,
+                  armor_pickup ? pickup_resident_clut_y : hud_resident_clut_y);
+      setRGB0(&polygon, pickup_brightness, pickup_brightness,
+              pickup_brightness);
+      setXY4(&polygon, static_cast<float>(left), static_cast<float>(top),
+             static_cast<float>(right), static_cast<float>(top),
+             static_cast<float>(left), static_cast<float>(bottom),
+             static_cast<float>(right), static_cast<float>(bottom));
+      setUV4(&polygon, static_cast<u_char>(u0), static_cast<u_char>(v0),
+             static_cast<u_char>(source_right), static_cast<u_char>(v0),
+             static_cast<u_char>(u0), static_cast<u_char>(source_bottom),
+             static_cast<u_char>(source_right),
+             static_cast<u_char>(source_bottom));
+
+      const auto emit = [&](VERTTYPE &x, VERTTYPE &y, double screen_x,
+                            double screen_y) {
+        PGXPVData data{};
+        data.lookup = PGXP_LOOKUP_VALUE(x, y);
+        data.px = static_cast<float>((screen_x - center_x) * depth /
+                                     projection / 128.0);
+        data.py = static_cast<float>((screen_y - center_y) * depth /
+                                     projection / 128.0);
+        data.pz = static_cast<float>(depth / 128.0);
+        data.sx = static_cast<float>(screen_x);
+        data.sy = static_cast<float>(screen_y);
+        data.scr_h = static_cast<float>(projection);
+        data.ofx = static_cast<float>(center_x);
+        data.ofy = static_cast<float>(center_y);
+        static_cast<void>(PGXP_EmitCacheData(&data));
+      };
+      emit(polygon.x0, polygon.y0, left, top);
+      emit(polygon.x1, polygon.y1, right, top);
+      emit(polygon.x2, polygon.y2, left, bottom);
+      emit(polygon.x3, polygon.y3, right, bottom);
+      addPrim(&ordering_table[sort_depth], &polygon);
+      ++stats.submitted;
+    }
+  }
+}
+
 void submitStats(RenderStats &stats, int depth,
                  std::span<const long> projected) {
   ++stats.submitted;
@@ -6889,6 +6828,57 @@ assets::MissionTransform playerTransform(const game::PlayerState &player,
       static_cast<std::int32_t>(std::lround(-player.y)),
       static_cast<std::int32_t>(std::lround(player.z)),
   };
+}
+
+void renderPresentedPlayer(const game::GameplaySession &gameplay,
+                           const game::ActorAnimationBank &actor_animations,
+                           std::uint64_t player_animation_tick,
+                           game::WeaponId presented_weapon,
+                           const RenderPresentationSnapshot &presentation,
+                           const MATRIX &view,
+                           std::vector<OT_TAG> &ordering_table,
+                           PrimitiveBuffer &primitives, RenderStats &stats) {
+  if (gameplay.playerAlive() && presentation.first_person_aim) {
+    return;
+  }
+  const auto *guest_player =
+      presentation.legacy_player ? &*presentation.legacy_player : nullptr;
+  if (const auto *player_model =
+          std::get_if<assets::HmdModel>(&gameplay.playerModel().geometry)) {
+    auto player_object = game::SceneObject{
+        0,
+        playerTransform(presentation.player, presentation.player_model_heading),
+    };
+    if (guest_player != nullptr) {
+      player_object = *guest_player;
+    }
+    const auto player_texture_bank =
+        gameplay.textureBankAt(gameplay.player().x, gameplay.player().z);
+    const auto pose = [&] {
+      if (!gameplay.playerAlive()) {
+        return actor_animations.npcPose(
+            game::NpcAnimationRequest{
+                game::NpcAnimationAction::death,
+                game::weaponStance(gameplay.hud().inventory().current()),
+                0U,
+            },
+            gameplay.playerDeathAnimationTick());
+      }
+      return actor_animations.playerPose(
+          gameplay.playerAnimation(), player_animation_tick,
+          gameplay.playerPresentationAnimationTick());
+    }();
+    renderHmdObject(*player_model, player_object, &pose, player_texture_bank,
+                    view, ordering_table, primitives, stats);
+    if (gameplay.playerAlive()) {
+      renderActorWeapon(gameplay, *player_model, player_object, pose,
+                        presented_weapon, player_texture_bank,
+                        presentation.camera, view, ordering_table, primitives,
+                        stats);
+    }
+  } else if (!gameplay.legacyRenderCommandsAuthoritative()) {
+    renderPlayer(presentation.player, view, ordering_table, primitives, stats);
+  }
 }
 
 [[nodiscard]] constexpr std::int16_t packedScreenX(std::uint32_t word) {
@@ -8042,9 +8032,16 @@ liveWorldVertexColors(const RenderPresentationSnapshot &presentation,
   return colors->colors;
 }
 
+void renderProjectileSprites(const HudTextureAtlas &textures,
+                             const game::GameplaySession &gameplay,
+                             const RenderPresentationSnapshot &presentation,
+                             const MATRIX &view,
+                             std::vector<OT_TAG> &ordering_table,
+                             PrimitiveBuffer &primitives, RenderStats &stats);
+
 RenderStats renderWorld(
     const game::GameplaySession &gameplay, const TextureStreamer &textures,
-    const FireAnimation &fire_animation,
+    const HudTextureAtlas &hud_textures, const FireAnimation &fire_animation,
     const FireTexturePlacement &fire_texture_placement,
     const CombatEffectTextureAtlas &effect_textures,
     const game::ActorAnimationBank &actor_animations, std::uint64_t actor_tick,
@@ -8059,9 +8056,8 @@ RenderStats renderWorld(
     std::span<const game::LegacyGuestRawPacketPresentationState>
         retained_raw_packets,
     std::span<const GlassShardPresentationState> glass_shards,
-    double interpolation_amount,
-    const RenderPresentationSnapshot &presentation, const MATRIX &view,
-    std::vector<OT_TAG> &ordering_table,
+    double interpolation_amount, const RenderPresentationSnapshot &presentation,
+    const MATRIX &view, std::vector<OT_TAG> &ordering_table,
     std::vector<OT_TAG> &scrim_ordering_table,
     std::vector<OT_TAG> &guest_overlay_ordering_table,
     std::vector<OT_TAG> &fire_ordering_table, PrimitiveBuffer &primitives) {
@@ -8167,15 +8163,6 @@ RenderStats renderWorld(
       add_weapon_model(presented_player_weapon);
     }
   }
-  for (const auto &projectile : presentation.projectiles) {
-    if (!projectile.active ||
-        projectile.phase != game::ProjectilePhase::flying) {
-      continue;
-    }
-    add_weapon_model(projectile.weapon == game::WeaponId::m_79
-                         ? game::WeaponId::fragmentation_grenade
-                         : projectile.weapon);
-  }
   if (!presentation.guest_camera_lists_captured) {
     add_to_budget(fire_particle_budget, gameplay.legacyExplParticles().size(),
                   "Legacy effect");
@@ -8222,6 +8209,27 @@ RenderStats renderWorld(
   primitives.effect_sprite_quads.reserve(2048U);
   primitives.park2_flamethrower_ribbons.reserve(
       gameplay.legacyPark2FlamethrowerRibbons().size());
+  std::size_t pickup_sprite_budget{};
+  for (const auto &item : presentation.dropped_items) {
+    add_to_budget(pickup_sprite_budget,
+                  game::droppedItemIconLayers(item.item).size(),
+                  "Pickup sprite");
+  }
+  primitives.pickup_sprites.reserve(pickup_sprite_budget);
+  std::size_t projectile_sprite_budget{};
+  for (const auto &projectile : presentation.projectiles) {
+    if (!projectile.active ||
+        projectile.phase != game::ProjectilePhase::flying ||
+        (projectile.weapon != game::WeaponId::fragmentation_grenade &&
+         projectile.weapon != game::WeaponId::gas_grenade)) {
+      continue;
+    }
+    add_to_budget(
+        projectile_sprite_budget,
+        game::weaponDefinition(projectile.weapon).icon.layers().size(),
+        "Projectile sprite");
+  }
+  primitives.projectile_sprites.reserve(projectile_sprite_budget);
   primitives.guest_sprites.reserve(presentation.guest_sprites.size() +
                                    retained_sprites.size());
   primitives.guest_lines.reserve(presentation.guest_lines.size());
@@ -8396,6 +8404,10 @@ RenderStats renderWorld(
   renderObjects(gameplay, fire_animation, fire_texture_placement,
                 actor_animations, actor_tick, presentation, view,
                 ordering_table, fire_ordering_table, primitives, stats);
+  renderDroppedItemSprites(hud_textures, gameplay, presentation, view,
+                           ordering_table, primitives, stats);
+  renderProjectileSprites(hud_textures, gameplay, presentation, view,
+                          ordering_table, primitives, stats);
   renderGlassShards(glass_shards, interpolation_amount, view, ordering_table,
                     primitives, stats);
   renderWeaponEffects(gameplay, actor_tick, weapon_edges, retail_muzzle_flashes,
@@ -8406,49 +8418,9 @@ RenderStats renderWorld(
   renderGuestCameraLists(gameplay, textures, presentation, retained_sprites,
                          retained_raw_packets, view, ordering_table,
                          guest_overlay_ordering_table, primitives, stats);
-  const auto *guest_player =
-      presentation.legacy_player ? &*presentation.legacy_player : nullptr;
-  if (!gameplay.playerAlive() || !presentation.first_person_aim) {
-    if (const auto *player_model =
-            std::get_if<assets::HmdModel>(&gameplay.playerModel().geometry)) {
-      auto player_object = game::SceneObject{
-          0,
-          playerTransform(presentation.player,
-                          presentation.player_model_heading),
-      };
-      if (guest_player != nullptr) {
-        player_object = *guest_player;
-      }
-      const auto player_texture_bank =
-          gameplay.textureBankAt(gameplay.player().x, gameplay.player().z);
-      const auto pose = [&] {
-        if (!gameplay.playerAlive()) {
-          return actor_animations.npcPose(
-              game::NpcAnimationRequest{
-                  game::NpcAnimationAction::death,
-                  game::weaponStance(gameplay.hud().inventory().current()),
-                  0U,
-              },
-              gameplay.playerDeathAnimationTick());
-        }
-        const auto request = gameplay.playerAnimation();
-        const auto action_tick = gameplay.playerPresentationAnimationTick();
-        return actor_animations.playerPose(request, player_animation_tick,
-                                           action_tick);
-      }();
-      renderHmdObject(*player_model, player_object, &pose, player_texture_bank,
-                      view, ordering_table, primitives, stats);
-      if (gameplay.playerAlive()) {
-        renderActorWeapon(gameplay, *player_model, player_object, pose,
-                          presented_player_weapon, player_texture_bank,
-                          presentation.camera, view, ordering_table, primitives,
-                          stats);
-      }
-    } else if (!gameplay.legacyRenderCommandsAuthoritative()) {
-      renderPlayer(presentation.player, view, ordering_table, primitives,
-                   stats);
-    }
-  }
+  renderPresentedPlayer(gameplay, actor_animations, player_animation_tick,
+                        presented_player_weapon, presentation, view,
+                        ordering_table, primitives, stats);
   if (!primitives.storageStable()) {
     throw core::Error{core::ErrorCode::invalid_format,
                       "Primitive storage moved while building the OT"};
@@ -8608,9 +8580,50 @@ void drawHudSprite(const assets::TimImage &image, int x, int y,
                           image.pixels().y, x, y, brightness);
 }
 
-void drawProjectileSprites(const HudTextureAtlas &textures,
-                           const game::GameplaySession &gameplay,
-                           const RenderPresentationSnapshot &presentation) {
+void drawHudSpriteScaled(const assets::TimImage &image, float x, float y,
+                         float width, float height,
+                         std::uint8_t brightness = 128U) {
+  const auto resident_x = hudResidentX(image.pixels().x);
+  const auto resident_y = image.pixels().y;
+  const auto page_x =
+      static_cast<int>(resident_x & static_cast<std::uint16_t>(~63U));
+  const auto page_y =
+      static_cast<int>(resident_y & static_cast<std::uint16_t>(~255U));
+  const auto pixels_per_word =
+      image.mode() == assets::TimPixelMode::indexed4   ? 4
+      : image.mode() == assets::TimPixelMode::indexed8 ? 2
+                                                       : 1;
+  const auto u0 = (static_cast<int>(resident_x) - page_x) * pixels_per_word;
+  const auto v0 = static_cast<int>(resident_y) - page_y;
+  const auto source_width = static_cast<int>(image.displayWidth());
+  const auto source_height = static_cast<int>(image.displayHeight());
+  const auto texture_page =
+      GetTPage(texturePageMode(image.mode()), 0, page_x, page_y);
+
+  DR_TPAGE page{};
+  SetDrawTPage(&page, 1, 0, texture_page);
+  DrawPrim(&page);
+
+  POLY_FT4 polygon{};
+  setPolyFT4(&polygon);
+  polygon.tpage = texture_page;
+  polygon.clut = GetClut(hud_resident_clut_x, hud_resident_clut_y);
+  setRGB0(&polygon, brightness, brightness, brightness);
+  setXY4(&polygon, x, y, x + width, y, x, y + height, x + width, y + height);
+  setUV4(&polygon, static_cast<u_char>(u0), static_cast<u_char>(v0),
+         static_cast<u_char>(u0 + source_width), static_cast<u_char>(v0),
+         static_cast<u_char>(u0), static_cast<u_char>(v0 + source_height),
+         static_cast<u_char>(u0 + source_width),
+         static_cast<u_char>(v0 + source_height));
+  DrawPrim(&polygon);
+}
+
+void renderProjectileSprites(const HudTextureAtlas &textures,
+                             const game::GameplaySession &gameplay,
+                             const RenderPresentationSnapshot &presentation,
+                             const MATRIX &view,
+                             std::vector<OT_TAG> &ordering_table,
+                             PrimitiveBuffer &primitives, RenderStats &stats) {
   if (presentation.projectiles.empty()) {
     return;
   }
@@ -8623,12 +8636,6 @@ void drawProjectileSprites(const HudTextureAtlas &textures,
   constexpr double projectile_world_extent = 24.0;
   constexpr double maximum_screen_extent = 10.0;
   constexpr std::uint8_t projectile_brightness = 176U;
-
-  DrawSync(0);
-  GR_SetBlendMode(BM_NONE);
-  GR_EnableDepth(1);
-  GR_SetDepthState(1, 0);
-  GR_SetPolygonOffset(0.0F, 0.0F);
 
   for (const auto &projectile : presentation.projectiles) {
     if (!projectile.active ||
@@ -8647,13 +8654,13 @@ void drawProjectileSprites(const HudTextureAtlas &textures,
       continue;
     }
 
-    const auto delta =
-        Vector3{projectile.x - camera.x, projectile.y - camera.y,
-                projectile.z - camera.z};
+    const auto delta = Vector3{projectile.x - camera.x, projectile.y - camera.y,
+                               projectile.z - camera.z};
     const auto component = [&delta](const Vector3 &axis) {
       return delta.x * axis.x + delta.y * axis.y + delta.z * axis.z;
     };
-    const auto depth = component(basis[2]);
+    const auto depth =
+        preciseCameraDepth(view, projectile.x, projectile.y, projectile.z);
     if (depth <= active_near_clip_depth) {
       continue;
     }
@@ -8693,9 +8700,12 @@ void drawProjectileSprites(const HudTextureAtlas &textures,
         heights.begin() + static_cast<std::ptrdiff_t>(layers.size()));
     const auto source_extent =
         static_cast<double>(std::max(group_width, maximum_height));
-    const auto scale =
-        std::min({projection * projectile_world_extent / (depth * source_extent),
-                  maximum_screen_extent / source_extent, 1.0});
+    const auto scale = std::min(
+        {projection * projectile_world_extent / (depth * source_extent),
+         maximum_screen_extent / source_extent, 1.0});
+    const auto sort_depth =
+        std::clamp(static_cast<int>(std::lround(depth * 0.25)), 1,
+                   ordering_table_size - 1);
 
     for (std::size_t layer = 0U; layer < layers.size(); ++layer) {
       const auto &image = textures.image(layers[layer]);
@@ -8713,235 +8723,19 @@ void drawProjectileSprites(const HudTextureAtlas &textures,
       const auto v0 = static_cast<int>(resident_y) - page_y;
       const auto texture_page =
           GetTPage(texturePageMode(image.mode()), 0, page_x, page_y);
-      const auto left =
-          projected_x + (offsets[layer] - group_center) * scale;
-      const auto top = projected_y - heights[layer] * scale * 0.5;
-      const auto right = left + widths[layer] * scale;
-      const auto bottom = top + heights[layer] * scale;
-
-      DR_TPAGE page{};
-      SetDrawTPage(&page, 1, 0, texture_page);
-      DrawPrim(&page);
-      POLY_FT4 polygon{};
-      setPolyFT4(&polygon);
-      polygon.tpage = texture_page;
-      polygon.clut = GetClut(hud_resident_clut_x, hud_resident_clut_y);
-      setRGB0(&polygon, projectile_brightness, projectile_brightness,
-              projectile_brightness);
-      setXY4(&polygon, static_cast<float>(left), static_cast<float>(top),
-             static_cast<float>(right), static_cast<float>(top),
-             static_cast<float>(left), static_cast<float>(bottom),
-             static_cast<float>(right), static_cast<float>(bottom));
-      setUV4(&polygon, static_cast<u_char>(u0), static_cast<u_char>(v0),
-             static_cast<u_char>(u0 + widths[layer]),
-             static_cast<u_char>(v0), static_cast<u_char>(u0),
-             static_cast<u_char>(v0 + heights[layer]),
-             static_cast<u_char>(u0 + widths[layer]),
-             static_cast<u_char>(v0 + heights[layer]));
-
-      const auto emit = [&](VERTTYPE &x, VERTTYPE &y, double screen_x,
-                            double screen_y) {
-        PGXPVData data{};
-        data.lookup = PGXP_LOOKUP_VALUE(x, y);
-        data.px = static_cast<float>((screen_x - center_x) * depth /
-                                     projection / 128.0);
-        data.py = static_cast<float>((screen_y - center_y) * depth /
-                                     projection / 128.0);
-        data.pz = static_cast<float>(depth / 128.0);
-        data.sx = static_cast<float>(screen_x);
-        data.sy = static_cast<float>(screen_y);
-        data.scr_h = static_cast<float>(projection);
-        data.ofx = static_cast<float>(center_x);
-        data.ofy = static_cast<float>(center_y);
-        static_cast<void>(PGXP_EmitCacheData(&data));
-      };
-      emit(polygon.x0, polygon.y0, left, top);
-      emit(polygon.x1, polygon.y1, right, top);
-      emit(polygon.x2, polygon.y2, left, bottom);
-      emit(polygon.x3, polygon.y3, right, bottom);
-      DrawPrim(&polygon);
-    }
-  }
-
-  DrawSync(0);
-  GR_SetPolygonOffset(0.0F, 0.0F);
-  GR_SetDepthState(1, 1);
-}
-
-void drawDroppedItemSprites(const HudTextureAtlas &textures,
-                            const game::GameplaySession &gameplay,
-                            const RenderPresentationSnapshot &presentation) {
-  if (presentation.dropped_items.empty()) {
-    return;
-  }
-
-  const auto &camera = presentation.camera;
-  const auto basis = viewBasis(camera);
-  const auto projection = static_cast<double>(std::max(camera.projection, 1));
-  constexpr auto center_x = static_cast<double>(screen_width) * 0.5;
-  constexpr auto center_y = static_cast<double>(screen_height) * 0.5;
-  // Normalize every assembled silhouette (pistol, rifle, keycard or vest)
-  // against the same longest-edge box. The old 42-pixel cap made compact
-  // pistol art disproportionately dominant next to a corpse.
-  constexpr double pickup_world_extent = 96.0;
-  constexpr double maximum_screen_extent = 34.0;
-  // The icon's half-height is 60 world units. Keep its lower edge clear of a
-  // sloped supporting triangle instead of assuming every corpse lies on a
-  // flat plane.
-  constexpr double pickup_center_clearance = 72.0;
-  constexpr double fallback_visual_lift = 96.0;
-  constexpr std::uint64_t pickup_pulse_half_ticks = 12U;
-  constexpr std::uint8_t pickup_minimum_brightness = 160U;
-  constexpr std::uint8_t pickup_brightness_range = 48U;
-  const auto pickup_pulse_phase =
-      presentation.guest_frame % (pickup_pulse_half_ticks * 2U);
-  const auto pickup_pulse_rise =
-      pickup_pulse_phase <= pickup_pulse_half_ticks
-          ? pickup_pulse_phase
-          : pickup_pulse_half_ticks * 2U - pickup_pulse_phase;
-  const auto pickup_brightness = static_cast<std::uint8_t>(
-      pickup_minimum_brightness +
-      pickup_brightness_range * pickup_pulse_rise / pickup_pulse_half_ticks);
-
-  DrawSync(0);
-  GR_SetBlendMode(BM_NONE);
-  GR_EnableDepth(1);
-  GR_SetDepthState(1, 0);
-  // The billboard already has exact PGXP depth. A polygon offset would pull
-  // it toward the camera in reversed-Z and expose it through nearby walls.
-  GR_SetPolygonOffset(0.0F, 0.0F);
-
-  for (const auto &item : presentation.dropped_items) {
-    // The detached pool owns an exact live world MATRIX. Do not gate it by
-    // the host streaming set: Georgia Street's mobile enemies can cross a
-    // portal before FUN_80045f84 records the floor owner, so that authored
-    // room can leave the native set while the corpse and pickup remain in
-    // front of the camera. Projection and the world Z-buffer are the proper
-    // visibility test for this world-space sprite.
-    const auto raw_world_y = -static_cast<double>(item.position.y);
-    const auto ground_y = gameplay.droppedItemGroundY(
-        static_cast<double>(item.position.x),
-        static_cast<double>(item.position.z), raw_world_y, item.room);
-    const auto world = Vector3{static_cast<double>(item.position.x),
-                               ground_y ? *ground_y - pickup_center_clearance
-                                        : raw_world_y - fallback_visual_lift,
-                               static_cast<double>(item.position.z)};
-    if (!gameplay.droppedItemVisibleFrom(camera.x, camera.y, camera.z, world.x,
-                                         world.y, world.z, item.room)) {
-      continue;
-    }
-    const auto delta =
-        Vector3{world.x - camera.x, world.y - camera.y, world.z - camera.z};
-    const auto component = [&delta](const Vector3 &axis) {
-      return delta.x * axis.x + delta.y * axis.y + delta.z * axis.z;
-    };
-    const auto depth = component(basis[2]);
-    if (depth <= active_near_clip_depth) {
-      continue;
-    }
-    const auto projected_x =
-        center_x + component(basis[0]) * projection / depth;
-    const auto projected_y =
-        center_y + component(basis[1]) * projection / depth;
-    if (projected_x < -64.0 || projected_x > screen_width + 64.0 ||
-        projected_y < -64.0 || projected_y > screen_height + 64.0) {
-      continue;
-    }
-
-    const auto layers = game::droppedItemIconLayers(item.item);
-    if (layers.empty()) {
-      continue;
-    }
-    std::array<int, game::maximum_weapon_icon_layers> widths{};
-    std::array<int, game::maximum_weapon_icon_layers> heights{};
-    for (std::size_t layer = 0U; layer < layers.size(); ++layer) {
-      const auto &image = textures.image(layers[layer]);
-      widths[layer] = static_cast<int>(image.displayWidth());
-      heights[layer] = static_cast<int>(image.displayHeight());
-    }
-    const auto offsets = game::originalWeaponIconOffsets(
-        std::span<const int>{widths.data(), layers.size()});
-    auto group_left = offsets[0];
-    auto group_right = offsets[0] + widths[0];
-    for (std::size_t layer = 1U; layer < layers.size(); ++layer) {
-      group_left = std::min(group_left, offsets[layer]);
-      group_right = std::max(group_right, offsets[layer] + widths[layer]);
-    }
-    const auto group_center =
-        (static_cast<double>(group_left) + group_right) * 0.5;
-    const auto group_width = std::max(group_right - group_left, 1);
-    const auto maximum_height = *std::max_element(
-        heights.begin(),
-        heights.begin() + static_cast<std::ptrdiff_t>(layers.size()));
-    const auto source_extent =
-        static_cast<double>(std::max(group_width, maximum_height));
-    const auto compact_pistol = [&item] {
-      if (item.item >= game::weapon_slot_count) {
-        return false;
-      }
-      switch (static_cast<game::WeaponId>(item.item)) {
-      case game::WeaponId::silenced_9mm:
-      case game::WeaponId::pistol_9mm:
-      case game::WeaponId::unused_357:
-      case game::WeaponId::pistol_45:
-      case game::WeaponId::g_18:
-        return true;
-      default:
-        return false;
-      }
-    }();
-    // Retail sidearms occupy a visibly smaller pickup silhouette than long
-    // guns. Normalizing every category to the same longest edge inverted that
-    // proportion because the compact pistol artwork filled its whole square.
-    const auto category_scale = compact_pistol ? 0.48 : 1.0;
-    const auto scale =
-        std::min({projection * pickup_world_extent * category_scale /
-                      (depth * source_extent),
-                  maximum_screen_extent * category_scale / source_extent, 1.0});
-
-    for (std::size_t layer = 0U; layer < layers.size(); ++layer) {
-      const auto &image = textures.image(layers[layer]);
-      const auto armor_pickup = layers[layer] == armor_pickup_texture;
-      const auto resident_x =
-          armor_pickup ? pickup_resident_x : hudResidentX(image.pixels().x);
-      const auto resident_y =
-          armor_pickup ? pickup_resident_y : image.pixels().y;
-      const auto page_x =
-          static_cast<int>(resident_x & static_cast<std::uint16_t>(~63U));
-      const auto page_y =
-          static_cast<int>(resident_y & static_cast<std::uint16_t>(~255U));
-      const auto pixels_per_word =
-          image.mode() == assets::TimPixelMode::indexed4   ? 4
-          : image.mode() == assets::TimPixelMode::indexed8 ? 2
-                                                           : 1;
-      const auto u0 = (static_cast<int>(resident_x) - page_x) * pixels_per_word;
-      const auto v0 = static_cast<int>(resident_y) - page_y;
-      const auto texture_page =
-          GetTPage(texturePageMode(image.mode()), 0, page_x, page_y);
-      const auto source_right = u0 + widths[layer];
-      // VEST2 occupies rows 224..255. Its exclusive bottom edge is 256,
-      // which cannot be represented by the PS1 packet's uint8 V coordinate;
-      // wrapping it to zero sampled the complete SPFX page vertically.
-      const auto source_bottom = armor_pickup ? 255 : v0 + heights[layer];
-
       const auto left = projected_x + (offsets[layer] - group_center) * scale;
       const auto top = projected_y - heights[layer] * scale * 0.5;
       const auto right = left + widths[layer] * scale;
       const auto bottom = top + heights[layer] * scale;
 
-      DR_TPAGE page{};
-      SetDrawTPage(&page, 1, 0, texture_page);
-      DrawPrim(&page);
-      POLY_FT4 polygon{};
+      const auto source_right = u0 + widths[layer] - 1;
+      const auto source_bottom = v0 + heights[layer] - 1;
+      auto &polygon = primitives.projectile_sprites.emplace_back();
       setPolyFT4(&polygon);
       polygon.tpage = texture_page;
-      polygon.clut =
-          GetClut(hud_resident_clut_x,
-                  armor_pickup ? pickup_resident_clut_y : hud_resident_clut_y);
-      // Retail pickups breathe between two self-lit levels. Drive the pulse
-      // from the guest 20 Hz frame, not the 60 Hz presentation rate.
-      setRGB0(&polygon, pickup_brightness, pickup_brightness,
-              pickup_brightness);
+      polygon.clut = GetClut(hud_resident_clut_x, hud_resident_clut_y);
+      setRGB0(&polygon, projectile_brightness, projectile_brightness,
+              projectile_brightness);
       setXY4(&polygon, static_cast<float>(left), static_cast<float>(top),
              static_cast<float>(right), static_cast<float>(top),
              static_cast<float>(left), static_cast<float>(bottom),
@@ -8972,13 +8766,10 @@ void drawDroppedItemSprites(const HudTextureAtlas &textures,
       emit(polygon.x1, polygon.y1, right, top);
       emit(polygon.x2, polygon.y2, left, bottom);
       emit(polygon.x3, polygon.y3, right, bottom);
-      DrawPrim(&polygon);
+      addPrim(&ordering_table[sort_depth], &polygon);
+      ++stats.submitted;
     }
   }
-
-  DrawSync(0);
-  GR_SetPolygonOffset(0.0F, 0.0F);
-  GR_SetDepthState(1, 1);
 }
 
 void drawHudSpriteRegionTintScaled(const assets::TimImage &page_image, float x,
@@ -9064,9 +8855,11 @@ void drawRetailUiBackdrop(const game::LegacyUiBackdropBridgeState &backdrop,
   }
 }
 
-void drawRetailUiGlyphs(const assets::TimImage &font_page,
+void drawRetailUiGlyphs(const HudTextureAtlas &textures,
                         std::span<const game::LegacyUiGlyphBridgeState> glyphs,
                         int offset_x, int offset_y) {
+  const auto &font_page = textures.image("FONTA.TIM");
+  const ScopedPsyCrossFontTexture font_binding{textures.nativeFont()};
   for (const auto &glyph : glyphs) {
     if (glyph.width == 0U || glyph.height == 0U) {
       continue;
@@ -9089,9 +8882,10 @@ std::optional<game::OriginalHudGlyph> originalHudGlyph(char value) noexcept {
   return game::originalHudGlyph(value);
 }
 
-void drawOriginalHudText(const assets::TimImage &font_page,
-                         std::string_view text, int x, int y,
-                         std::uint8_t brightness = 208U) {
+void drawOriginalHudText(const HudTextureAtlas &textures, std::string_view text,
+                         int x, int y, std::uint8_t brightness = 208U) {
+  const auto &font_page = textures.image("FONTA.TIM");
+  const ScopedPsyCrossFontTexture font_binding{textures.nativeFont()};
   for (const auto character : text) {
     if (character == ' ') {
       x += 4;
@@ -9128,9 +8922,11 @@ std::string_view originalHudTextGlyphPrefix(std::string_view text,
   return text;
 }
 
-void drawOriginalHudTextScaled(const assets::TimImage &font_page,
+void drawOriginalHudTextScaled(const HudTextureAtlas &textures,
                                std::string_view text, float x, float y,
                                float scale, game::LegacyRgbBridgeState color) {
+  const auto &font_page = textures.image("FONTA.TIM");
+  const ScopedPsyCrossFontTexture font_binding{textures.nativeFont()};
   for (const auto character : text) {
     if (character == ' ') {
       x += 4.0F * scale;
@@ -9146,8 +8942,110 @@ void drawOriginalHudTextScaled(const assets::TimImage &font_page,
   }
 }
 
+int originalHudMaximumLineWidth(std::string_view text) noexcept {
+  auto maximum = 0;
+  for (auto cursor = std::size_t{}; cursor <= text.size();) {
+    const auto newline = text.find('\n', cursor);
+    const auto end = newline == std::string_view::npos ? text.size() : newline;
+    maximum = std::max(
+        maximum, game::originalHudTextWidth(text.substr(cursor, end - cursor)));
+    if (newline == std::string_view::npos) {
+      break;
+    }
+    cursor = newline + 1U;
+  }
+  return maximum;
+}
+
+void drawOriginalHudTextBlockScaled(const HudTextureAtlas &textures,
+                                    std::string_view text, float left,
+                                    float top, float available_width,
+                                    float scale,
+                                    game::LegacyRgbBridgeState color) {
+  auto line = 0U;
+  for (auto cursor = std::size_t{}; cursor <= text.size(); ++line) {
+    const auto newline = text.find('\n', cursor);
+    const auto end = newline == std::string_view::npos ? text.size() : newline;
+    const auto line_text = text.substr(cursor, end - cursor);
+    const auto line_width =
+        static_cast<float>(game::originalHudTextWidth(line_text)) * scale;
+    drawOriginalHudTextScaled(
+        textures, line_text, left + (available_width - line_width) * 0.5F,
+        top + static_cast<float>(line) * 9.0F * scale, scale, color);
+    if (newline == std::string_view::npos) {
+      break;
+    }
+    cursor = newline + 1U;
+  }
+}
+
+std::optional<char> originalEnglishHudCharacter(
+    const game::LegacyUiGlyphBridgeState &glyph) noexcept {
+  constexpr auto characters =
+      std::string_view{"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRS"
+                       "TUVWXYZ!\"'(),-./:?"};
+  for (const auto character : characters) {
+    const auto candidate = game::originalEnglishHudGlyph(character);
+    if (candidate && candidate->u == glyph.u && candidate->v == glyph.v &&
+        candidate->width == glyph.width &&
+        glyph.height == candidate->height()) {
+      return character;
+    }
+  }
+  return std::nullopt;
+}
+
+std::string reconstructOriginalHudText(
+    std::span<const game::LegacyUiGlyphBridgeState> glyphs) {
+  std::string result;
+  result.reserve(glyphs.size() + 8U);
+  auto first_on_line = true;
+  auto line_y = std::int16_t{};
+  auto previous_right = 0;
+  const auto append_space = [&result] {
+    if (!result.empty() && result.back() != ' ' && result.back() != '\n') {
+      result.push_back(' ');
+    }
+  };
+  for (const auto &glyph : glyphs) {
+    if (glyph.width == 0U || glyph.height == 0U) {
+      continue;
+    }
+    if (first_on_line) {
+      line_y = glyph.y;
+    } else if (std::abs(static_cast<int>(glyph.y) - static_cast<int>(line_y)) >=
+               4) {
+      while (!result.empty() && result.back() == ' ') {
+        result.pop_back();
+      }
+      result.push_back('\n');
+      first_on_line = true;
+      line_y = glyph.y;
+    } else if (static_cast<int>(glyph.x) - previous_right >= 4) {
+      append_space();
+    }
+
+    if (const auto character = originalEnglishHudCharacter(glyph)) {
+      result.push_back(*character);
+    } else {
+      // Controller icons are separate solid glyphs. Retain a word-sized
+      // placeholder so templates such as "Press %s to Contact %s" remain
+      // matchable even when the original source pointer no longer exists.
+      append_space();
+      result.append("BUTTON");
+      result.push_back(' ');
+    }
+    previous_right = static_cast<int>(glyph.x) + glyph.width;
+    first_on_line = false;
+  }
+  while (!result.empty() && result.back() == ' ') {
+    result.pop_back();
+  }
+  return result;
+}
+
 bool drawBoundKeyboardMousePrompt(
-    const assets::TimImage &font_page,
+    const HudTextureAtlas &textures,
     const game::LegacyUiMessageBridgeState &message,
     const KeyboardMouseBindings &bindings, int offset_x, int offset_y) {
   const auto prompt = keyboardMousePromptText(message.text, bindings);
@@ -9191,15 +9089,91 @@ bool drawBoundKeyboardMousePrompt(
   const auto scale = std::min(1.0F, static_cast<float>(width_available) /
                                         static_cast<float>(bound_width));
   drawOriginalHudTextScaled(
-      font_page, visible_text, static_cast<float>(absolute_x),
+      textures, visible_text, static_cast<float>(absolute_x),
       static_cast<float>(screen_height / 2 + offset_y + origin_y), scale,
       message.glyphs.front().color);
+  return true;
+}
+
+bool drawLocalizedGameplayMessage(
+    const HudTextureAtlas &textures,
+    const game::LegacyUiMessageBridgeState &message, int offset_x, int offset_y,
+    const game::LegacyUiBackdropBridgeState *layout_backdrop) {
+  if (!game::russianLanguageActive() || message.glyphs.empty()) {
+    return false;
+  }
+  auto source = message.text;
+  auto localized = game::localizeTextCopy(source);
+  if (source.empty() || localized == source) {
+    auto reconstructed = reconstructOriginalHudText(message.glyphs);
+    auto reconstructed_localized = game::localizeTextCopy(reconstructed);
+    if (reconstructed.empty() || reconstructed_localized == reconstructed) {
+      return false;
+    }
+    source = std::move(reconstructed);
+    localized = std::move(reconstructed_localized);
+  }
+  if (localized == source) {
+    return false;
+  }
+
+  const auto source_glyph_count =
+      std::max(std::size_t{1U}, message.text.empty()
+                                    ? message.glyphs.size()
+                                    : originalHudDrawableGlyphCount(source));
+  const auto localized_glyph_count = originalHudDrawableGlyphCount(localized);
+  if (source_glyph_count == 0U || localized_glyph_count == 0U) {
+    return false;
+  }
+  const auto visible_localized_glyphs = std::min(
+      localized_glyph_count, (message.glyphs.size() * localized_glyph_count +
+                              source_glyph_count - 1U) /
+                                 source_glyph_count);
+  const auto visible_text =
+      originalHudTextGlyphPrefix(localized, visible_localized_glyphs);
+
+  const auto left = std::ranges::min_element(
+      message.glyphs, {}, &game::LegacyUiGlyphBridgeState::x);
+  const auto top = std::ranges::min_element(message.glyphs, {},
+                                            &game::LegacyUiGlyphBridgeState::y);
+  const auto original_left = static_cast<int>(left->x);
+  // Retail positions the first visible glyph against the final centered
+  // line, even while the type-on reveal is incomplete. Use the full source
+  // metric so the Russian line does not change scale as glyphs appear.
+  const auto original_width = originalHudMaximumLineWidth(source);
+  const auto localized_width = originalHudMaximumLineWidth(localized);
+  if (original_width <= 0 || localized_width <= 0) {
+    return false;
+  }
+  auto text_left = original_left;
+  auto available_width = original_width;
+  if (layout_backdrop != nullptr) {
+    const auto [left_corner, right_corner] =
+        std::ranges::minmax_element(layout_backdrop->corners, {},
+                                    &game::LegacyProjectedPointBridgeState::x);
+    constexpr int backdrop_padding = 4;
+    text_left = static_cast<int>(left_corner->x) + backdrop_padding;
+    available_width = std::max(1, static_cast<int>(right_corner->x) -
+                                      static_cast<int>(left_corner->x) -
+                                      backdrop_padding * 2);
+  }
+  const auto scale =
+      std::min(1.0F, static_cast<float>(available_width) / localized_width);
+  const auto x = static_cast<float>(screen_width / 2 + offset_x + text_left);
+  const auto y = static_cast<float>(screen_height / 2 + offset_y + top->y);
+  drawOriginalHudTextBlockScaled(textures, visible_text, x, y,
+                                 static_cast<float>(available_width), scale,
+                                 message.glyphs.front().color);
   return true;
 }
 
 void drawOriginalHudTextSolid(const HudTextureAtlas &textures,
                               std::string_view text, int x, int y,
                               std::uint8_t brightness = 208U) {
+  if (textures.nativeFont() != nullptr) {
+    drawOriginalHudText(textures, text, x, y, brightness);
+    return;
+  }
   const auto modulate = [brightness](std::uint16_t channel) {
     const auto expanded =
         static_cast<unsigned int>((channel << 3U) | (channel >> 2U));
@@ -9507,7 +9481,8 @@ void drawOriginalWorldCallout(const HudTextureAtlas &textures,
          static_cast<float>(center_y + geometry.end_y));
   DrawPrim(&callout);
 
-  drawOriginalHudTextSolid(textures, text, center_x + geometry.text_x,
+  const auto localized = game::localizeTextCopy(text);
+  drawOriginalHudTextSolid(textures, localized, center_x + geometry.text_x,
                            center_y + geometry.text_y, 224U);
 }
 
@@ -9938,12 +9913,12 @@ void drawGameplayHud(const HudTextureAtlas &textures,
   GR_SetBlendMode(BM_NONE);
   GR_EnableDepth(0);
 
-  const auto &font = textures.image("FONTA.TIM");
   // Retail uses its FONTA/B/C text layer here. ARMOR.TIM is a green legacy
   // image and is not the white in-game label seen above the lavender bar.
-  drawOriginalHudTextSolid(
-      textures, game::originalPrimaryStatusLabel(hud.primaryStatus()),
-      20 + offset_x, 18 + offset_y);
+  const auto primary_status = game::localizeTextCopy(
+      game::originalPrimaryStatusLabel(hud.primaryStatus()));
+  drawOriginalHudTextSolid(textures, primary_status, 20 + offset_x,
+                           18 + offset_y);
   const auto health_color = hud.healthBarColor();
   drawOriginalStatusBar(26, hud.displayedPrimaryTrail(), hud.primaryReveal(),
                         health_color.red, health_color.green, health_color.blue,
@@ -9952,7 +9927,8 @@ void drawGameplayHud(const HudTextureAtlas &textures,
                         150U, 150U, 255U, offset_x, offset_y);
 
   if (hud.dangerReveal() != 0U) {
-    drawOriginalHudTextSolid(textures, "DANGER", 20 + offset_x, 33 + offset_y);
+    const auto danger = game::localizeTextCopy("DANGER");
+    drawOriginalHudTextSolid(textures, danger, 20 + offset_x, 33 + offset_y);
     auto red = std::uint8_t{255U};
     auto green = std::uint8_t{100U};
     auto blue = std::uint8_t{100U};
@@ -9969,7 +9945,8 @@ void drawGameplayHud(const HudTextureAtlas &textures,
   }
 
   if (hud.targetReveal() != 0U) {
-    drawOriginalHudTextSolid(textures, "TARGET", 20 + offset_x, 48 + offset_y);
+    const auto target = game::localizeTextCopy("TARGET");
+    drawOriginalHudTextSolid(textures, target, 20 + offset_x, 48 + offset_y);
     drawOriginalStatusBar(56, hud.displayedTargetBar(), hud.targetReveal(),
                           100U, 255U, 100U, offset_x, offset_y);
   }
@@ -10024,7 +10001,7 @@ void drawGameplayHud(const HudTextureAtlas &textures,
     // FUN_800410d0 supplies a left text origin, not a centre point.
     constexpr int ammo_x = screen_width / 2 + 118;
     constexpr int ammo_y = screen_height / 2 + 94;
-    drawOriginalHudText(font, ammo, ammo_x + offset_x + horizontal_slide,
+    drawOriginalHudText(textures, ammo, ammo_x + offset_x + horizontal_slide,
                         ammo_y + offset_y);
   }
   const auto weapon = hud.inventory().current();
@@ -10114,19 +10091,31 @@ void drawGameplayHud(const HudTextureAtlas &textures,
   // machine. Coordinates are relative to the PS1 draw offset (192,120), and
   // already include wrapping, alignment, status stacking and HUD slide-in.
   // The status POLY_F4 is submitted behind all glyph packets.
-  const auto &font_page = textures.image("FONTA.TIM");
   for (const auto &message : gameplay.legacyUiMessages()) {
     if (message.backdrop) {
       drawRetailUiBackdrop(*message.backdrop, offset_x, offset_y);
     }
   }
+  const auto status_backdrop = std::ranges::find_if(
+      gameplay.legacyUiMessages(), [](const auto &message) {
+        return message.channel == game::LegacyUiMessageChannel::status &&
+               message.backdrop.has_value();
+      });
   if (const auto &timer = gameplay.legacyUiTimer()) {
-    drawRetailUiGlyphs(font_page, timer->glyphs, offset_x, offset_y);
+    drawRetailUiGlyphs(textures, timer->glyphs, offset_x, offset_y);
   }
   for (const auto &message : gameplay.legacyUiMessages()) {
-    if (!drawBoundKeyboardMousePrompt(font_page, message, bindings, offset_x,
+    const auto *layout_backdrop =
+        message.backdrop ? &*message.backdrop
+        : message.channel == game::LegacyUiMessageChannel::status &&
+                status_backdrop != gameplay.legacyUiMessages().end()
+            ? &*status_backdrop->backdrop
+            : nullptr;
+    if (!drawLocalizedGameplayMessage(textures, message, offset_x, offset_y,
+                                      layout_backdrop) &&
+        !drawBoundKeyboardMousePrompt(textures, message, bindings, offset_x,
                                       offset_y)) {
-      drawRetailUiGlyphs(font_page, message.glyphs, offset_x, offset_y);
+      drawRetailUiGlyphs(textures, message.glyphs, offset_x, offset_y);
     }
   }
 
@@ -10141,8 +10130,8 @@ void drawMissionFailedOverlay(const HudTextureAtlas &textures) {
   GR_SetBlendMode(BM_NONE);
   GR_EnableDepth(0);
   drawSolidRect(0, 0, screen_width, screen_height, 0U, 0U, 0U);
-  constexpr std::string_view failed = "MISSION FAILED";
-  constexpr std::string_view retry = "FIRE OR ACTION TO RETRY";
+  const auto failed = game::localizeText("MISSION FAILED");
+  const auto retry = game::localizeText("FIRE OR ACTION TO RETRY");
   drawOriginalHudTextSolid(
       textures, failed, (screen_width - game::originalHudTextWidth(failed)) / 2,
       screen_height / 2 - 12, 255U);
@@ -10158,7 +10147,7 @@ void drawMissionCompleteOverlay(const HudTextureAtlas &textures) {
   GR_SetBlendMode(BM_NONE);
   GR_EnableDepth(0);
   drawSolidRect(0, 0, screen_width, screen_height, 0U, 0U, 0U);
-  constexpr std::string_view complete = "MISSION COMPLETE";
+  const auto complete = game::localizeText("MISSION COMPLETE");
   drawOriginalHudTextSolid(
       textures, complete,
       (screen_width - game::originalHudTextWidth(complete)) / 2,
@@ -10252,19 +10241,30 @@ int menuCharacterAdvance(char source) noexcept {
 }
 
 void drawMenuLine(std::string_view text, int x, int y, int scale, int maximum_x,
-                  PauseRgb color, const HudTextureAtlas &interface_textures) {
+                  PauseRgb color, const HudTextureAtlas &interface_textures,
+                  float horizontal_scale = 1.0F, float vertical_scale = 1.0F) {
   // FONTA/B/C occupy one continuous retail texture page. The SCUS glyph
   // metadata above therefore addresses all three sheets through FONTA's
   // page instead of treating them as fixed 8x8 ASCII cells.
   const auto &font_page = interface_textures.image("FONTA.TIM");
   const auto &symbols = interface_textures.image("SYMBOL.TIM");
+  const auto *native_font = interface_textures.nativeFont();
+  const ScopedPsyCrossFontTexture font_binding{native_font};
+  const auto scaled = [scale, horizontal_scale](int value) {
+    return std::max(
+        1, static_cast<int>(std::lround(value * scale * horizontal_scale)));
+  };
+  const auto glyph_height =
+      std::max(1, static_cast<int>(std::lround(8 * scale * vertical_scale)));
+  const auto symbol_height =
+      std::max(1, static_cast<int>(std::lround(9 * scale * vertical_scale)));
   for (const auto source : text) {
     const auto raw = static_cast<unsigned char>(source);
     if (source == ' ') {
-      if (x + 4 * scale > maximum_x) {
+      if (x + scaled(4) > maximum_x) {
         return;
       }
-      x += 4 * scale;
+      x += scaled(4);
       continue;
     }
     const auto value = raw;
@@ -10272,34 +10272,46 @@ void drawMenuLine(std::string_view text, int x, int y, int scale, int maximum_x,
       // Original CROSS / TRIANGLE cells in SYMBOL.TIM.
       constexpr auto symbol_x = 14;
       const auto symbol_y = value == 1U ? 51 : 60;
-      if (x + 8 * scale > maximum_x) {
+      if (x + scaled(8) > maximum_x) {
         return;
       }
-      drawPauseFontRegion(symbols, symbol_x, symbol_y, 11, 9, x, y - scale,
-                          8 * scale, 9 * scale, color);
-      x += 10 * scale;
+      if (native_font != nullptr) {
+        PsyCrossFontTexture::restoreVram();
+      }
+      drawPauseFontRegion(symbols, symbol_x, symbol_y, 11, 9, x,
+                          y - std::max(1, glyph_height / 8), scaled(8),
+                          symbol_height, color);
+      if (native_font != nullptr) {
+        native_font->bind();
+      }
+      x += scaled(10);
       continue;
     }
     const auto glyph = originalHudGlyph(static_cast<char>(value));
     if (!glyph) {
       continue;
     }
-    if (x + static_cast<int>(glyph->width) * scale > maximum_x) {
+    if (x + scaled(static_cast<int>(glyph->width)) > maximum_x) {
       return;
     }
     drawPauseFontRegion(font_page, glyph->u, glyph->v, glyph->width, 8, x, y,
-                        static_cast<int>(glyph->width) * scale, 8 * scale,
+                        scaled(static_cast<int>(glyph->width)), glyph_height,
                         color);
-    x += originalHudGlyphAdvance(*glyph) * scale;
+    x += scaled(originalHudGlyphAdvance(*glyph));
   }
 }
 
-int menuLineWidth(std::string_view text, int scale) noexcept {
+int menuLineWidth(std::string_view text, int scale,
+                  float horizontal_scale = 1.0F) noexcept {
   auto width = 0;
   for (const auto source : text) {
-    width += menuCharacterAdvance(source) * scale;
+    width +=
+        std::max(1, static_cast<int>(std::lround(menuCharacterAdvance(source) *
+                                                 scale * horizontal_scale)));
   }
-  return width == 0 ? 0 : width - 2 * scale;
+  return width == 0 ? 0
+                    : width - std::max(1, static_cast<int>(std::lround(
+                                              2 * scale * horizontal_scale)));
 }
 
 std::string expandPauseHints(std::string_view source) {
@@ -10326,14 +10338,26 @@ std::string expandPauseHints(std::string_view source) {
 void drawMenuText(std::string_view source, const game::PauseRect &bounds,
                   int scale, PauseRgb color, game::PauseTextAlignment alignment,
                   int line_height, const HudTextureAtlas &interface_textures) {
-  const auto text = expandPauseHints(source);
+  const auto localized = game::localizeTextCopy(source);
+  const auto text = expandPauseHints(localized);
   const auto retail_line_height = std::max(line_height, 1);
-  const auto maximum_lines = std::max(1, static_cast<int>(bounds.height) /
-                                             (retail_line_height * scale));
+  // Eight pixels is the physical glyph height. Inter-line leading may shrink
+  // from the retail default when a translated paragraph needs the room, but
+  // glyphs themselves are never vertically filtered or overlapped.
+  const auto maximum_lines =
+      std::max(1, static_cast<int>(bounds.height) / (8 * scale));
   if (maximum_lines == 1) {
     const auto newline = text.find('\n');
     const auto line_text = std::string_view{text}.substr(0, newline);
-    const auto line_width = menuLineWidth(line_text, scale);
+    const auto natural_width = menuLineWidth(line_text, scale);
+    // A one-line retail label is never clipped. Localized labels may be
+    // proportionally condensed, but every authored glyph remains visible.
+    const auto horizontal_scale =
+        natural_width <= bounds.width || natural_width == 0
+            ? 1.0F
+            : static_cast<float>(bounds.width) /
+                  static_cast<float>(natural_width);
+    const auto line_width = menuLineWidth(line_text, scale, horizontal_scale);
     auto x = static_cast<int>(bounds.x);
     if (alignment == game::PauseTextAlignment::center) {
       x += (static_cast<int>(bounds.width) - line_width) / 2;
@@ -10343,43 +10367,81 @@ void drawMenuText(std::string_view source, const game::PauseRect &bounds,
     x = std::max(x, static_cast<int>(bounds.x));
     drawMenuLine(line_text, x, bounds.y, scale,
                  static_cast<int>(bounds.x + bounds.width), color,
-                 interface_textures);
+                 interface_textures, horizontal_scale);
     return;
   }
-  auto cursor = std::size_t{0};
-  for (int line = 0; line < maximum_lines && cursor < text.size(); ++line) {
-    while (cursor < text.size() && text[cursor] == ' ') {
-      ++cursor;
-    }
-    if (cursor >= text.size()) {
-      break;
-    }
-    auto end = cursor;
-    auto last_space = std::string::npos;
-    while (end < text.size() && text[end] != '\n') {
-      if (text[end] == ' ') {
-        last_space = end;
+  const auto wrap = [&](float horizontal_scale) {
+    std::vector<std::string_view> lines;
+    auto cursor = std::size_t{};
+    while (cursor < text.size()) {
+      while (cursor < text.size() && text[cursor] == ' ') {
+        ++cursor;
       }
-      const auto candidate =
-          std::string_view{text}.substr(cursor, end - cursor + 1U);
-      if (menuLineWidth(candidate, scale) > bounds.width) {
-        if (last_space != std::string::npos && last_space > cursor) {
-          end = last_space;
-        }
+      if (cursor >= text.size()) {
         break;
       }
-      ++end;
+      auto end = cursor;
+      auto last_space = std::string::npos;
+      while (end < text.size() && text[end] != '\n') {
+        if (text[end] == ' ') {
+          last_space = end;
+        }
+        const auto candidate =
+            std::string_view{text}.substr(cursor, end - cursor + 1U);
+        if (menuLineWidth(candidate, scale, horizontal_scale) > bounds.width) {
+          if (last_space != std::string::npos && last_space > cursor) {
+            end = last_space;
+          }
+          break;
+        }
+        ++end;
+      }
+      if (end == cursor) {
+        ++end;
+      }
+      auto visible_end = end;
+      while (visible_end > cursor && text[visible_end - 1U] == ' ') {
+        --visible_end;
+      }
+      lines.push_back(
+          std::string_view{text}.substr(cursor, visible_end - cursor));
+      cursor = end;
+      while (cursor < text.size() &&
+             (text[cursor] == ' ' || text[cursor] == '\n')) {
+        ++cursor;
+      }
     }
-    if (end == cursor) {
-      ++end;
+    return lines;
+  };
+
+  auto horizontal_scale = 1.0F;
+  auto lines = wrap(horizontal_scale);
+  for (const auto candidate :
+       {0.9F, 0.8F, 0.7F, 0.6F, 0.5F, 0.45F, 0.4F, 0.35F, 0.3F}) {
+    if (static_cast<int>(lines.size()) <= maximum_lines) {
+      break;
     }
-    auto visible_end = end;
-    while (visible_end > cursor && text[visible_end - 1U] == ' ') {
-      --visible_end;
-    }
-    const auto line_text =
-        std::string_view{text}.substr(cursor, visible_end - cursor);
-    const auto line_width = menuLineWidth(line_text, scale);
+    horizontal_scale = candidate;
+    lines = wrap(horizontal_scale);
+  }
+  // Never discard overflow lines.  The high-resolution PC atlas lets us
+  // reduce vertical sampling cleanly when a translation is denser than the
+  // original English copy. Authored pagination remains preferable for long
+  // briefing pages, but this is a lossless last line of defence for every
+  // locale and every menu panel.
+  const auto natural_height =
+      static_cast<int>(lines.size()) * retail_line_height * scale;
+  const auto vertical_scale =
+      natural_height <= bounds.height || natural_height == 0
+          ? 1.0F
+          : static_cast<float>(bounds.height) /
+                static_cast<float>(natural_height);
+  const auto fitted_line_height =
+      std::max(1, static_cast<int>(
+                      std::floor(retail_line_height * scale * vertical_scale)));
+  for (std::size_t line = 0; line < lines.size(); ++line) {
+    const auto line_text = lines[line];
+    const auto line_width = menuLineWidth(line_text, scale, horizontal_scale);
     auto x = static_cast<int>(bounds.x);
     if (alignment == game::PauseTextAlignment::center) {
       x += (static_cast<int>(bounds.width) - line_width) / 2;
@@ -10388,14 +10450,10 @@ void drawMenuText(std::string_view source, const game::PauseRect &bounds,
     }
     x = std::max(x, static_cast<int>(bounds.x));
     drawMenuLine(line_text, x,
-                 static_cast<int>(bounds.y) + line * retail_line_height * scale,
+                 static_cast<int>(bounds.y) +
+                     static_cast<int>(line) * fitted_line_height,
                  scale, static_cast<int>(bounds.x + bounds.width), color,
-                 interface_textures);
-    cursor = end;
-    while (cursor < text.size() &&
-           (text[cursor] == ' ' || text[cursor] == '\n')) {
-      ++cursor;
-    }
+                 interface_textures, horizontal_scale, vertical_scale);
   }
 }
 
@@ -10505,6 +10563,42 @@ std::optional<game::PauseRect> animatedItemSelection(
       static_cast<std::int16_t>(
           interpolate(from->bounds.height, to->bounds.height)),
   };
+}
+
+game::PauseRect
+animatedScreenCommandBounds(const game::PauseMenu &menu,
+                            const game::PauseRenderCommand &command) noexcept {
+  const auto &transition = menu.transition();
+  if (!transition.active() ||
+      transition.kind != game::PauseTransitionKind::screen_change ||
+      transition.duration == 0U ||
+      command.kind == game::PauseRenderKind::panel ||
+      command.kind == game::PauseRenderKind::dim_background ||
+      command.panel == game::PausePanelRole::right_sections) {
+    return command.bounds;
+  }
+
+  const auto frame = std::min<int>(transition.frame + 1, transition.duration);
+  const auto remaining = static_cast<int>(transition.duration) - frame;
+  auto bounds = command.bounds;
+  switch (command.panel) {
+  case game::PausePanelRole::left_content:
+    bounds.x = static_cast<std::int16_t>(bounds.x - (24 * remaining) /
+                                                        transition.duration);
+    break;
+  case game::PausePanelRole::right_information:
+    bounds.x = static_cast<std::int16_t>(bounds.x + (16 * remaining) /
+                                                        transition.duration);
+    break;
+  case game::PausePanelRole::hint:
+    bounds.y = static_cast<std::int16_t>(bounds.y +
+                                         (8 * remaining) / transition.duration);
+    break;
+  case game::PausePanelRole::none:
+  case game::PausePanelRole::right_sections:
+    break;
+  }
+  return bounds;
 }
 
 struct AcdCrossSection {
@@ -10647,6 +10741,72 @@ bool drawOriginalAcdFrame(std::uint64_t animation_tick) {
 }
 
 std::optional<game::PauseRect>
+drawPauseWeaponIcon(const HudTextureAtlas &textures, std::uint32_t item,
+                    const game::PauseRect &bounds) {
+  if (item >= game::weapon_slot_count) {
+    return std::nullopt;
+  }
+  const auto weapon = static_cast<game::WeaponId>(item);
+  const auto layers =
+      game::droppedItemIconLayers(static_cast<std::uint16_t>(weapon));
+  if (layers.empty()) {
+    return std::nullopt;
+  }
+
+  std::array<int, game::maximum_weapon_icon_layers> widths{};
+  std::array<int, game::maximum_weapon_icon_layers> heights{};
+  for (std::size_t layer = 0U; layer < layers.size(); ++layer) {
+    const auto &image = textures.image(layers[layer]);
+    widths[layer] = static_cast<int>(image.displayWidth());
+    heights[layer] = static_cast<int>(image.displayHeight());
+  }
+  const auto offsets = game::originalWeaponIconOffsets(
+      std::span<const int>{widths.data(), layers.size()});
+  auto group_left = offsets[0];
+  auto group_right = offsets[0] + widths[0];
+  auto group_height = heights[0];
+  for (std::size_t layer = 1U; layer < layers.size(); ++layer) {
+    group_left = std::min(group_left, offsets[layer]);
+    group_right = std::max(group_right, offsets[layer] + widths[layer]);
+    group_height = std::max(group_height, heights[layer]);
+  }
+  const auto group_width = std::max(group_right - group_left, 1);
+  group_height = std::max(group_height, 1);
+  const auto scale = std::min(
+      static_cast<float>(bounds.width) / static_cast<float>(group_width),
+      static_cast<float>(bounds.height) / static_cast<float>(group_height));
+  const auto draw_width = static_cast<float>(group_width) * scale;
+  const auto draw_height = static_cast<float>(group_height) * scale;
+  const auto left = static_cast<float>(bounds.x) +
+                    (static_cast<float>(bounds.width) - draw_width) * 0.5F;
+  const auto top = static_cast<float>(bounds.y) +
+                   (static_cast<float>(bounds.height) - draw_height) * 0.5F;
+  const auto group_center =
+      (static_cast<float>(group_left) + static_cast<float>(group_right)) * 0.5F;
+  const auto destination_center = left + draw_width * 0.5F;
+
+  textures.restoreWeaponIcon(weapon);
+  for (std::size_t layer = 0U; layer < layers.size(); ++layer) {
+    const auto &image = textures.image(layers[layer]);
+    const auto layer_width = static_cast<float>(widths[layer]) * scale;
+    const auto layer_height = static_cast<float>(heights[layer]) * scale;
+    drawHudSpriteScaled(
+        image,
+        destination_center +
+            (static_cast<float>(offsets[layer]) - group_center) * scale,
+        top + (draw_height - layer_height) * 0.5F, layer_width, layer_height);
+  }
+  DrawSync(0);
+
+  return game::PauseRect{
+      static_cast<std::int16_t>(std::lround(left)),
+      static_cast<std::int16_t>(std::lround(top)),
+      static_cast<std::int16_t>(std::lround(draw_width)),
+      static_cast<std::int16_t>(std::lround(draw_height)),
+  };
+}
+
+std::optional<game::PauseRect>
 drawPauseTexture(const PauseTextureAtlas &textures, std::string_view name,
                  const game::PauseRect &bounds) {
   const auto *image = textures.image(name);
@@ -10742,7 +10902,9 @@ bool drawPauseMenu(const game::PauseMenu &menu,
                    std::uint64_t animation_tick) {
   GR_SetBlendMode(BM_NONE);
   GR_EnableDepth(0);
-  if (menu.expanded()) {
+  const auto full_screen =
+      menu.screen() == game::PauseScreen::map && menu.expanded();
+  if (full_screen) {
     drawSolidRect(0, 0, screen_width, screen_height, 0U, 0U, 0U);
     DrawSync(0);
   } else if (!drawOriginalAcdFrame(animation_tick)) {
@@ -10763,7 +10925,7 @@ bool drawPauseMenu(const game::PauseMenu &menu,
   std::optional<game::PauseRect> map_draw_bounds;
   auto texture_uploaded = false;
 
-  if (menu.expanded()) {
+  if (full_screen) {
     constexpr auto panel_fill = PauseRgb{2U, 4U, 16U};
     const auto panel_border = pauseColor(game::PauseColorRole::accent);
     for (const auto &command : commands) {
@@ -10780,18 +10942,30 @@ bool drawPauseMenu(const game::PauseMenu &menu,
   // in one deferred pass made glyphs disappear or sample map pixels.
   DrawSync(0);
   for (const auto &command : commands) {
-    if (command.kind != game::PauseRenderKind::asset) {
+    if (command.kind != game::PauseRenderKind::asset &&
+        command.kind != game::PauseRenderKind::weapon_icon) {
       continue;
     }
-    if (const auto drawn =
-            drawPauseTexture(textures, command.asset, command.bounds)) {
+    const auto animated_bounds = animatedScreenCommandBounds(menu, command);
+    const auto drawn =
+        command.kind == game::PauseRenderKind::weapon_icon
+            ? drawPauseWeaponIcon(interface_textures, command.id,
+                                  animated_bounds)
+            : drawPauseTexture(textures, command.asset, animated_bounds);
+    const auto fallback =
+        !drawn && command.kind == game::PauseRenderKind::weapon_icon &&
+                !command.asset.empty()
+            ? drawPauseTexture(textures, command.asset, animated_bounds)
+            : std::optional<game::PauseRect>{};
+    if (drawn || fallback) {
       texture_uploaded = true;
-      if (std::string_view{command.asset}.starts_with("MAP")) {
-        map_command_bounds = command.bounds;
-        map_draw_bounds = *drawn;
+      if (command.kind == game::PauseRenderKind::asset &&
+          std::string_view{command.asset}.starts_with("MAP")) {
+        map_command_bounds = animated_bounds;
+        map_draw_bounds = drawn ? *drawn : *fallback;
       }
     } else {
-      drawBorderedRect(command.bounds, PauseRgb{0U, 0U, 0U},
+      drawBorderedRect(animated_bounds, PauseRgb{0U, 0U, 0U},
                        pauseColor(game::PauseColorRole::muted));
     }
   }
@@ -10800,6 +10974,7 @@ bool drawPauseMenu(const game::PauseMenu &menu,
   const auto animated_item = animatedItemSelection(menu, commands);
 
   for (const auto &command : commands) {
+    const auto command_bounds = animatedScreenCommandBounds(menu, command);
     const auto color = pauseColor(command.color);
     switch (command.kind) {
     case game::PauseRenderKind::dim_background:
@@ -10808,11 +10983,11 @@ bool drawPauseMenu(const game::PauseMenu &menu,
     case game::PauseRenderKind::panel:
       break;
     case game::PauseRenderKind::title:
-      draw_text(command.text, command.bounds, 1, color, command.alignment,
+      draw_text(command.text, command_bounds, 1, color, command.alignment,
                 command.line_height);
       break;
     case game::PauseRenderKind::text:
-      draw_text(command.text, command.bounds, 1,
+      draw_text(command.text, command_bounds, 1,
                 command.selected && ((animation_tick / 8U) & 1U) == 0U
                     ? pauseColor(game::PauseColorRole::selected)
                     : color,
@@ -10823,73 +10998,81 @@ bool drawPauseMenu(const game::PauseMenu &menu,
         const auto border = command.selected && !animated_section
                                 ? color
                                 : pauseColor(game::PauseColorRole::normal);
-        drawAcdOutline(command.bounds, border);
+        drawAcdOutline(command_bounds, border);
       } else {
-        drawBorderedRect(command.bounds, PauseRgb{0U, 0U, 0U},
-                         command.selected && !animated_item
-                             ? color
-                             : PauseRgb{38U, 46U, 128U});
+        const auto retail_weapon_list =
+            menu.screen() == game::PauseScreen::weapons && !menu.expanded() &&
+            command.panel == game::PausePanelRole::left_content;
+        // The weapon index is plain text in MENU.OVL.  Only the current row
+        // receives the compact selection plate shown in the retail capture.
+        if (!retail_weapon_list || command.selected) {
+          drawBorderedRect(command_bounds, PauseRgb{0U, 0U, 0U},
+                           command.selected && !animated_item
+                               ? color
+                               : PauseRgb{38U, 46U, 128U});
+        }
       }
       draw_text(command.text,
                 game::PauseRect{
                     static_cast<std::int16_t>(
                         command.panel == game::PausePanelRole::right_sections
-                            ? command.bounds.x
-                            : command.bounds.x + 2),
-                    static_cast<std::int16_t>(command.bounds.y + 2),
+                            ? command_bounds.x
+                            : command_bounds.x + 2),
+                    static_cast<std::int16_t>(command_bounds.y + 2),
                     static_cast<std::int16_t>(
                         command.panel == game::PausePanelRole::right_sections
-                            ? command.bounds.width
-                            : command.bounds.width - 4),
-                    static_cast<std::int16_t>(command.bounds.height - 2),
+                            ? command_bounds.width
+                            : command_bounds.width - 4),
+                    static_cast<std::int16_t>(command_bounds.height - 2),
                 },
                 1, color, command.alignment, command.line_height);
       break;
     case game::PauseRenderKind::selection:
-      drawBorderedRect(command.bounds, PauseRgb{0U, 0U, 0U},
+      drawBorderedRect(command_bounds, PauseRgb{0U, 0U, 0U},
                        pauseColor(game::PauseColorRole::selected));
-      drawSolidRect(command.bounds.x + command.bounds.width / 2,
-                    command.bounds.y + 2, 1, command.bounds.height - 4,
+      drawSolidRect(command_bounds.x + command_bounds.width / 2,
+                    command_bounds.y + 2, 1, command_bounds.height - 4,
                     color.red, color.green, color.blue);
       drawSolidRect(
-          command.bounds.x + 2, command.bounds.y + command.bounds.height / 2,
-          command.bounds.width - 4, 1, color.red, color.green, color.blue);
+          command_bounds.x + 2, command_bounds.y + command_bounds.height / 2,
+          command_bounds.width - 4, 1, color.red, color.green, color.blue);
       break;
     case game::PauseRenderKind::divider:
-      drawSolidRect(command.bounds.x, command.bounds.y, command.bounds.width,
-                    std::max<std::int16_t>(command.bounds.height, 1), color.red,
+      drawSolidRect(command_bounds.x, command_bounds.y, command_bounds.width,
+                    std::max<std::int16_t>(command_bounds.height, 1), color.red,
                     color.green, color.blue);
       break;
     case game::PauseRenderKind::slider: {
       if (!command.text.empty()) {
         draw_text(command.text,
                   game::PauseRect{
-                      command.bounds.x,
-                      static_cast<std::int16_t>(command.bounds.y - 9),
-                      command.bounds.width,
+                      command_bounds.x,
+                      static_cast<std::int16_t>(command_bounds.y - 9),
+                      command_bounds.width,
                       8,
                   },
                   1, pauseColor(game::PauseColorRole::muted));
       }
-      drawBorderedRect(command.bounds, PauseRgb{4U, 6U, 22U},
+      drawBorderedRect(command_bounds, PauseRgb{4U, 6U, 22U},
                        command.selected
                            ? pauseColor(game::PauseColorRole::selected)
                            : pauseColor(game::PauseColorRole::muted));
       const auto maximum = std::max(command.maximum, 1);
       const auto value = std::clamp(command.value, 0, maximum);
       const auto width =
-          (std::max(0, static_cast<int>(command.bounds.width) - 4) * value) /
+          (std::max(0, static_cast<int>(command_bounds.width) - 4) * value) /
           maximum;
-      drawSolidRect(command.bounds.x + 2, command.bounds.y + 2, width,
-                    std::max(1, static_cast<int>(command.bounds.height) - 4),
+      drawSolidRect(command_bounds.x + 2, command_bounds.y + 2, width,
+                    std::max(1, static_cast<int>(command_bounds.height) - 4),
                     color.red, color.green, color.blue);
       break;
     }
     case game::PauseRenderKind::asset:
+    case game::PauseRenderKind::weapon_icon:
       // Rendered in the synchronized asset pass above.
       break;
     case game::PauseRenderKind::map_marker: {
-      auto marker = command.bounds;
+      auto marker = command_bounds;
       if (map_command_bounds && map_draw_bounds) {
         // Marker coordinates describe authored centres.  Keeping the centre
         // normalized makes the MENU.OVL offsets exact even when an expanded
@@ -10964,18 +11147,18 @@ bool drawPauseMenu(const game::PauseMenu &menu,
       break;
     }
     case game::PauseRenderKind::button_hint:
-      draw_text(command.text, command.bounds, 1, color, command.alignment,
+      draw_text(command.text, command_bounds, 1, color, command.alignment,
                 command.line_height);
       break;
     case game::PauseRenderKind::dialog:
-      drawBorderedRect(command.bounds, PauseRgb{0U, 0U, 0U},
+      drawBorderedRect(command_bounds, PauseRgb{0U, 0U, 0U},
                        pauseColor(game::PauseColorRole::warning));
       draw_text(command.text,
                 game::PauseRect{
-                    static_cast<std::int16_t>(command.bounds.x + 10),
-                    static_cast<std::int16_t>(command.bounds.y + 10),
-                    static_cast<std::int16_t>(command.bounds.width - 20),
-                    static_cast<std::int16_t>(command.bounds.height - 20),
+                    static_cast<std::int16_t>(command_bounds.x + 10),
+                    static_cast<std::int16_t>(command_bounds.y + 10),
+                    static_cast<std::int16_t>(command_bounds.width - 20),
+                    static_cast<std::int16_t>(command_bounds.height - 20),
                 },
                 1, color, game::PauseTextAlignment::center,
                 command.line_height);
@@ -10983,7 +11166,7 @@ bool drawPauseMenu(const game::PauseMenu &menu,
     case game::PauseRenderKind::page_indicator: {
       const auto indicator =
           std::to_string(command.value) + "/" + std::to_string(command.maximum);
-      draw_text(indicator, command.bounds, 1, color, command.alignment,
+      draw_text(indicator, command_bounds, 1, color, command.alignment,
                 command.line_height);
       break;
     }
@@ -11003,804 +11186,6 @@ bool drawPauseMenu(const game::PauseMenu &menu,
   GR_SetBlendMode(BM_NONE);
   GR_EnableDepth(1);
   return texture_uploaded;
-}
-
-std::string_view pauseWeaponIcon(game::WeaponId id) noexcept {
-  switch (id) {
-  case game::WeaponId::silenced_9mm:
-  case game::WeaponId::pistol_9mm:
-  case game::WeaponId::unused_357:
-  case game::WeaponId::pistol_45:
-  case game::WeaponId::g_18:
-    return "GLOKSIL.TIM";
-  case game::WeaponId::combat_shotgun:
-  case game::WeaponId::shotgun:
-    return "ITHICA37.TIM";
-  case game::WeaponId::pk_102:
-  case game::WeaponId::m_16:
-  case game::WeaponId::biz_2:
-  case game::WeaponId::hk_5:
-  case game::WeaponId::k3g4:
-    return "M16.TIM";
-  case game::WeaponId::nightvision_rifle:
-  case game::WeaponId::sniper_rifle:
-    return "SUPERG.TIM";
-  case game::WeaponId::taser:
-    return "TASER.TIM";
-  case game::WeaponId::m_79:
-    return "GRENLAUN.TIM";
-  case game::WeaponId::virus_scanner:
-    return "VIRLSCAN.TIM";
-  case game::WeaponId::fragmentation_grenade:
-    return "GRENADE.TIM";
-  case game::WeaponId::gas_grenade:
-    return "GASGREN.TIM";
-  case game::WeaponId::flashlight:
-    return "FLASHLT.TIM";
-  default:
-    // MENU.HOG has ten representative weapon images, not one asset for each
-    // of the 26 retail inventory slots. Retail uses its pistol family image
-    // as the safe catalog fallback for unarmed/mission-only equipment.
-    return "GLOKSIL.TIM";
-  }
-}
-
-std::string_view pauseWeaponDescription(game::WeaponId id) noexcept {
-  switch (id) {
-  case game::WeaponId::silenced_9mm:
-    return "Standard Agency side-arm with a sound suppressor.";
-  case game::WeaponId::taser:
-    return "Fires a probe and delivers a sustained electrical charge.";
-  case game::WeaponId::flashlight:
-    return "Shockproof Agency flashlight with a long-life battery.";
-  case game::WeaponId::virus_scanner:
-    return "Detects trace particles of the Syphon Filter virus.";
-  case game::WeaponId::fragmentation_grenade:
-    return "Incendiary grenade with a short lethal blast radius.";
-  case game::WeaponId::gas_grenade:
-    return "Releases a rapidly dissipating incapacitating nerve agent.";
-  default:
-    return "Agency field weapon.";
-  }
-}
-
-std::pair<std::uint8_t, std::uint8_t>
-pauseWeaponRatings(game::WeaponId id) noexcept {
-  switch (id) {
-  case game::WeaponId::silenced_9mm:
-    return {3U, 2U};
-  case game::WeaponId::taser:
-    return {1U, 5U};
-  case game::WeaponId::shotgun:
-    return {2U, 4U};
-  case game::WeaponId::m_16:
-    return {4U, 2U};
-  case game::WeaponId::sniper_rifle:
-    return {2U, 2U};
-  case game::WeaponId::m_79:
-    return {1U, 5U};
-  case game::WeaponId::fragmentation_grenade:
-  case game::WeaponId::gas_grenade:
-    return {1U, 5U};
-  default:
-    return {0U, 0U};
-  }
-}
-
-std::uint8_t pauseWeaponAccuracy(game::WeaponId id) noexcept {
-  const auto &definition = game::weaponCombatDefinition(id);
-  if (!definition.fires()) {
-    return 0U;
-  }
-  if (definition.spread_angle == 0U) {
-    return 5U;
-  }
-  if (definition.spread_angle <= 32U) {
-    return 4U;
-  }
-  if (definition.spread_angle <= 64U) {
-    return 3U;
-  }
-  if (definition.spread_angle <= 96U) {
-    return 2U;
-  }
-  return 1U;
-}
-
-std::optional<std::uint32_t>
-pauseMapAssetIndex(std::string_view name) noexcept {
-  constexpr std::string_view prefix{"MAP"};
-  constexpr std::string_view suffix{".TIM"};
-  if (!name.starts_with(prefix) || !name.ends_with(suffix) ||
-      name.size() <= prefix.size() + suffix.size()) {
-    return std::nullopt;
-  }
-  auto index = std::uint32_t{};
-  const auto digits =
-      name.substr(prefix.size(), name.size() - prefix.size() - suffix.size());
-  for (const auto character : digits) {
-    if (character < '0' || character > '9') {
-      return std::nullopt;
-    }
-    const auto digit = static_cast<std::uint32_t>(character - '0');
-    if (index > (std::numeric_limits<std::uint32_t>::max() - digit) / 10U) {
-      return std::nullopt;
-    }
-    index = index * 10U + digit;
-  }
-  return index;
-}
-
-std::vector<std::string> pauseObjectiveKeywords(std::string_view text) {
-  constexpr std::array ignored_words{
-      std::string_view{"THE"},       std::string_view{"THIS"},
-      std::string_view{"THAT"},      std::string_view{"FROM"},
-      std::string_view{"AND"},       std::string_view{"INTO"},
-      std::string_view{"WITH"},      std::string_view{"YOUR"},
-      std::string_view{"MISSION"},   std::string_view{"OBJECTIVE"},
-      std::string_view{"FIND"},      std::string_view{"LOCATE"},
-      std::string_view{"REACH"},     std::string_view{"OPEN"},
-      std::string_view{"ENTER"},     std::string_view{"PROTECT"},
-      std::string_view{"DEFEND"},    std::string_view{"DESTROY"},
-      std::string_view{"ELIMINATE"}, std::string_view{"ESCAPE"},
-      std::string_view{"RESCUE"},    std::string_view{"DISABLE"},
-      std::string_view{"PLANT"},     std::string_view{"AVOID"},
-      std::string_view{"BEFORE"},    std::string_view{"AFTER"},
-  };
-  std::vector<std::string> result;
-  std::string word;
-  const auto finish_word = [&]() {
-    if (word.size() >= 3U &&
-        std::ranges::find(ignored_words, word) == ignored_words.end()) {
-      if (word.size() > 4U && word.ends_with('S')) {
-        word.pop_back();
-      }
-      if (std::ranges::find(result, word) == result.end()) {
-        result.push_back(word);
-      }
-    }
-    word.clear();
-  };
-  for (const auto character : text) {
-    const auto byte = static_cast<unsigned char>(character);
-    if (std::isalnum(byte) != 0) {
-      word.push_back(static_cast<char>(std::toupper(byte)));
-    } else {
-      finish_word();
-    }
-  }
-  finish_word();
-  const auto has_keyword = [&result](std::string_view value) {
-    return std::ranges::find(result, value) != result.end();
-  };
-  const auto add_keyword = [&result, &has_keyword](std::string value) {
-    if (!has_keyword(value)) {
-      result.push_back(std::move(value));
-    }
-  };
-  if (has_keyword("COMM") || has_keyword("ARRAY")) {
-    add_keyword("RADIO");
-  }
-  if (has_keyword("RHOEMER")) {
-    add_keyword("TERRO");
-  }
-  return result;
-}
-
-std::size_t pauseObjectiveTargetScore(std::string_view candidate,
-                                      std::span<const std::string> keywords) {
-  std::string normalized;
-  normalized.reserve(candidate.size());
-  for (const auto character : candidate) {
-    const auto byte = static_cast<unsigned char>(character);
-    normalized.push_back(static_cast<char>(std::toupper(byte)));
-  }
-  auto score = std::size_t{};
-  for (const auto &keyword : keywords) {
-    if (normalized.find(keyword) != std::string::npos) {
-      score += keyword.size();
-    }
-  }
-  return score;
-}
-
-std::optional<std::uint16_t> pauseObjectiveTarget(
-    const game::GameplaySession &gameplay, std::string_view objective,
-    std::span<const std::uint16_t> used_targets, bool only_active_objective) {
-  const auto keywords = pauseObjectiveKeywords(objective);
-  const auto already_used = [used_targets](std::uint16_t scene) {
-    return std::ranges::find(used_targets, scene) != used_targets.end();
-  };
-
-  auto best_scene = std::optional<std::uint16_t>{};
-  auto best_score = std::size_t{};
-  for (const auto &callout : gameplay.legacyWorldCallouts()) {
-    if (callout.headshot || callout.object >= gameplay.objects().size() ||
-        already_used(callout.object)) {
-      continue;
-    }
-    const auto score = pauseObjectiveTargetScore(callout.text, keywords);
-    if (score > best_score) {
-      best_score = score;
-      best_scene = callout.object;
-    }
-  }
-  if (best_scene) {
-    return best_scene;
-  }
-
-  for (std::size_t index = 0; index < gameplay.objects().size(); ++index) {
-    const auto scene = static_cast<std::uint16_t>(index);
-    if (already_used(scene) || gameplay.objectDestroyed(scene)) {
-      continue;
-    }
-    const auto *model = gameplay.displayedObjectModel(scene);
-    if (model == nullptr) {
-      continue;
-    }
-    const auto score = pauseObjectiveTargetScore(model->name, keywords);
-    if (score > best_score) {
-      best_score = score;
-      best_scene = scene;
-    }
-  }
-  if (best_scene) {
-    return best_scene;
-  }
-
-  if (only_active_objective) {
-    const auto callout = std::ranges::find_if(
-        gameplay.legacyWorldCallouts(), [&](const auto &candidate) {
-          return !candidate.headshot &&
-                 candidate.object < gameplay.objects().size() &&
-                 !already_used(candidate.object);
-        });
-    if (callout != gameplay.legacyWorldCallouts().end()) {
-      return callout->object;
-    }
-  }
-  return std::nullopt;
-}
-
-std::optional<std::uint16_t>
-pauseSceneForSource(const game::GameplaySession &gameplay,
-                    std::uint16_t source) noexcept {
-  for (std::size_t scene = 0; scene < gameplay.objects().size(); ++scene) {
-    if (gameplay.objects()[scene].source_index == source) {
-      return static_cast<std::uint16_t>(scene);
-    }
-  }
-  return std::nullopt;
-}
-
-// These records and projection functions are a direct transcription of the
-// retail USA v1.1 MENU.OVL tables at 0x801460e0/0x80146130.  Map coordinates
-// are authored pixel offsets from the centre of each MAPn.TIM, not normalized
-// mission-world coordinates. Objective ordinals in this overlay are zero
-// based; MissionMenuEntry ids are one based. The mutable "current location"
-// record used for Gabe's triangle is separate from these arrays.
-struct RetailPauseMapRecord {
-  std::uint8_t objective{};
-  std::uint8_t page{};
-  std::int8_t x{};
-  std::int8_t y{};
-};
-
-struct RetailPauseMapPoint {
-  std::uint8_t page{};
-  std::int32_t x{};
-  std::int32_t y{};
-};
-
-enum class RetailPauseMapProjection {
-  none,
-  subway,
-  main_subway,
-  park,
-  museum,
-  museum_dinorama,
-  base,
-  base_tower,
-  stronghold,
-  stronghold_lower,
-  warehouse,
-  warehouse_76,
-  silo,
-};
-
-// Direct decode of MENU.OVL 0x80146130. Repeated entries are repeated
-// function pointers in the retail table; `none` entries are literal nulls.
-constexpr std::array retail_pause_map_projections{
-    RetailPauseMapProjection::subway,           // 0  0x8013df9c
-    RetailPauseMapProjection::subway,           // 1  0x8013df9c
-    RetailPauseMapProjection::main_subway,      // 2  0x8013e180
-    RetailPauseMapProjection::park,             // 3  0x8013e1e0
-    RetailPauseMapProjection::park,             // 4  0x8013e1e0
-    RetailPauseMapProjection::museum,           // 5  0x8013e240
-    RetailPauseMapProjection::museum_dinorama,  // 6  0x8013e2a4
-    RetailPauseMapProjection::base,             // 7  0x8013e304
-    RetailPauseMapProjection::none,             // 8  null
-    RetailPauseMapProjection::base_tower,       // 9  0x8013e374
-    RetailPauseMapProjection::base,             // 10 0x8013e304
-    RetailPauseMapProjection::stronghold,       // 11 0x8013e3d8
-    RetailPauseMapProjection::stronghold_lower, // 12 0x8013e43c
-    RetailPauseMapProjection::none,             // 13 null
-    RetailPauseMapProjection::warehouse,        // 14 0x8013e4a0
-    RetailPauseMapProjection::warehouse,        // 15 0x8013e4a0
-    RetailPauseMapProjection::warehouse_76,     // 16 0x8013e50c
-    RetailPauseMapProjection::none,             // 17 null
-    RetailPauseMapProjection::none,             // 18 null
-    RetailPauseMapProjection::silo,             // 19 0x8013e570
-};
-
-RetailPauseMapProjection
-retailPauseMapProjection(std::size_t mission) noexcept {
-  return mission < retail_pause_map_projections.size()
-             ? retail_pause_map_projections[mission]
-             : RetailPauseMapProjection::none;
-}
-
-std::int32_t retailSignedMultiplyHigh(std::int32_t value,
-                                      std::uint32_t multiplier) noexcept {
-  const auto signed_multiplier = std::bit_cast<std::int32_t>(multiplier);
-  return static_cast<std::int32_t>(
-      (static_cast<std::int64_t>(value) * signed_multiplier) >> 32);
-}
-
-std::span<const RetailPauseMapRecord>
-retailPauseMapRecords(std::size_t mission) noexcept {
-  static constexpr std::array mission_0{
-      RetailPauseMapRecord{0, 0, -6, -54},  RetailPauseMapRecord{1, 0, 53, 77},
-      RetailPauseMapRecord{2, 0, -16, -49}, RetailPauseMapRecord{3, 1, -11, 3},
-      RetailPauseMapRecord{4, 1, 28, -14},
-  };
-  static constexpr std::array mission_1{
-      RetailPauseMapRecord{0, 0xff, 0, 0},
-      RetailPauseMapRecord{1, 1, -19, -12},
-      RetailPauseMapRecord{2, 1, -32, -78},
-  };
-  static constexpr std::array mission_3{
-      RetailPauseMapRecord{0, 0xff, 0, 0}, RetailPauseMapRecord{1, 0, 31, -14},
-      RetailPauseMapRecord{2, 0, 12, -34}, RetailPauseMapRecord{3, 0, 12, -55},
-      RetailPauseMapRecord{4, 0, 12, -87},
-  };
-  static constexpr std::array mission_5{
-      RetailPauseMapRecord{0, 0, 8, -34},
-      RetailPauseMapRecord{1, 0xff, 0, 0},
-      RetailPauseMapRecord{2, 0, 27, 69},
-  };
-  static constexpr std::array mission_6{
-      RetailPauseMapRecord{0, 0xff, 0, 0},
-      RetailPauseMapRecord{1, 0, -26, 53},
-  };
-  static constexpr std::array mission_7{
-      RetailPauseMapRecord{0, 0xff, 0, 0},  RetailPauseMapRecord{1, 0xff, 0, 0},
-      RetailPauseMapRecord{2, 0, 79, 34},   RetailPauseMapRecord{3, 0, 52, 0},
-      RetailPauseMapRecord{4, 0, -12, -67},
-  };
-  static constexpr std::array mission_9{
-      RetailPauseMapRecord{0, 0, 33, 33},
-      RetailPauseMapRecord{1, 0xff, 0, 0},
-  };
-  static constexpr std::array mission_12{
-      RetailPauseMapRecord{0, 0xff, 0, 0},
-      RetailPauseMapRecord{1, 0xff, 0, 0},
-      RetailPauseMapRecord{2, 0xff, 0, 0},
-      RetailPauseMapRecord{3, 0, 35, -43},
-  };
-  static constexpr std::array mission_14{
-      RetailPauseMapRecord{0, 0xff, 0, 0},
-      RetailPauseMapRecord{1, 0xff, 0, 0},
-      RetailPauseMapRecord{2, 0xff, 0, 0},
-      RetailPauseMapRecord{3, 0, 28, 0},
-  };
-  static constexpr std::array mission_16{
-      RetailPauseMapRecord{0, 0, -3, 47},
-  };
-  static constexpr std::array mission_19{
-      RetailPauseMapRecord{0, 0, 28, 21},
-      RetailPauseMapRecord{1, 1, 8, 82},
-      RetailPauseMapRecord{2, 0xff, 0, 0},
-  };
-  switch (mission) {
-  case 0:
-    return mission_0;
-  case 1:
-    return mission_1;
-  case 3:
-  case 4:
-    return mission_3;
-  case 5:
-    return mission_5;
-  case 6:
-    return mission_6;
-  case 7:
-  case 10:
-    return mission_7;
-  case 9:
-    return mission_9;
-  case 12:
-    return mission_12;
-  case 14:
-  case 15:
-    return mission_14;
-  case 16:
-    return mission_16;
-  case 19:
-    return mission_19;
-  default:
-    return {};
-  }
-}
-
-bool retailPauseMapAvailable(std::size_t mission) noexcept {
-  return retailPauseMapProjection(mission) != RetailPauseMapProjection::none;
-}
-
-std::optional<RetailPauseMapPoint>
-retailPauseMapPlayer(std::size_t mission, std::int32_t x, std::int32_t y,
-                     std::int32_t z) noexcept {
-  const auto sign_x = x >> 31;
-  const auto sign_y = y >> 31;
-  const auto sign_z = z >> 31;
-  switch (retailPauseMapProjection(mission)) {
-  case RetailPauseMapProjection::subway:
-    if (y >= 0x79f && x >= -0xb21) {
-      return RetailPauseMapPoint{
-          0,
-          ((retailSignedMultiplyHigh(z, 0x939a85c5U) + z) >> 6) - sign_z - 61,
-          ((retailSignedMultiplyHigh(x, 0x939a85c5U) + x) >> 6) - sign_x - 53,
-      };
-    }
-    if (y < 0x407) {
-      if (y > 0) {
-        return RetailPauseMapPoint{
-            1,
-            (retailSignedMultiplyHigh(x, 0x094f2095U) >> 2) - sign_x - 23,
-            sign_z - (retailSignedMultiplyHigh(z, 0x76b981dbU) >> 6) - 4,
-        };
-      }
-      return RetailPauseMapPoint{
-          1,
-          (retailSignedMultiplyHigh(x, 0x22b63cbfU) >> 4) - sign_x + 31,
-          sign_z - ((retailSignedMultiplyHigh(z, 0xea0ea0ebU) + z) >> 7) - 6,
-      };
-    }
-    if (static_cast<std::uint32_t>(y - 0x407) < 0x398U) {
-      return RetailPauseMapPoint{
-          2,
-          (retailSignedMultiplyHigh(x, 0x3e0f83e1U) >> 3) - sign_x - 37,
-          sign_z - (retailSignedMultiplyHigh(z, 0x78787879U) >> 4) + 107,
-      };
-    }
-    return std::nullopt;
-  case RetailPauseMapProjection::main_subway:
-    return RetailPauseMapPoint{
-        0, (retailSignedMultiplyHigh(x, 0x3e007c01U) >> 8) - sign_x + 12,
-        sign_z - (retailSignedMultiplyHigh(z, 0x3be7a9e3U) >> 8) + 37};
-  case RetailPauseMapProjection::park:
-    return RetailPauseMapPoint{
-        0, (retailSignedMultiplyHigh(x, 0x75ded953U) >> 7) - sign_x - 4,
-        sign_z - (retailSignedMultiplyHigh(z, 0x76b981dbU) >> 7) - 3};
-  case RetailPauseMapProjection::museum:
-    return RetailPauseMapPoint{
-        0, ((retailSignedMultiplyHigh(x, 0xac769185U) + x) >> 6) - sign_x + 69,
-        sign_z - ((retailSignedMultiplyHigh(z, 0xac769185U) + z) >> 6) - 18};
-  case RetailPauseMapProjection::museum_dinorama:
-    return RetailPauseMapPoint{
-        0, (retailSignedMultiplyHigh(x, 0x6bca1af3U) >> 5) - sign_x + 28,
-        sign_z - (retailSignedMultiplyHigh(z, 0x3531dec1U) >> 4) - 168};
-  case RetailPauseMapProjection::base_tower:
-    return RetailPauseMapPoint{
-        0, (retailSignedMultiplyHigh(x, 0x2fa0be83U) >> 4) - sign_x - 7,
-        sign_z - ((retailSignedMultiplyHigh(z, 0xb81702e1U) + z) >> 6) - 17};
-  case RetailPauseMapProjection::base:
-    if (y < -179) {
-      return std::nullopt;
-    }
-    return RetailPauseMapPoint{
-        0, ((retailSignedMultiplyHigh(x, 0x939a85c5U) + x) >> 6) - sign_x - 12,
-        sign_z - (retailSignedMultiplyHigh(z, 0x4bda12f7U) >> 5) - 40};
-  case RetailPauseMapProjection::stronghold:
-    return RetailPauseMapPoint{
-        0, (retailSignedMultiplyHigh(z, 0x38e38e39U) >> 5) - sign_z + 27,
-        ((retailSignedMultiplyHigh(x, 0x88888889U) + x) >> 6) - sign_x - 11};
-  case RetailPauseMapProjection::stronghold_lower:
-    return RetailPauseMapPoint{
-        0, (retailSignedMultiplyHigh(z, 0x78787879U) >> 6) - sign_z + 64,
-        ((retailSignedMultiplyHigh(x, 0xf2b9d649U) + x) >> 7) - sign_x + 37};
-  case RetailPauseMapProjection::warehouse:
-    if (y < 0x175) {
-      return std::nullopt;
-    }
-    return RetailPauseMapPoint{
-        0, (retailSignedMultiplyHigh(x, 0x214d0215U) >> 4) - sign_x - 2,
-        sign_z - (retailSignedMultiplyHigh(z, 0x1b4e81b5U) >> 4) + 14};
-  case RetailPauseMapProjection::warehouse_76:
-    return RetailPauseMapPoint{
-        0, (retailSignedMultiplyHigh(x, 0x67b23a55U) >> 5) - sign_x - 25,
-        sign_z - ((retailSignedMultiplyHigh(z, 0xac769185U) + z) >> 6) + 47};
-  case RetailPauseMapProjection::silo:
-    if (x >= 0x1349) {
-      return RetailPauseMapPoint{
-          0,
-          ((retailSignedMultiplyHigh(x, 0x8d3dcb09U) + x) >> 4) - sign_x - 244,
-          sign_y - ((retailSignedMultiplyHigh(y, 0x8d3dcb09U) + y) >> 4) + 41};
-    }
-    return RetailPauseMapPoint{
-        1, sign_z - (retailSignedMultiplyHigh(z, 0x30c30c31U) >> 4) - 124,
-        (retailSignedMultiplyHigh(x, 0x3159721fU) >> 4) - sign_x - 19};
-  case RetailPauseMapProjection::none:
-    return std::nullopt;
-  }
-  return std::nullopt;
-}
-
-std::optional<RetailPauseMapPoint>
-retailPauseMapPlayerOnPage(std::size_t mission, std::uint8_t page,
-                           std::int32_t x, std::int32_t y,
-                           std::int32_t z) noexcept {
-  const auto sign_x = x >> 31;
-  const auto sign_y = y >> 31;
-  const auto sign_z = z >> 31;
-  const auto projection = retailPauseMapProjection(mission);
-  if (projection == RetailPauseMapProjection::subway) {
-    switch (page) {
-    case 0:
-      return RetailPauseMapPoint{
-          page,
-          ((retailSignedMultiplyHigh(z, 0x939a85c5U) + z) >> 6) - sign_z - 61,
-          ((retailSignedMultiplyHigh(x, 0x939a85c5U) + x) >> 6) - sign_x - 53,
-      };
-    case 1:
-      if (y > 0) {
-        return RetailPauseMapPoint{
-            page,
-            (retailSignedMultiplyHigh(x, 0x094f2095U) >> 2) - sign_x - 23,
-            sign_z - (retailSignedMultiplyHigh(z, 0x76b981dbU) >> 6) - 4,
-        };
-      }
-      return RetailPauseMapPoint{
-          page,
-          (retailSignedMultiplyHigh(x, 0x22b63cbfU) >> 4) - sign_x + 31,
-          sign_z - ((retailSignedMultiplyHigh(z, 0xea0ea0ebU) + z) >> 7) - 6,
-      };
-    case 2:
-      return RetailPauseMapPoint{
-          page,
-          (retailSignedMultiplyHigh(x, 0x3e0f83e1U) >> 3) - sign_x - 37,
-          sign_z - (retailSignedMultiplyHigh(z, 0x78787879U) >> 4) + 107,
-      };
-    default:
-      return std::nullopt;
-    }
-  }
-  if (projection == RetailPauseMapProjection::silo) {
-    if (page == 0U) {
-      return RetailPauseMapPoint{
-          page,
-          ((retailSignedMultiplyHigh(x, 0x8d3dcb09U) + x) >> 4) - sign_x - 244,
-          sign_y - ((retailSignedMultiplyHigh(y, 0x8d3dcb09U) + y) >> 4) + 41,
-      };
-    }
-    if (page == 1U) {
-      return RetailPauseMapPoint{
-          page,
-          sign_z - (retailSignedMultiplyHigh(z, 0x30c30c31U) >> 4) - 124,
-          (retailSignedMultiplyHigh(x, 0x3159721fU) >> 4) - sign_x - 19,
-      };
-    }
-    return std::nullopt;
-  }
-  const auto point = retailPauseMapPlayer(mission, x, y, z);
-  return point && point->page == page ? point : std::nullopt;
-}
-
-game::PauseMenuData makePauseMenuData(const game::MissionPackage &mission,
-                                      const game::GameplaySession &gameplay,
-                                      std::uint32_t maximum_unlocked_mission) {
-  game::PauseMenuData data;
-  data.current_mission = mission.definition().index;
-  data.maximum_unlocked_mission = maximum_unlocked_mission;
-  for (const auto &definition : game::missionCatalog()) {
-    auto label = std::to_string(definition.index + 1U) + ". ";
-    label.append(definition.title);
-    data.missions.push_back(game::MissionMenuEntry{
-        definition.index,
-        std::move(label),
-        game::MissionEntryState::active,
-        true,
-    });
-  }
-  const auto &briefing = mission.briefing();
-  data.mission.mission_name = std::string{briefing.missionTitle()};
-  data.mission.date_time = std::string{briefing.dateTime()};
-  data.mission.location = std::string{briefing.location()};
-  data.mission.briefing_pages = {
-      std::string{briefing.directive()},
-      std::string{briefing.additionalDirective()},
-  };
-  data.mission.objectives = game::makeRetailMissionMenuEntries(
-      gameplay.missionObjectiveTexts(), gameplay.missionObjectiveCount(),
-      gameplay.revealedObjectiveMask(), gameplay.completedObjectiveMask(),
-      gameplay.failedObjectiveMask());
-  data.mission.parameters = game::makeRetailMissionMenuEntries(
-      gameplay.missionParameterTexts(), gameplay.missionParameterCount(),
-      gameplay.missionParameterMask(), 0U, gameplay.failedParameterMask());
-  std::vector<std::pair<std::uint32_t, std::string>> map_assets;
-  for (const auto &entry : mission.menuAssets().entries()) {
-    if (const auto index = pauseMapAssetIndex(entry.name)) {
-      map_assets.emplace_back(*index, entry.name);
-    }
-  }
-  std::ranges::sort(map_assets, [](const auto &left, const auto &right) {
-    return left.first != right.first ? left.first < right.first
-                                     : left.second < right.second;
-  });
-  std::vector<std::pair<std::uint16_t, std::uint16_t>> map_dimensions;
-  data.mission.map.layer_assets.reserve(map_assets.size());
-  map_dimensions.reserve(map_assets.size());
-  for (auto &[index, name] : map_assets) {
-    static_cast<void>(index);
-    const auto image = assets::TimImage::parse(mission.menuAssets().file(name));
-    map_dimensions.emplace_back(image.displayWidth(), image.displayHeight());
-    data.mission.map.layer_assets.push_back(std::move(name));
-  }
-  const auto mission_index =
-      static_cast<std::size_t>(mission.definition().index);
-  data.mission.map.reconnaissance_available =
-      !data.mission.map.layer_assets.empty() &&
-      retailPauseMapAvailable(mission_index);
-  data.mission.map.current_location = data.mission.mission_name;
-  const auto &guest_motion = gameplay.legacyPlayerGuestMotionPosition();
-  const auto motion_x =
-      guest_motion
-          ? guest_motion->x
-          : static_cast<std::int32_t>(std::lround(gameplay.player().x));
-  const auto motion_y =
-      guest_motion
-          ? guest_motion->y
-          : -static_cast<std::int32_t>(std::lround(gameplay.player().y));
-  const auto motion_z =
-      guest_motion
-          ? guest_motion->z
-          : static_cast<std::int32_t>(std::lround(gameplay.player().z));
-  const auto player_map_point =
-      retailPauseMapPlayer(mission_index, motion_x, motion_y, motion_z);
-  data.mission.map.current_layer =
-      player_map_point && player_map_point->page < map_dimensions.size()
-          ? player_map_point->page
-          : 0U;
-
-  const auto normalized_map_point =
-      [&map_dimensions](
-          std::uint8_t page, std::int32_t x,
-          std::int32_t y) -> std::optional<std::pair<float, float>> {
-    if (page >= map_dimensions.size()) {
-      return std::nullopt;
-    }
-    const auto [width, height] = map_dimensions[page];
-    if (width == 0U || height == 0U) {
-      return std::nullopt;
-    }
-    return std::pair{
-        0.5F + static_cast<float>(x) / static_cast<float>(width),
-        0.5F + static_cast<float>(y) / static_cast<float>(height),
-    };
-  };
-  if (data.mission.map.reconnaissance_available) {
-    if (player_map_point) {
-      auto map_heading = static_cast<float>(gameplay.player().yaw) / 4096.0F;
-      if (const auto &rotation = gameplay.legacyPlayerGuestRotation()) {
-        // MENU.OVL projects both the motion root and one matrix-forward point,
-        // then derives the triangle direction in map space. World yaw is not
-        // equivalent on missions whose map swaps or negates axes.
-        const auto forward_point = retailPauseMapPlayerOnPage(
-            mission_index, player_map_point->page, motion_x + (*rotation)[2],
-            motion_y, motion_z + (*rotation)[8]);
-        if (forward_point) {
-          const auto delta_x = forward_point->x - player_map_point->x;
-          const auto delta_y = forward_point->y - player_map_point->y;
-          if (delta_x != 0 || delta_y != 0) {
-            auto angle = std::atan2(static_cast<double>(delta_x),
-                                    -static_cast<double>(delta_y));
-            if (angle < 0.0) {
-              angle += 2.0 * std::numbers::pi;
-            }
-            map_heading = static_cast<float>(angle / (2.0 * std::numbers::pi));
-          }
-        }
-      }
-      if (const auto position =
-              normalized_map_point(player_map_point->page, player_map_point->x,
-                                   player_map_point->y)) {
-        data.mission.map.markers.push_back(game::PauseMapMarker{
-            game::MapMarkerKind::player,
-            position->first,
-            position->second,
-            map_heading,
-            true,
-            0U,
-            {},
-            player_map_point->page,
-        });
-      }
-    }
-
-    const auto records = retailPauseMapRecords(mission_index);
-    for (const auto &objective : data.mission.objectives) {
-      if (!objective.visible ||
-          objective.state != game::MissionEntryState::active) {
-        continue;
-      }
-      const auto record = std::ranges::find_if(records, [&](const auto &entry) {
-        return static_cast<std::uint32_t>(entry.objective) + 1U ==
-                   objective.id &&
-               entry.page != 0xffU;
-      });
-      if (record == records.end()) {
-        continue;
-      }
-      if (const auto position =
-              normalized_map_point(record->page, record->x, record->y)) {
-        data.mission.map.markers.push_back(game::PauseMapMarker{
-            game::MapMarkerKind::objective,
-            position->first,
-            position->second,
-            0.0F,
-            true,
-            objective.id,
-            {},
-            record->page,
-        });
-      }
-    }
-  }
-
-  const auto &inventory = gameplay.hud().inventory();
-  const auto descriptions = assets::WeaponDescriptionTable::parse(
-      mission.menuAssets().file("WEAPDESC.TXT"));
-  for (std::size_t index = 1; index < game::weapon_slot_count; ++index) {
-    const auto id = static_cast<game::WeaponId>(index);
-    const auto *state = inventory.tryState(id);
-    const auto *definition = game::tryWeaponDefinition(id);
-    if (state == nullptr || definition == nullptr || !state->owned) {
-      continue;
-    }
-    auto *original = descriptions.find(definition->name);
-    if (original == nullptr && id == game::WeaponId::glock_17) {
-      original = descriptions.find("9MM");
-    }
-    const auto fallback_ratings = pauseWeaponRatings(id);
-    const auto fire_rate =
-        original == nullptr ? fallback_ratings.first : original->fire_rate;
-    const auto damage =
-        original == nullptr ? fallback_ratings.second : original->damage;
-    const auto description =
-        original == nullptr || original->description.empty()
-            ? std::string{pauseWeaponDescription(id)}
-            : original->description;
-    const auto maximum_ammo =
-        definition->uses_ammo
-            ? static_cast<std::int32_t>(definition->magazine_capacity) *
-                  (static_cast<std::int32_t>(definition->reserve_magazines) + 1)
-            : 0;
-    data.weapons.push_back(game::PauseWeaponData{
-        static_cast<std::uint32_t>(id),
-        original == nullptr ? std::string{definition->name} : original->name,
-        std::string{pauseWeaponIcon(id)},
-        description,
-        static_cast<std::int32_t>(state->magazine) + state->reserve,
-        maximum_ammo,
-        fire_rate,
-        damage,
-        pauseWeaponAccuracy(id),
-        true,
-        inventory.current() == id,
-        gameplay.canEquipWeapon(id),
-    });
-  }
-  return data;
 }
 
 } // namespace
@@ -11945,6 +11330,11 @@ SceneViewerResult PsyCrossSceneViewer::run(
     preloaded_gameplay = std::make_unique<game::GameplaySession>(mission);
   }
   auto &gameplay = *preloaded_gameplay;
+  // The retail terminal transition can retire the live mission/inventory
+  // tables on the same 20 Hz tick that requests EOL. Retain the newest valid
+  // carry snapshot while those tables are still coherent so campaign flow
+  // never depends on reading already-unloaded guest pointers.
+  auto latest_campaign_carry = gameplay.campaignCarryState();
   const auto apply_gameplay_tests = [&] {
     if (tests_.retail_all_weapons &&
         !gameplay.activateRetailAllWeaponsCheat()) {
@@ -12001,9 +11391,15 @@ SceneViewerResult PsyCrossSceneViewer::run(
       left_button | right_button | up_button | down_button;
   constexpr int analog_deadzone = 24;
   constexpr double retail_simulation_step_seconds = 1.0 / 20.0;
+  constexpr std::uint32_t retail_audio_callback_hz = 120U;
+  constexpr double retail_audio_step_seconds =
+      1.0 / static_cast<double>(retail_audio_callback_hz);
   constexpr double maximum_frame_time_seconds = 0.25;
   constexpr unsigned int maximum_backlog_updates = 5U;
   constexpr unsigned int maximum_updates_per_presentation = 2U;
+  constexpr unsigned int maximum_audio_backlog_updates = 30U;
+  constexpr unsigned int maximum_audio_updates_per_presentation = 30U;
+  constexpr unsigned int coherent_audio_updates_per_presentation = 6U;
   constexpr double quick_turn_tap_seconds = 0.1;
   constexpr double startup_input_settle_seconds = 1.0;
   constexpr double restart_input_settle_seconds = 0.25;
@@ -12020,6 +11416,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
   int pause_analog_y = 0;
   double dpad_down_held_seconds = 0.0;
   double simulation_accumulator_seconds = 0.0;
+  double audio_accumulator_seconds = 0.0;
   game::GameplayInput latched_gameplay_input{};
   sf::platform::PlayerLookLatch latched_player_look;
   sf::platform::PlayerLookDisplayIntegrator display_player_look;
@@ -12214,18 +11611,24 @@ SceneViewerResult PsyCrossSceneViewer::run(
         gameplay, actor_animations, actor_tick, presentation.objects);
     auto view = makeViewMatrix(camera);
     registerPreciseViewMatrix(view, camera);
+    // Retail pickups and flying grenade billboards use interface art but are
+    // inserted into the world OT. Their TIMs must already be resident when
+    // that OT executes; a late HUD upload would lose scene depth ordering.
+    hud_textures.restoreGameplay(gameplay.hud(), presentation.first_person_aim,
+                                 presentation.dropped_items,
+                                 presentation.projectiles);
     const auto stats = renderWorld(
-        gameplay, textures, fire_animation, textures.firePlacement(),
-        effect_textures, actor_animations, actor_tick,
+        gameplay, textures, hud_textures, fire_animation,
+        textures.firePlacement(), effect_textures, actor_animations, actor_tick,
         gameplay.playerAnimationTick(), weapon_presentation_edges.events(),
         weapon_presentation_edges.muzzleFlashes(), muzzle_flash_edges.flashes(),
         weapon_presentation_edges.lines(),
         weapon_presentation_edges.particles(),
         weapon_presentation_edges.sprites(),
         weapon_presentation_edges.rawPackets(), glass_shatter.shards(),
-        interpolation_amount, presentation, view,
-        ordering_table, scrim_ordering_table, guest_overlay_ordering_table,
-        fire_ordering_table, primitives);
+        interpolation_amount, presentation, view, ordering_table,
+        scrim_ordering_table, guest_overlay_ordering_table, fire_ordering_table,
+        primitives);
     if (advance_effects) {
       fire_animation.update();
       glass_shatter.advance();
@@ -12267,19 +11670,17 @@ SceneViewerResult PsyCrossSceneViewer::run(
     weapon_presentation_edges.consumeFrame();
     muzzle_flash_edges.consumeFrame();
     scrim_copy_edges.consumeFrame();
-    drawRetailScreenFilter(presentation.environment,
-                           presentation.retail_environment_active);
-    drawGameBrightness(pause_settings.brightness);
     const auto aim_heading = game::headingFromDirection(
         camera.target_x - camera.x, camera.target_z - camera.z);
     // Reserved framebuffer pages are transient. Restore the font, current
     // weapon and complete weapon-specific optic immediately before sampling.
-    hud_textures.restoreGameplay(
-        gameplay.hud(), presentation.first_person_aim,
-        presentation.dropped_items, presentation.projectiles);
+    hud_textures.restoreGameplay(gameplay.hud(), presentation.first_person_aim,
+                                 presentation.dropped_items,
+                                 presentation.projectiles);
+    drawRetailScreenFilter(presentation.environment,
+                           presentation.retail_environment_active);
+    drawGameBrightness(pause_settings.brightness);
     if (!gameplay.cinematic() && !gameplay.missionComplete()) {
-      drawProjectileSprites(hud_textures, gameplay, presentation);
-      drawDroppedItemSprites(hud_textures, gameplay, presentation);
       drawGameplayHud(hud_textures, gameplay, camera, target_anchor,
                       world_callouts, input_, presentation.first_person_aim,
                       aim_heading, pause_settings.screen_center_x,
@@ -12298,36 +11699,188 @@ SceneViewerResult PsyCrossSceneViewer::run(
   static_cast<void>(
       police_lightbar_animation.synchronize(gameplay, actor_tick, textures));
   std::array<psx::SpuPcmFrame, 4096U> gameplay_pcm{};
+  AudioOutputCatchUpPolicy audio_catch_up{
+      coherent_audio_updates_per_presentation};
+  std::uint64_t audio_slices_completed{};
+  std::uint64_t audio_pcm_frames_pumped{};
+  std::uint64_t audio_pcm_blocks_pumped{};
+  std::uint64_t audio_guest_clear_events{};
+  std::uint64_t audio_catch_up_events{};
+  std::uint64_t audio_guest_pcm_frames_read{};
+  std::uint64_t audio_guest_pcm_frames_trimmed{};
+  AudioOutputCadencePolicy audio_output_cadence{psx::Spu::sample_rate,
+                                                retail_audio_callback_hz};
+  std::size_t audio_output_frames_due{};
+  std::vector<psx::SpuPcmFrame> gameplay_pcm_batch;
+  gameplay_pcm_batch.reserve(psx::Spu::pcm_queue_capacity);
   const auto pump_gameplay_audio = [&] {
-    while (const auto count = gameplay.takePcm(gameplay_pcm)) {
-      gameplay_audio->queue(
-          std::span<const psx::SpuPcmFrame>{gameplay_pcm}.first(count));
+    if (audio_output_frames_due != 0U) {
+      gameplay_pcm_batch.clear();
+      while (const auto count = gameplay.takePcm(gameplay_pcm)) {
+        audio_guest_pcm_frames_read += count;
+        gameplay_pcm_batch.insert(
+            gameplay_pcm_batch.end(), gameplay_pcm.begin(),
+            gameplay_pcm.begin() + static_cast<std::ptrdiff_t>(count));
+      }
+
+      const auto output_count =
+          std::min(audio_output_frames_due, gameplay_pcm_batch.size());
+      const auto trimmed = gameplay_pcm_batch.size() - output_count;
+      audio_guest_pcm_frames_trimmed += trimmed;
+      if (output_count != 0U) {
+        gameplay_audio->queue(
+            std::span<const psx::SpuPcmFrame>{gameplay_pcm_batch}.last(
+                output_count));
+        audio_pcm_frames_pumped += output_count;
+        ++audio_pcm_blocks_pumped;
+        audio_output_frames_due -= output_count;
+      }
     }
+    // Submit the fractional 128-frame tail as well. Holding it until the next
+    // retail callback leaves every host batch up to 2.9 ms too short and can
+    // repeatedly starve OpenAL at an exact VSYNC boundary.
+    gameplay_audio->flush();
   };
-  const auto reset_gameplay_audio = [&] { gameplay_audio->reset(); };
-  const auto discard_gameplay_audio = [&] {
-    gameplay_audio->reset();
+  const auto discard_gameplay_audio = [&](std::string_view reason) {
+    gameplay_audio->reset(reason);
     gameplay.clearPcm();
+    ++audio_guest_clear_events;
+    audio_catch_up.reset();
+    audio_output_cadence.reset();
+    audio_output_frames_due = 0U;
+    gameplay_pcm_batch.clear();
+    audio_accumulator_seconds = 0.0;
   };
 
-  constexpr std::uint32_t presentation_frames_per_second = 60U;
-  GameplaySwapIntervalScope gameplay_swap_interval;
-  FixedPresentationPacer presentation_pacer{presentation_frames_per_second};
-  const auto end_presented_frame = [&] {
-    PsyX_EndScene();
-    presentation_pacer.wait();
+  const auto pending_audio_updates = [&](double accumulator_seconds) {
+    return std::min<std::size_t>(
+        maximum_audio_backlog_updates,
+        static_cast<std::size_t>((accumulator_seconds + 1.0e-9) /
+                                 retail_audio_step_seconds));
   };
+  const auto begin_audio_catch_up = [&](double accumulator_seconds) {
+    if (!audio_catch_up.beginFrame(
+            pending_audio_updates(accumulator_seconds))) {
+      return;
+    }
+    ++audio_catch_up_events;
+    PsyX_Log_Warning(
+        "[AudioDiag][catch-up] sequence=%llu pending=%zu accumulator_ms=%.3f\n",
+        static_cast<unsigned long long>(audio_catch_up_events),
+        pending_audio_updates(accumulator_seconds),
+        accumulator_seconds * 1000.0);
+    // Preserve the live host queue: resetting it here turns a transient long
+    // frame into an audible dropout. Guest PCM older than the bounded recovery
+    // window is still discarded below, so no stale tail can accumulate.
+    gameplay.clearPcm();
+    audio_output_frames_due = 0U;
+    gameplay_pcm_batch.clear();
+    ++audio_guest_clear_events;
+  };
+  const auto finish_audio_update = [&](double accumulator_seconds) {
+    const auto remaining_updates = pending_audio_updates(accumulator_seconds);
+    if (!audio_catch_up.retainCompletedUpdate(remaining_updates)) {
+      gameplay.clearPcm();
+      ++audio_guest_clear_events;
+      return false;
+    }
+    return true;
+  };
+  const auto service_realtime_audio = [&]() {
+    begin_audio_catch_up(audio_accumulator_seconds);
+    auto audio_updates = 0U;
+    while (audio_updates < maximum_audio_updates_per_presentation &&
+           audio_accumulator_seconds + 1.0e-9 >= retail_audio_step_seconds) {
+      if (!gameplay.advanceAudioSliceClock()) {
+        return false;
+      }
+      ++audio_updates;
+      ++audio_slices_completed;
+      audio_accumulator_seconds =
+          std::max(0.0, audio_accumulator_seconds - retail_audio_step_seconds);
+      const auto frames_due = audio_output_cadence.advanceCallback();
+      if (finish_audio_update(audio_accumulator_seconds)) {
+        audio_output_frames_due =
+            std::min(audio_output_frames_due + frames_due,
+                     static_cast<std::size_t>(psx::Spu::pcm_queue_capacity));
+      }
+    }
+    // The guest can mix more samples than wall time permits while executing a
+    // callback. Submit only the exact 120 Hz wall-clock budget and retain its
+    // newest samples, preventing both an ever-growing delay and stale audio
+    // after a heavy frame or mission restart.
+    pump_gameplay_audio();
+    return true;
+  };
+
+  const auto end_presented_frame = [] { PsyX_EndScene(); };
   const auto performance_frequency = SDL_GetPerformanceFrequency();
   auto previous_frame_counter = SDL_GetPerformanceCounter();
-  double paused_audio_accumulator_seconds = 0.0;
-  PsyX_Log_Info("Presentation locked to 60 FPS; gameplay remains 20 Hz\n");
-  PsyX_Log_Info(
-      "Guest CPU clock: 300%%; hardware/audio cadence remains retail\n");
+  const auto periodic_audio_diagnostics = psyCrossAudioDiagnosticsEnabled();
+  auto next_audio_diagnostic_counter =
+      previous_frame_counter + performance_frequency;
+  std::uint64_t audio_diagnostic_sequence{};
+  const auto log_audio_diagnostics = [&](std::string_view context) {
+    ++audio_diagnostic_sequence;
+    gameplay_audio->logDiagnostics(context);
+    PsyX_Log_Info(
+        "[AudioDiag][clock] sequence=%llu context=%.*s guest_frame=%llu "
+        "accumulator_ms=%.6f pending=%zu slices=%llu pcm_frames=%llu "
+        "pcm_blocks=%llu guest_pcm_read=%llu pcm_trimmed=%llu pcm_due=%zu "
+        "guest_clears=%llu catch_ups=%llu\n",
+        static_cast<unsigned long long>(audio_diagnostic_sequence),
+        static_cast<int>(context.size()), context.data(),
+        static_cast<unsigned long long>(
+            current_render_presentation.guest_frame),
+        audio_accumulator_seconds * 1000.0,
+        pending_audio_updates(audio_accumulator_seconds),
+        static_cast<unsigned long long>(audio_slices_completed),
+        static_cast<unsigned long long>(audio_pcm_frames_pumped),
+        static_cast<unsigned long long>(audio_pcm_blocks_pumped),
+        static_cast<unsigned long long>(audio_guest_pcm_frames_read),
+        static_cast<unsigned long long>(audio_guest_pcm_frames_trimmed),
+        audio_output_frames_due,
+        static_cast<unsigned long long>(audio_guest_clear_events),
+        static_cast<unsigned long long>(audio_catch_up_events));
+    if (const auto guest = gameplay.audioDiagnostics()) {
+      PsyX_Log_Info(
+          "[AudioDiag][guest] sequence=%llu machine_tick=%llu "
+          "audio_tick=%llu audio_tick_init=%u spu_sample=%llu mixed=%llu "
+          "pcm_queued=%zu pcm_dropped=%llu cd_queued=%zu voices=%zu "
+          "spucnt=0x%04x spustat=0x%04x cd_read=%u cd_lba=%u "
+          "cd_mode=0x%02x cd_mute=%u adpcm_mute=%u xa_set=%u "
+          "xa_file=%u xa_channel=%u\n",
+          static_cast<unsigned long long>(audio_diagnostic_sequence),
+          static_cast<unsigned long long>(guest->machine_tick),
+          static_cast<unsigned long long>(guest->audio_frame_tick),
+          guest->audio_frame_tick_initialized ? 1U : 0U,
+          static_cast<unsigned long long>(guest->spu_sample_clock),
+          static_cast<unsigned long long>(guest->spu_mixed_frames),
+          guest->spu_pcm_frames,
+          static_cast<unsigned long long>(guest->spu_dropped_pcm_frames),
+          guest->spu_cd_frames, guest->active_spu_voices,
+          static_cast<unsigned int>(guest->spu_control),
+          static_cast<unsigned int>(guest->spu_status),
+          static_cast<unsigned int>(guest->cd_reading), guest->cd_lba,
+          static_cast<unsigned int>(guest->cd_mode),
+          static_cast<unsigned int>(guest->cd_muted),
+          static_cast<unsigned int>(guest->cd_adpcm_muted),
+          static_cast<unsigned int>(guest->xa_stream_set),
+          static_cast<unsigned int>(guest->xa_file),
+          static_cast<unsigned int>(guest->xa_channel));
+    } else {
+      PsyX_Log_Warning(
+          "[AudioDiag][guest] sequence=%llu diagnostics=unavailable\n",
+          static_cast<unsigned long long>(audio_diagnostic_sequence));
+    }
+  };
+  PsyX_Log_Info("Presentation uses configured VSYNC/frame limit; gameplay "
+                "remains deterministic at 20 Hz; SPU streams at 120 Hz\n");
 
   for (;;) {
-    // Wall time drives the fixed 20 Hz guest clock. The native 60 FPS pacer
-    // only selects interpolation samples and never advances scripts, triggers
-    // AI, audio or the retail VM outside that accumulator.
+    // Wall time drives the fixed 20 Hz guest frame and the independent 120 Hz
+    // hardware/audio clock. Display refresh only selects interpolation samples
+    // and never changes simulation or audio rates.
     const auto current_frame_counter = SDL_GetPerformanceCounter();
     const auto counter_delta = current_frame_counter - previous_frame_counter;
     previous_frame_counter = current_frame_counter;
@@ -12337,6 +11890,15 @@ SceneViewerResult PsyCrossSceneViewer::run(
                        : static_cast<double>(counter_delta) /
                              static_cast<double>(performance_frequency),
                    0.0, maximum_frame_time_seconds);
+    audio_accumulator_seconds =
+        std::min(audio_accumulator_seconds + elapsed_seconds,
+                 retail_audio_step_seconds * maximum_audio_backlog_updates);
+    if (periodic_audio_diagnostics && performance_frequency != 0U &&
+        current_frame_counter >= next_audio_diagnostic_counter) {
+      log_audio_diagnostics("periodic");
+      next_audio_diagnostic_counter =
+          current_frame_counter + performance_frequency;
+    }
     gameplay_audio->update();
     ui_audio.update();
     PsyX_UpdateInput();
@@ -12487,11 +12049,16 @@ SceneViewerResult PsyCrossSceneViewer::run(
     const auto current_pause_x = pause_direction(analog_x);
     const auto current_pause_y = pause_direction(analog_y);
     if (!paused && pause_toggled) {
+      if (!service_realtime_audio()) {
+        PsyX_Log_Error("Realtime retail audio clock failed\n");
+        return SceneViewerResult{previous_buttons,
+                                 SceneExitReason::return_to_title};
+      }
       mouse_capture.set(false);
       player_input.synchronize(raw_player_input);
       clear_latched_gameplay_input();
       pause_menu.reset(
-          makePauseMenuData(mission, gameplay, maximum_unlocked_mission),
+          game::makePauseMenuData(mission, gameplay, maximum_unlocked_mission),
           pause_settings);
       if (tests_.mission_selection_unlocked) {
         pause_menu.unlockMissionSelect();
@@ -12502,7 +12069,6 @@ SceneViewerResult PsyCrossSceneViewer::run(
       // resumes music and ambient sound at the exact sample position.
       gameplay_audio->setGainPercent(0U);
       ui_audio.setVolumePercent(pause_settings.sound_effects_volume);
-      paused_audio_accumulator_seconds = 0.0;
       binding_capture = false;
       pause_analog_x = current_pause_x;
       pause_analog_y = current_pause_y;
@@ -12514,27 +12080,13 @@ SceneViewerResult PsyCrossSceneViewer::run(
     }
 
     if (paused) {
-      // The retail pause UI stops mission simulation, not the SPU/CD clock.
-      // Keep its 20 Hz timer callback alive so XA music can reach EOF and
-      // restart without an OpenAL underrun or a decoder discontinuity.
-      paused_audio_accumulator_seconds =
-          std::min(paused_audio_accumulator_seconds + elapsed_seconds,
-                   retail_simulation_step_seconds * maximum_backlog_updates);
-      auto paused_audio_updates = 0U;
-      while (paused_audio_updates < maximum_updates_per_presentation &&
-             paused_audio_accumulator_seconds + 1.0e-9 >=
-                 retail_simulation_step_seconds) {
-        if (!gameplay.advanceAudioFrameClock()) {
-          PsyX_Log_Error("Paused retail audio clock failed\n");
-          return SceneViewerResult{previous_buttons,
-                                   SceneExitReason::return_to_title};
-        }
-        ++paused_audio_updates;
-        paused_audio_accumulator_seconds =
-            std::max(0.0, paused_audio_accumulator_seconds -
-                              retail_simulation_step_seconds);
+      // Mission simulation stops in the ACD, while the 120 Hz SPU/CD stream
+      // continues uninterrupted at its original sample rate.
+      if (!service_realtime_audio()) {
+        PsyX_Log_Error("Paused retail audio clock failed\n");
+        return SceneViewerResult{previous_buttons,
+                                 SceneExitReason::return_to_title};
       }
-      pump_gameplay_audio();
       player_input.synchronize(raw_player_input);
       auto analog_left_edge = false;
       auto analog_right_edge = false;
@@ -12672,7 +12224,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
                                    SceneExitReason::return_to_title};
         }
         apply_gameplay_tests();
-        reset_gameplay_audio();
+        discard_gameplay_audio("pause-restart-checkpoint");
         ui_audio.reset();
         paused = false;
         gameplay_audio->setGainPercent(100U);
@@ -12700,7 +12252,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
         pause_settings = pause_menu.settings();
         gameplay.reset();
         apply_gameplay_tests();
-        reset_gameplay_audio();
+        discard_gameplay_audio("pause-restart-mission");
         ui_audio.reset();
         paused = false;
         gameplay_audio->setGainPercent(100U);
@@ -12770,7 +12322,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
                                  SceneExitReason::return_to_title};
       }
       apply_gameplay_tests();
-      reset_gameplay_audio();
+      discard_gameplay_audio("failure-restart-checkpoint");
       fire_animation = FireAnimation{gameplay};
       actor_tick = 0U;
       previous_room = gameplay.currentRoom();
@@ -12876,6 +12428,9 @@ SceneViewerResult PsyCrossSceneViewer::run(
       display_player_look.reset();
       std::swap(previous_render_presentation, current_render_presentation);
       gameplay.update(simulation_input);
+      if (auto carry = gameplay.campaignCarryState()) {
+        latest_campaign_carry = std::move(carry);
+      }
       weapon_presentation_edges.observe(gameplay.legacyPresentationFrame());
       muzzle_flash_edges.observe(gameplay.effects());
       scrim_copy_edges.observe(gameplay.legacyPresentationFrame());
@@ -12942,17 +12497,43 @@ SceneViewerResult PsyCrossSceneViewer::run(
       return SceneViewerResult{previous_buttons,
                                SceneExitReason::return_to_title};
     }
-    pump_gameplay_audio();
+    // State 3/4 is a terminal retail handoff: the completed gameplay update
+    // deliberately retires the live runtime before publishing the EOL
+    // request. Consume that request before asking for another 120 Hz SPU
+    // callback. Treating the expected terminal state as an audio-clock
+    // failure used to abort the campaign immediately before the save menu.
     if (gameplay.consumeEndingMovieRequest()) {
-      discard_gameplay_audio();
+      discard_gameplay_audio("ending-movie-handoff");
       mouse_capture.set(false);
+
+      // Both native swap buffers may still contain pre-fade gameplay. Seal
+      // the terminal boundary with the already-authored completion blackout
+      // before handing control to the save UI or EOL decoder. Drawing twice
+      // covers both buffers and prevents a stale un-faded frame from flashing
+      // while the next frontend changes its texture/VRAM working set.
+      for (auto buffer = 0U; buffer < 2U; ++buffer) {
+        static_cast<void>(PsyX_BeginScene());
+        hud_textures.restoreFont();
+        drawMissionCompleteOverlay(hud_textures);
+        PsyX_EndScene();
+      }
       return SceneViewerResult{previous_buttons,
                                SceneExitReason::mission_complete, std::nullopt,
-                               gameplay.campaignCarryState()};
+                               latest_campaign_carry};
+    }
+    // Retire the 20 Hz game frame before the coincident 120 Hz SPU slice.
+    // This matches the PS1 boundary: a key-on authored by this frame reaches
+    // the mixer immediately instead of waiting one complete 8.33 ms callback.
+    // At 120/144/240 Hz that removes the refresh-dependent visible lead which
+    // made animation advance several presentation frames ahead of its sound.
+    if (!service_realtime_audio()) {
+      PsyX_Log_Error("Realtime retail audio clock failed\n");
+      return SceneViewerResult{previous_buttons,
+                               SceneExitReason::return_to_title};
     }
     if (const auto scripted_movie_index =
             gameplay.consumeScriptedIntroMovieRequest()) {
-      discard_gameplay_audio();
+      discard_gameplay_audio("scripted-movie-handoff");
       // This completed retail tick is not drawn before the movie. Commit all
       // queued SCRIM copy phases now so the post-movie authored-page restore
       // can replay the exact accumulated texture phase.

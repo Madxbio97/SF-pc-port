@@ -33,11 +33,18 @@ struct RetailBriefingLayout final {
 class MissionBriefing final {
 public:
   [[nodiscard]] static MissionBriefing parse(std::span<const std::byte> dlf);
-  [[nodiscard]] static MissionBriefing parseRecord(
-      std::span<const std::byte> dlf,
-      std::size_t record_index,
-      std::string_view mission_title = {});
+  [[nodiscard]] static MissionBriefing
+  parseRecord(std::span<const std::byte> dlf, std::size_t record_index,
+              std::string_view mission_title = {});
+  [[nodiscard]] static MissionBriefing
+  parseOverlayRecord(std::span<const std::byte> overlay,
+                     std::size_t record_index,
+                     std::string_view mission_title = {});
   [[nodiscard]] static MissionBriefing fallback(std::string title);
+  [[nodiscard]] static MissionBriefing
+  fromFields(std::string location, std::string mission_title,
+             std::string date_time, std::string directive,
+             std::string additional_directive);
 
   [[nodiscard]] std::string_view location() const noexcept { return location_; }
   [[nodiscard]] std::string_view missionTitle() const noexcept {

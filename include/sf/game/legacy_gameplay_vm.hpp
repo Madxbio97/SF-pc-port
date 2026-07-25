@@ -866,6 +866,10 @@ struct LegacyGameplayVmSnapshot {
   struct AttachedTextSource {
     std::uint32_t text_object{};
     std::string text;
+    // Retail stores the additive source-string checksum in TEXT+0x15 and
+    // includes it in every handle.  Pool addresses are reused, so the object
+    // pointer alone is not a stable identity.
+    std::uint8_t text_checksum{};
 
     [[nodiscard]] friend bool operator==(const AttachedTextSource &,
                                          const AttachedTextSource &) = default;
@@ -885,12 +889,6 @@ struct LegacyGameplayVmSnapshot {
   std::vector<AttachedTextSource> attached_text_sources;
   std::vector<LegacyUiMessageBridgeState> ui_messages;
   std::vector<PendingActorDrop> pending_actor_drops;
-  // The SPU mixer output is host-facing rather than guest-visible, so it is
-  // intentionally absent from PsxMachineState. A gameplay checkpoint still
-  // has to retain this already-mixed boundary: dropping it starts playback
-  // in the middle of the following waveform after a mission restart.
-  std::vector<psx::SpuPcmFrame> pending_pcm;
-  std::uint64_t dropped_pcm_frames{};
   bool video_timing_baseline_initialized{};
   bool audio_frame_tick_initialized{};
   std::optional<LegacyVirtualCd::Snapshot> virtual_cd;
@@ -981,11 +979,17 @@ public:
   [[nodiscard]] LegacyGameplayVmSnapshot captureSnapshot() const;
   [[nodiscard]] bool
   restoreSnapshot(const LegacyGameplayVmSnapshot &snapshot) noexcept;
-  // Complete a 20 Hz retail frame with a deterministic minimum CPU/SPU time.
+  // Complete a 20 Hz retail frame with an exact deterministic CPU/SPU time.
   // clearPcm() establishes the first frame boundary after bootstrap or a
   // native transition; snapshots retain this clock anchor.
   [[nodiscard]] bool
   advanceAudioFrameClock(const LegacyRetailAudioProfile &profile =
+                             syphonFilterUsaV11RetailAudioProfile()) noexcept;
+  // Advances one retail 120 Hz timer/SPU slice. The realtime host uses this
+  // smaller boundary so PCM reaches the device without a full 50 ms frame of
+  // latency; offline probes may continue to use advanceAudioFrameClock().
+  [[nodiscard]] bool
+  advanceAudioSliceClock(const LegacyRetailAudioProfile &profile =
                              syphonFilterUsaV11RetailAudioProfile()) noexcept;
   [[nodiscard]] bool
   setRetailAudioVolumes(const LegacyRetailAudioVolumes &volumes,
@@ -998,6 +1002,7 @@ public:
   [[nodiscard]] std::size_t
   takePcm(std::span<psx::SpuPcmFrame> destination) noexcept;
   void clearPcm() noexcept;
+  [[nodiscard]] LegacyAudioDiagnostics audioDiagnostics() const noexcept;
   [[nodiscard]] std::optional<LegacyGameplayBridgeState>
   readBridgeState(const LegacyGameplayBridgeProfile &profile =
                       syphonFilterUsaV11GameplayBridgeProfile());
@@ -1154,6 +1159,13 @@ public:
   [[nodiscard]] psx::PsxMachine &machine() noexcept { return machine_; }
 
 private:
+  [[nodiscard]] LegacyGameplayVmResult
+  invokeFrameCall(std::uint32_t address,
+                  std::span<const std::uint32_t> arguments,
+                  std::uint64_t execution_budget);
+  [[nodiscard]] bool advanceAudioClockCallbacks(
+      const LegacyRetailAudioProfile &profile,
+      std::uint32_t callback_count) noexcept;
   [[nodiscard]] bool finalizeDeadActorDropsBeforeRenderer(
       const LegacyGameplayBridgeProfile &profile,
       std::uint64_t execution_budget) noexcept;
@@ -1191,7 +1203,7 @@ private:
       interrupt_callbacks_{};
   std::optional<LegacyHostAimRay> host_aim_ray_;
   std::vector<LegacyWeaponEventBridgeState> weapon_events_;
-  std::vector<LegacyGameplayVmSnapshot::AttachedTextSource>
+  mutable std::vector<LegacyGameplayVmSnapshot::AttachedTextSource>
       attached_text_sources_;
   std::vector<LegacyUiMessageBridgeState> ui_messages_;
   std::vector<LegacyGameplayVmSnapshot::PendingActorDrop> pending_actor_drops_;
