@@ -5,7 +5,25 @@ pre-release tags rather than a stable semantic-versioning promise.
 
 ## Unreleased
 
-- No changes after Public Test 0.1.0-PT7.
+### Gameplay and presentation
+
+- Restored the documented USA/PAL retail cheat chords, centralized their
+  persistent runtime state and added an original-style **Options > Cheats**
+  page; launcher-side mission and cheat controls were removed.
+- Corrected the Russian `Ш/Щ/ш/щ` middle stems in the generated Industria atlas
+  and retained canonical English labels in sniper/night-vision scopes.
+- Reworked Russian map-objective wrapping and replaced frame-rate-dependent
+  flashing with a synchronized low-contrast objective glow.
+- Protected the final campaign stream from an inherited input edge so the
+  credits and post-credits sequence play to completion.
+
+### Architecture
+
+- Moved retail cheat definitions, chord detection and state into a dedicated
+  game module shared by the title screen, pause menu and gameplay runtime.
+- Kept cheat state alive across mission transitions and returns to the title
+  screen, with one activation path for both original button codes and menu
+  switches.
 
 ## 0.1.0-public-test.7 - 2026-07-25
 
@@ -104,6 +122,14 @@ pre-release tags rather than a stable semantic-versioning promise.
 - Removed the development FPS counter from the game image.
 
 ### Gameplay presentation
+
+- Restored every documented retail cheat and its original title/pause-menu
+  button context, including PAL aliases, infinite ammunition, hard mode,
+  one-shot kills, weak enemies, stage select and the Georgia Street theater.
+- Added the original-style **Options > Cheats** page with synchronized switches
+  for all six restored modes.
+- Removed mission selection and cheat controls from the launcher permanently;
+  `syphon_filter_cheats` now activates persistent retail cheats directly.
 
 - Rebuilt the pause map presentation around the original PS1 layout, including
   map layers, current Gabe position and active-objective indicators.

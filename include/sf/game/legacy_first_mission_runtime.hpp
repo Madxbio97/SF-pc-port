@@ -247,6 +247,11 @@ public:
                                               std::int32_t delta) noexcept;
   [[nodiscard]] bool applyHostFirstPersonAim(bool active) noexcept;
   [[nodiscard]] bool activateRetailAllWeaponsCheat() noexcept;
+  [[nodiscard]] bool setRetailAllWeaponsCheat(bool enabled) noexcept;
+  [[nodiscard]] bool setRetailHardMode(bool enabled) noexcept;
+  [[nodiscard]] bool setRetailOneShotKills(bool enabled) noexcept;
+  [[nodiscard]] bool setRetailWeakEnemies(bool enabled) noexcept;
+  [[nodiscard]] bool activateRetailMovieTheaterCheat() noexcept;
   [[nodiscard]] bool
   applyCampaignCarryState(const CampaignCarryState &state) noexcept;
   [[nodiscard]] bool consumeCheckpointCommit() noexcept;
@@ -312,6 +317,8 @@ private:
   [[nodiscard]] bool republishPresentationFrame(
       const std::shared_ptr<const LegacyPresentationFrame> &source) noexcept;
   [[nodiscard]] bool applyRetailAudioVolumes() noexcept;
+  [[nodiscard]] bool
+  maintainRetailCheats(const LegacyMissionBridgeState &mission) noexcept;
   [[nodiscard]] std::vector<LegacyPresentationCommandType>
   pendingPresentationCommands() const;
   void markFault(LegacyRuntimeFaultReason reason =
@@ -331,6 +338,8 @@ private:
   std::uint8_t consecutive_renderer_snapshot_replays_{};
   std::optional<std::uint32_t> last_checkpoint_frame_;
   std::optional<LegacyRetailAudioVolumes> retail_audio_volumes_;
+  std::optional<LegacyInventoryBridgeState> retail_infinite_ammo_;
+  bool retail_weak_enemies_{};
   bool checkpoint_commit_pending_{};
   std::uint8_t transition_requests_{};
   std::uint8_t issued_transitions_{};

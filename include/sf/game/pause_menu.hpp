@@ -1,5 +1,7 @@
 #pragma once
 
+#include "sf/game/retail_cheats.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -13,6 +15,7 @@ enum class PauseScreen {
   root,
   briefing,
   options,
+  cheats,
   sound,
   controller,
   controller_bindings,
@@ -152,6 +155,7 @@ struct PauseMenuData {
   std::vector<MissionMenuEntry> missions;
   std::uint32_t current_mission{};
   std::uint32_t maximum_unlocked_mission{};
+  RetailCheatState cheats;
 };
 
 struct PauseMenuInput {
@@ -189,6 +193,7 @@ enum class PauseCommandType {
   restart_mission,
   select_mission,
   quit_game,
+  set_retail_cheat,
 };
 
 struct PauseMenuCommand {
@@ -345,7 +350,9 @@ public:
   completeControllerBinding(std::uint32_t button);
   void showControllerMissing();
   void resolveWeaponEquip(std::uint32_t id, bool accepted);
-  void unlockMissionSelect() noexcept { mission_select_unlocked_ = true; }
+  void unlockMissionSelect() noexcept { setMissionSelectUnlocked(true); }
+  void setMissionSelectUnlocked(bool enabled) noexcept;
+  void setRetailCheatEnabled(RetailCheat cheat, bool enabled) noexcept;
   [[nodiscard]] bool missionSelectUnlocked() const noexcept {
     return mission_select_unlocked_;
   }
@@ -390,6 +397,7 @@ private:
   [[nodiscard]] PauseMenuCommand resumeCommand();
   [[nodiscard]] PauseMenuCommand updateRoot(const PauseMenuInput &input);
   [[nodiscard]] PauseMenuCommand updateOptions(const PauseMenuInput &input);
+  [[nodiscard]] PauseMenuCommand updateCheats(const PauseMenuInput &input);
   [[nodiscard]] PauseMenuCommand updateSound(const PauseMenuInput &input);
   [[nodiscard]] PauseMenuCommand updateController(const PauseMenuInput &input);
   [[nodiscard]] PauseMenuCommand updateBindings(const PauseMenuInput &input);

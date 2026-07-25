@@ -26,9 +26,20 @@ constexpr std::array base_utf8_translations{
     Utf8Translation{"Briefing", u8"БРИФИНГ"},
     Utf8Translation{"Weapons", u8"ОРУЖИЕ"},
     Utf8Translation{"Options", u8"НАСТРОЙКИ"},
+    Utf8Translation{"Cheats", u8"ЧИТЫ"},
+    Utf8Translation{"All Weapons + Infinite Ammo",
+                    u8"ВСЁ ОРУЖИЕ + БЕСК. ПАТРОНЫ"},
+    Utf8Translation{"Hard Mode", u8"ВЫСОКАЯ СЛОЖНОСТЬ"},
+    Utf8Translation{"One-Shot Kills", u8"УБИЙСТВО С ОДНОГО ВЫСТРЕЛА"},
+    Utf8Translation{"Stage Select", u8"ВЫБОР МИССИЙ"},
+    Utf8Translation{"Weak Enemies", u8"ОСЛАБЛЕННЫЕ ВРАГИ"},
+    Utf8Translation{"Movie Theater", u8"КИНОТЕАТР"},
+    Utf8Translation{"Retail Codes", u8"КОДЫ ОРИГИНАЛА"},
+    Utf8Translation{"On", u8"ВКЛ"},
+    Utf8Translation{"Off", u8"ВЫКЛ"},
+    Utf8Translation{"%x toggle", u8"%x ПЕРЕКЛЮЧИТЬ"},
     Utf8Translation{"Restart Mission", u8"НАЧАТЬ ЗАНОВО"},
-    Utf8Translation{"Restart At Last Checkpoint",
-                    u8"С КОНТРОЛЬНОЙ ТОЧКИ"},
+    Utf8Translation{"Restart At Last Checkpoint", u8"С КОНТРОЛЬНОЙ ТОЧКИ"},
     Utf8Translation{"Quit Game", u8"ВЫЙТИ ИЗ ИГРЫ"},
     Utf8Translation{"Select Mission", u8"ВЫБОР МИССИИ"},
     Utf8Translation{"Sound", u8"ЗВУК"},
@@ -46,6 +57,16 @@ constexpr std::array base_utf8_translations{
     Utf8Translation{"Back", u8"НАЗАД"},
     Utf8Translation{"Mission Complete", u8"МИССИЯ ВЫПОЛНЕНА"},
     Utf8Translation{"MISSION COMPLETE", u8"МИССИЯ ВЫПОЛНЕНА"},
+    Utf8Translation{"Campaign Complete", u8"КАМПАНИЯ ЗАВЕРШЕНА"},
+    Utf8Translation{"CAMPAIGN COMPLETE", u8"КАМПАНИЯ ЗАВЕРШЕНА"},
+    Utf8Translation{"Campaign Completed", u8"КАМПАНИЯ ЗАВЕРШЕНА"},
+    Utf8Translation{"CAMPAIGN COMPLETED", u8"КАМПАНИЯ ЗАВЕРШЕНА"},
+    // Keep the misspelling accepted as well: it appeared in early PC UI
+    // builds and old save-slot labels can still reach the renderer.
+    Utf8Translation{"Campaing Complete", u8"КАМПАНИЯ ЗАВЕРШЕНА"},
+    Utf8Translation{"CAMPAING COMPLETE", u8"КАМПАНИЯ ЗАВЕРШЕНА"},
+    Utf8Translation{"Campaing Completed", u8"КАМПАНИЯ ЗАВЕРШЕНА"},
+    Utf8Translation{"CAMPAING COMPLETED", u8"КАМПАНИЯ ЗАВЕРШЕНА"},
     Utf8Translation{"Save Mission?", u8"СОХРАНИТЬ ПРОГРЕСС?"},
     Utf8Translation{"Yes", u8"ДА"},
     Utf8Translation{"No", u8"НЕТ"},
@@ -118,8 +139,7 @@ constexpr std::array base_utf8_translations{
     Utf8Translation{"Infinite", u8"БЕСКОНЕЧНО"},
     Utf8Translation{"Mission Failed", u8"МИССИЯ ПРОВАЛЕНА"},
     Utf8Translation{"MISSION FAILED", u8"МИССИЯ ПРОВАЛЕНА"},
-    Utf8Translation{"FIRE OR ACTION TO RETRY",
-                    u8"НАЖМИТЕ ОГОНЬ ИЛИ ДЕЙСТВИЕ"},
+    Utf8Translation{"FIRE OR ACTION TO RETRY", u8"НАЖМИТЕ ОГОНЬ ИЛИ ДЕЙСТВИЕ"},
     Utf8Translation{"Objective", u8"ЦЕЛЬ"},
     Utf8Translation{"Parameter", u8"УСЛОВИЕ"},
     Utf8Translation{"Complete", u8"ВЫПОЛНЕНО"},
@@ -745,7 +765,8 @@ constexpr std::array localized_briefings{
         u8"ПЕРЕДАНО РАЗВЕДКОЙ АГЕНТСТВА:\n\n"
         u8"СПУТНИК-ШПИОН ЗАВЕРШИЛ ПОДРОБНЫЙ АНАЛИЗ БРОНИ АНТОНА ГИРДО: ОНА "
         u8"НЕУЯЗВИМА ДЛЯ ОБЫЧНОГО ОРУЖИЯ. НАШИ СПЕЦИАЛИСТЫ ИЩУТ РЕШЕНИЕ, "
-        u8"НО ВАШЕМУ АГЕНТУ, ВОЗМОЖНО, ПРИДЁТСЯ ИМПРОВИЗИРОВАТЬ И ИСКАТЬ СЛАБОЕ "
+        u8"НО ВАШЕМУ АГЕНТУ, ВОЗМОЖНО, ПРИДЁТСЯ ИМПРОВИЗИРОВАТЬ И ИСКАТЬ "
+        u8"СЛАБОЕ "
         u8"МЕСТО.",
         u8"НАШ ЭКСПЕРТ ПО ВЗРЫВОТЕХНИКЕ УСТАНОВИЛ: ЛЮБОЙ ВЗРЫВ ПРИВЕДЁТ В "
         u8"ДЕЙСТВИЕ ВИРУСНУЮ БОМБУ."},
@@ -766,7 +787,8 @@ constexpr std::array localized_briefings{
         u8"АРАМОВА ДОПРАШИВАЕТ ФЭЙГАНА У ЭКСПОЗИЦИИ ДИНОЗАВРОВ. АУДИОКАНАЛЫ "
         u8"ПРОПАДАЮТ, НО ОНА ПОСТОЯННО УПОМИНАЕТ СИФОН ФИЛЬТР.",
         u8"У МАРЫ АРАМОВОЙ И ДЖОНАТАНА ФЭЙГАНА ЕСТЬ НУЖНЫЕ НАМ СВЕДЕНИЯ. ТЫ "
-        u8"ДОЛЖЕН ПОМЕШАТЬ АРАМОВОЙ УБИТЬ ФЭЙГАНА, НО АРАМОВА ТАКЖЕ ДОЛЖНА УЦЕЛЕТЬ."},
+        u8"ДОЛЖЕН ПОМЕШАТЬ АРАМОВОЙ УБИТЬ ФЭЙГАНА, НО АРАМОВА ТАКЖЕ ДОЛЖНА "
+        u8"УЦЕЛЕТЬ."},
     Utf8MissionBriefing{
         u8"РОЗОВКА, КАЗАХСТАН", "Rhoemer's Base", "09/01 21:00",
         u8"СООБЩЕНИЕ ОТ ТОМАСА МАРКИНСОНА:\n\n"
@@ -1009,9 +1031,8 @@ constexpr std::optional<char> vitByteForCyrillic(char32_t value) noexcept {
   }
 }
 
-static_assert(
-    static_cast<unsigned char>(*vitByteForCyrillic(U'Ю')) == 0xdfU &&
-    static_cast<unsigned char>(*vitByteForCyrillic(U'ю')) == 0xeaU);
+static_assert(static_cast<unsigned char>(*vitByteForCyrillic(U'Ю')) == 0xdfU &&
+              static_cast<unsigned char>(*vitByteForCyrillic(U'ю')) == 0xeaU);
 
 std::string encodeVit(std::u8string_view source) {
   std::string result;
@@ -1153,8 +1174,8 @@ std::string normalizeMissionText(std::string_view source) {
 bool isGasGrenadePickupMessage(std::string_view source) {
   auto compact = normalizeMissionText(source);
   std::erase(compact, ' ');
-  const auto gas_grenade = compact.starts_with("GASGRENADE") ||
-                           compact.starts_with("GASGRANADE");
+  const auto gas_grenade =
+      compact.starts_with("GASGRENADE") || compact.starts_with("GASGRANADE");
   return gas_grenade && compact.find("TAKEN") != std::string::npos;
 }
 
@@ -1164,8 +1185,8 @@ translatedNormalizedBuiltInCopyFor(std::string_view source) {
   if (normalized.empty()) {
     return std::nullopt;
   }
-  const auto find_in = [&normalized](const auto &translations)
-      -> std::optional<std::string> {
+  const auto find_in =
+      [&normalized](const auto &translations) -> std::optional<std::string> {
     for (const auto &[english, translated] : translations) {
       if (english.find('%') == std::string_view::npos &&
           normalizeMissionText(english) == normalized) {
@@ -1418,8 +1439,8 @@ std::string localizeLine(std::string_view source) {
   // either "taken", " bullet taken" or " shell taken". Recompose the full
   // Russian message instead of feeding the already-laid-out English glyphs
   // through the ViT atlas.
-  const auto translated_pickup_item = [](std::string_view item)
-      -> std::optional<std::string> {
+  const auto translated_pickup_item =
+      [](std::string_view item) -> std::optional<std::string> {
     if (const auto exact = translatedCopyFor(item)) {
       return exact;
     }
@@ -1635,6 +1656,38 @@ std::string localizeTextCopy(std::string_view english) {
     }
     result.push_back('\n');
     cursor = newline + 1U;
+  }
+  return result;
+}
+
+std::optional<std::string_view>
+completeGameplayTextSource(std::string_view observed) noexcept {
+  if (!russianLanguageActive()) {
+    return std::nullopt;
+  }
+  const auto normalized = normalizeMissionText(observed);
+  // Short prefixes such as "NO" or "S" are ambiguous with ordinary HUD
+  // text. Retail has already shown enough of a status to identify it safely
+  // once four normalized source characters are present.
+  if (normalized.size() < 4U) {
+    return std::nullopt;
+  }
+  constexpr std::array candidates{
+      std::string_view{"Scope Pwr On"},
+      std::string_view{"No Target Available"},
+      std::string_view{"Sniper Rifle"},
+      std::string_view{"Nightvision Rifle"},
+  };
+  std::optional<std::string_view> result;
+  for (const auto candidate : candidates) {
+    const auto canonical = normalizeMissionText(candidate);
+    if (!canonical.starts_with(normalized)) {
+      continue;
+    }
+    if (result) {
+      return std::nullopt;
+    }
+    result = candidate;
   }
   return result;
 }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "sf/game/retail_cheats.hpp"
 #include "sf/platform/player_input.hpp"
 
 #include <cstdint>
@@ -32,11 +33,6 @@ struct GraphicsSettings {
   bool fullscreen{};
 };
 
-struct GameplayTestSettings {
-  bool retail_all_weapons{};
-  bool mission_selection_unlocked{};
-};
-
 class Host {
 public:
   virtual ~Host() = default;
@@ -57,12 +53,12 @@ createPsyCrossHost(std::string title, GraphicsSettings graphics = {});
     game::MissionPackage initial_mission, std::filesystem::path cue_path,
     std::string supported_game_serial, GraphicsSettings graphics = {},
     KeyboardMouseBindings input = defaultKeyboardMouseBindings(),
-    GameplayTestSettings tests = {});
+    game::RetailCheatState cheats = {});
 
 [[nodiscard]] std::unique_ptr<Host> createPsyCrossSceneHost(
     std::string title, game::MissionPackage mission,
     std::filesystem::path cue_path, GraphicsSettings graphics = {},
     KeyboardMouseBindings input = defaultKeyboardMouseBindings(),
-    GameplayTestSettings tests = {});
+    game::RetailCheatState cheats = {});
 
 } // namespace sf::platform

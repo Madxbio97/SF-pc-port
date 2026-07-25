@@ -11,6 +11,7 @@
 #include "sf/game/campaign.hpp"
 #include "sf/game/game_disc.hpp"
 #include "sf/game/mission.hpp"
+#include "sf/game/retail_cheats.hpp"
 #include "sf/game/title.hpp"
 
 #include <PsyX/PsyX_globals.h>
@@ -31,6 +32,18 @@
 
 namespace sf::platform {
 namespace {
+
+detail::StandaloneMovieSkipPolicy
+endingMovieSkipPolicy(const game::MissionDefinition &definition) noexcept {
+  const auto catalog = game::missionCatalog();
+  if (!catalog.empty() && definition.index == catalog.back().index) {
+    // EOL/SILO.STR contains the credits and the post-credits scene.  It is a
+    // single retail stream, so allowing a carried confirm/cancel edge from the
+    // save menu to skip it loses the entire campaign ending.
+    return detail::StandaloneMovieSkipPolicy::prevent;
+  }
+  return detail::StandaloneMovieSkipPolicy::allow;
+}
 
 void configureGraphics(const GraphicsSettings &settings) noexcept {
   g_cfg_msaaSamples = settings.msaa_samples;
@@ -402,13 +415,13 @@ public:
                     std::filesystem::path cue_path,
                     std::string supported_game_serial,
                     GraphicsSettings graphics, KeyboardMouseBindings input,
-                    GameplayTestSettings tests)
+                    game::RetailCheatState cheats)
       : title_(title.begin(), title.end()), assets_(std::move(assets)),
         movies_(std::move(movies)),
         initial_mission_(std::move(initial_mission)),
         cue_path_(std::move(cue_path)),
         supported_game_serial_(std::move(supported_game_serial)),
-        graphics_(graphics), input_(input), tests_(tests) {
+        graphics_(graphics), input_(input), cheats_(cheats) {
     title_.push_back('\0');
   }
 
@@ -438,13 +451,30 @@ public:
     PadStartCom();
 
     std::uint16_t previous_buttons = 0xffffU;
+    bool title_cheat_latched{};
     detail::PsyCrossUiAudio ui_audio{cue_path_};
     detail::PsyCrossMoviePlayer movie_player;
     detail::PsyCrossCampaignSaveRenderer title_load_renderer{initial_mission_};
     const detail::MovieOverlayCallbacks overlay{
-        [this, &pad, &ui_audio](std::uint16_t pressed,
-                                std::uint32_t movie_frame) {
+        [this, &pad, &ui_audio,
+         &title_cheat_latched](std::uint16_t pressed,
+                               std::uint32_t movie_frame) {
           ui_audio.update();
+          const auto held =
+              static_cast<std::uint16_t>(~readHostButtons(pad));
+          const auto title_cheat = game::detectRetailTitleCheat(
+              held, menu_.phase() == game::TitlePhase::menu &&
+                        menu_.selection() == 0U);
+          if (!title_cheat) {
+            title_cheat_latched = false;
+          } else if (!title_cheat_latched &&
+                     *title_cheat == game::RetailCheat::hard_mode) {
+            cheats_.hard_mode = true;
+            title_cheat_latched = true;
+            PsyX_Log_Info("Retail cheat %s: activated\n",
+                          game::retailCheatName(*title_cheat));
+            ui_audio.play(detail::PsyCrossUiCue::confirm);
+          }
           const auto analog_direction = titleAnalogDirection(pad);
           const auto analog_previous =
               analog_direction < 0 && title_analog_direction_ == 0;
@@ -566,7 +596,7 @@ public:
                       campaign->missionIndex() + 1U);
       }
       detail::PsyCrossMissionStart mission_start;
-      detail::PsyCrossSceneViewer scene_viewer{input_, tests_};
+      detail::PsyCrossSceneViewer scene_viewer{input_, cheats_};
       std::optional<game::MissionPackage> loaded_mission;
       auto exit_application = false;
       while (campaign->active()) {
@@ -585,7 +615,8 @@ public:
                         mission_index + 1U);
           if (!mission->endingMovie().path.empty()) {
             previous_buttons = movie_player.playStandalone(
-                mission->endingMovie(), pad, previous_buttons);
+                mission->endingMovie(), pad, previous_buttons,
+                endingMovieSkipPolicy(mission->definition()));
           }
           auto candidate_campaign = *campaign;
           auto candidate_slots = save_slots;
@@ -706,7 +737,8 @@ public:
           }
           if (!mission->endingMovie().path.empty()) {
             previous_buttons = movie_player.playStandalone(
-                mission->endingMovie(), pad, previous_buttons);
+                mission->endingMovie(), pad, previous_buttons,
+                endingMovieSkipPolicy(mission->definition()));
           }
 
           auto candidate_campaign = *campaign;
@@ -764,17 +796,17 @@ private:
   int title_analog_direction_{};
   GraphicsSettings graphics_;
   KeyboardMouseBindings input_;
-  GameplayTestSettings tests_;
+  game::RetailCheatState cheats_;
 };
 
 class PsyCrossSceneHost final : public Host {
 public:
   PsyCrossSceneHost(std::string title, game::MissionPackage mission,
                     std::filesystem::path cue_path, GraphicsSettings graphics,
-                    KeyboardMouseBindings input, GameplayTestSettings tests)
+                    KeyboardMouseBindings input, game::RetailCheatState cheats)
       : title_(title.begin(), title.end()), mission_(std::move(mission)),
         cue_path_(std::move(cue_path)), graphics_(graphics), input_(input),
-        tests_(tests) {
+        cheats_(cheats) {
     title_.push_back('\0');
   }
 
@@ -798,7 +830,7 @@ public:
     }
     detail::PsyCrossMissionStart mission_start;
     previous_buttons = mission_start.run(mission_, pad, previous_buttons);
-    detail::PsyCrossSceneViewer scene_viewer{input_, tests_};
+    detail::PsyCrossSceneViewer scene_viewer{input_, cheats_};
     const auto result = scene_viewer.run(mission_, pad, previous_buttons,
                                          cue_path_, mission_.definition().index,
                                          mission_start.takePreloadedGameplay(),
@@ -806,7 +838,9 @@ public:
     if (result.reason == detail::SceneExitReason::mission_complete &&
         !mission_.endingMovie().path.empty()) {
       static_cast<void>(movie_player.playStandalone(mission_.endingMovie(), pad,
-                                                    result.previous_buttons));
+                                                    result.previous_buttons,
+                                                    endingMovieSkipPolicy(
+                                                        mission_.definition())));
     }
     PadStopCom();
   }
@@ -817,7 +851,7 @@ private:
   std::filesystem::path cue_path_;
   GraphicsSettings graphics_;
   KeyboardMouseBindings input_;
-  GameplayTestSettings tests_;
+  game::RetailCheatState cheats_;
 };
 
 } // namespace
@@ -831,11 +865,11 @@ std::unique_ptr<Host> createPsyCrossTitleHost(
     std::string title, game::TitleAssets assets, game::TitleMovies movies,
     game::MissionPackage initial_mission, std::filesystem::path cue_path,
     std::string supported_game_serial, GraphicsSettings graphics,
-    KeyboardMouseBindings input, GameplayTestSettings tests) {
+    KeyboardMouseBindings input, game::RetailCheatState cheats) {
   return std::make_unique<PsyCrossTitleHost>(
       std::move(title), std::move(assets), std::move(movies),
       std::move(initial_mission), std::move(cue_path),
-      std::move(supported_game_serial), graphics, input, tests);
+      std::move(supported_game_serial), graphics, input, cheats);
 }
 
 std::unique_ptr<Host> createPsyCrossSceneHost(std::string title,
@@ -843,10 +877,10 @@ std::unique_ptr<Host> createPsyCrossSceneHost(std::string title,
                                               std::filesystem::path cue_path,
                                               GraphicsSettings graphics,
                                               KeyboardMouseBindings input,
-                                              GameplayTestSettings tests) {
+                                              game::RetailCheatState cheats) {
   return std::make_unique<PsyCrossSceneHost>(
       std::move(title), std::move(mission), std::move(cue_path), graphics,
-      input, tests);
+      input, cheats);
 }
 
 } // namespace sf::platform

@@ -123,7 +123,7 @@ void printUsage() {
 int main(int argc, char **argv) {
   try {
     sf::platform::GraphicsSettings graphics;
-    sf::platform::GameplayTestSettings gameplay_tests;
+    sf::game::RetailCheatState retail_cheats;
     auto input = sf::platform::defaultKeyboardMouseBindings();
     auto language = sf::game::GameLanguage::english;
     std::error_code executable_path_error;
@@ -145,7 +145,7 @@ int main(int argc, char **argv) {
       if (argument == "--fullscreen") {
         graphics.fullscreen = true;
       } else if (argument == "--all-weapons-test") {
-        gameplay_tests.retail_all_weapons = true;
+        retail_cheats.all_weapons = true;
       } else if (argument == "--no-launcher") {
         show_launcher = false;
       } else if (argument == "--bilinear") {
@@ -231,20 +231,23 @@ int main(int argc, char **argv) {
 
     const auto supports_mission_selection =
         supportsMissionSelection(launch->mode);
-    const auto cheats_enabled = sf::platform::launcherCheatsEnabled();
+    const auto cheats_enabled = sf::platform::retailCheatMarkerExists();
+    if (cheats_enabled && supports_mission_selection) {
+      retail_cheats.enableAll();
+    }
     if (requested_mission && !supports_mission_selection) {
       std::cerr << "Mission selection requires --game, --title-test or "
                    "--scene-test.\n";
       printUsage();
       return 64;
     }
-    if (gameplay_tests.retail_all_weapons && !supports_mission_selection) {
+    if (retail_cheats.all_weapons && !supports_mission_selection) {
       std::cerr << "--all-weapons-test requires --game, --title-test or "
                    "--scene-test.\n";
       printUsage();
       return 64;
     }
-    if ((requested_mission || gameplay_tests.retail_all_weapons) &&
+    if ((requested_mission || retail_cheats.all_weapons) &&
         !cheats_enabled) {
       const auto message =
           "Mission and inventory overrides require an empty "
@@ -253,17 +256,11 @@ int main(int argc, char **argv) {
       sf::platform::showLauncherError("RESTRICTED ACCESS", message);
       return 64;
     }
-    gameplay_tests.mission_selection_unlocked = cheats_enabled;
     auto mission_index = requested_mission.value_or(0U);
-    // The launcher performs the final developer-marker check before it
-    // exposes mission/inventory overrides. Normal campaign launches may
-    // therefore opt into those controls without making them public UI.
-    const auto launcher_mission_selection = supports_mission_selection;
     auto cue_path = launch->cue_path;
     if (show_launcher &&
-        !sf::platform::showGraphicsLauncher(graphics, input, gameplay_tests,
-                                            language, cue_path, mission_index,
-                                            launcher_mission_selection)) {
+        !sf::platform::showGraphicsLauncher(graphics, input, language,
+                                            cue_path)) {
       return 0;
     }
     if (!sf::game::localizationPackAvailable(language)) {
@@ -313,7 +310,7 @@ int main(int argc, char **argv) {
                             : "Syphon Filter PC",
           std::move(assets), std::move(movies), std::move(selected_mission),
           std::move(mission_cue_path), std::move(supported_game_serial),
-          graphics, input, gameplay_tests);
+          graphics, input, retail_cheats);
     } else if (launch->mode == LaunchMode::scene_test) {
       const auto &definition = sf::game::missionDefinition(mission_index);
       std::cout << "Disc verified. Starting native scene test at mission "
@@ -322,7 +319,7 @@ int main(int argc, char **argv) {
       host = sf::platform::createPsyCrossSceneHost(
           "Syphon Filter PC - scene test",
           sf::game::MissionPackage::load(disc, mission_index), disc.cuePath(),
-          graphics, input, gameplay_tests);
+          graphics, input, retail_cheats);
     } else {
       std::cout << "Disc verified. Starting PsyCross platform test; "
                    "close the window to exit.\n";

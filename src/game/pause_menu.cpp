@@ -1,10 +1,12 @@
 #include "sf/game/pause_menu.hpp"
 
 #include "sf/game/hud.hpp"
+#include "sf/game/localization.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <numeric>
 #include <utility>
 
 namespace sf::game {
@@ -28,7 +30,7 @@ constexpr std::array retail_root_sections{
     RetailRootSection{"Options", PauseScreen::options, true},
 };
 constexpr auto root_item_count = retail_root_sections.size();
-constexpr std::size_t option_item_count = 8;
+constexpr std::size_t option_item_count = 9;
 constexpr std::size_t sound_item_count = 3;
 constexpr std::size_t controller_item_count = 7;
 constexpr std::size_t binding_item_count = 9;
@@ -44,6 +46,7 @@ constexpr std::array option_labels{
     "Game Brightness",
     "Screen Centering",
     "Controller",
+    "Cheats",
 };
 
 // The release default controller table is shown in MENU.OVL even before the
@@ -202,8 +205,9 @@ struct RetailMapLine {
   bool continuation{};
 };
 
-std::vector<RetailMapLine> retailMapLines(std::string_view text) {
-  constexpr std::size_t retail_line_columns = 18U;
+std::vector<RetailMapLine>
+retailMapLines(std::string_view text, std::size_t retail_line_columns = 18U) {
+  retail_line_columns = std::max<std::size_t>(retail_line_columns, 4U);
   std::vector<RetailMapLine> lines;
   auto cursor = std::size_t{};
   auto continuation = false;
@@ -327,9 +331,7 @@ void PauseMenu::reset(PauseMenuData data, PauseSettings settings) {
   binding_pending_ = false;
   notification_.clear();
   transition_ = {};
-  // Full campaign traversal is a developer feature. The platform may unlock
-  // it explicitly after finding the opt-in marker beside the executable.
-  mission_select_unlocked_ = false;
+  mission_select_unlocked_ = data_.cheats.stage_select;
 }
 
 PauseMenu::ScreenState &PauseMenu::current() noexcept { return stack_.back(); }
@@ -443,6 +445,9 @@ PauseMenuCommand PauseMenu::update(const PauseMenuInput &input) {
     break;
   case PauseScreen::options:
     result = updateOptions(input);
+    break;
+  case PauseScreen::cheats:
+    result = updateCheats(input);
     break;
   case PauseScreen::sound:
     result = updateSound(input);
@@ -584,10 +589,48 @@ PauseMenuCommand PauseMenu::updateOptions(const PauseMenuInput &input) {
   case 7:
     push(PauseScreen::controller);
     break;
+  case 8:
+    push(PauseScreen::cheats);
+    break;
   default:
     break;
   }
   return {};
+}
+
+PauseMenuCommand PauseMenu::updateCheats(const PauseMenuInput &input) {
+  if (input.cancel) {
+    pop();
+    return {};
+  }
+  moveSelection(current(), retail_cheat_count, input);
+  if (!input.confirm && !input.left && !input.right) {
+    return {};
+  }
+
+  const auto cheat = retailCheatAt(current().selection);
+  const auto enabled = input.left    ? false
+                       : input.right ? true
+                                     : !data_.cheats.enabled(cheat);
+  setRetailCheatEnabled(cheat, enabled);
+  return PauseMenuCommand{
+      PauseCommandType::set_retail_cheat,
+      static_cast<std::uint32_t>(cheat),
+      enabled ? 1 : 0,
+  };
+}
+
+void PauseMenu::setMissionSelectUnlocked(bool enabled) noexcept {
+  mission_select_unlocked_ = enabled;
+  data_.cheats.stage_select = enabled;
+}
+
+void PauseMenu::setRetailCheatEnabled(RetailCheat cheat,
+                                      bool enabled) noexcept {
+  data_.cheats.set(cheat, enabled);
+  if (cheat == RetailCheat::stage_select) {
+    mission_select_unlocked_ = enabled;
+  }
 }
 
 PauseMenuCommand PauseMenu::updateMissionSelect(const PauseMenuInput &input) {
@@ -1063,6 +1106,10 @@ std::vector<PauseRenderCommand> PauseMenu::buildRenderCommands() const {
       case MapMarkerKind::player:
       case MapMarkerKind::objective:
         marker.color = PauseColorRole::map_highlight;
+        // This is the same semantic highlight used by the corresponding
+        // information-panel row. The renderer can therefore animate the map
+        // light and its label in one phase instead of flashing independently.
+        marker.selected = true;
         break;
       case MapMarkerKind::hostile:
         marker.color = PauseColorRole::warning;
@@ -1103,12 +1150,55 @@ std::vector<PauseRenderCommand> PauseMenu::buildRenderCommands() const {
       line.line_height = line_height;
     };
 
+    struct InformationEntry {
+      std::string text;
+      std::uint32_t id{};
+      bool highlighted{};
+    };
+
+    std::vector<InformationEntry> entries;
+    entries.push_back(
+        InformationEntry{localizeTextCopy("Current Location"), 0U,
+                         marker_on_page(MapMarkerKind::player, 0U)});
+    for (const auto &objective : data.mission.objectives) {
+      if (!objective.visible || objective.state != MissionEntryState::active) {
+        continue;
+      }
+      entries.push_back(InformationEntry{
+          localizeTextCopy(objective.text), objective.id,
+          marker_on_page(MapMarkerKind::objective, objective.id)});
+    }
+
+    const auto line_step = static_cast<std::int16_t>(expanded ? 9 : 7);
+    auto line_columns = std::size_t{18U};
+    if (russianLanguageActive()) {
+      const auto maximum_lines = std::max<std::size_t>(
+          1U, static_cast<std::size_t>(bounds.height / line_step));
+      // Russian objective copy is naturally longer than the retail English
+      // strings. Increase the logical line width only as far as necessary to
+      // retain every active objective. The renderer then condenses those
+      // individual rows to the physical panel width, preserving the original
+      // glyph height, colour and per-objective marker highlight.
+      constexpr std::array candidate_columns{18U, 20U, 22U, 24U, 28U,
+                                             32U, 36U, 42U, 56U, 96U};
+      for (const auto candidate : candidate_columns) {
+        const auto required_lines = std::accumulate(
+            entries.begin(), entries.end(), std::size_t{},
+            [candidate](std::size_t count, const InformationEntry &entry) {
+              return count + retailMapLines(entry.text, candidate).size();
+            });
+        line_columns = candidate;
+        if (required_lines <= maximum_lines) {
+          break;
+        }
+      }
+    }
+
     const auto add_entry = [&](std::string_view text, std::uint32_t id,
                                bool highlighted, std::int16_t &y) {
       const auto color =
           highlighted ? PauseColorRole::map_highlight : PauseColorRole::normal;
-      const auto line_step = static_cast<std::int16_t>(expanded ? 9 : 7);
-      auto lines = retailMapLines(text);
+      auto lines = retailMapLines(text, line_columns);
       const auto required_height = static_cast<std::int16_t>(
           lines.size() * static_cast<std::size_t>(line_step));
       if (y + required_height > bounds.y + bounds.height) {
@@ -1122,18 +1212,9 @@ std::vector<PauseRenderCommand> PauseMenu::buildRenderCommands() const {
       return true;
     };
 
-    const auto player_highlighted = marker_on_page(MapMarkerKind::player, 0U);
     auto y = bounds.y;
-    static_cast<void>(add_entry("Current Location", 0U, player_highlighted, y));
-
-    for (const auto &objective : data.mission.objectives) {
-      if (!objective.visible || objective.state != MissionEntryState::active ||
-          y + 7 > bounds.y + bounds.height) {
-        continue;
-      }
-      const auto highlighted =
-          marker_on_page(MapMarkerKind::objective, objective.id);
-      if (!add_entry(objective.text, objective.id, highlighted, y)) {
+    for (const auto &entry : entries) {
+      if (!add_entry(entry.text, entry.id, entry.highlighted, y)) {
         break;
       }
     }
@@ -1298,11 +1379,36 @@ std::vector<PauseRenderCommand> PauseMenu::buildRenderCommands() const {
     // reached missions until its held-button cheat opens the full table.
     for (std::size_t index = 0; index < option_labels.size(); ++index) {
       addMenu(option_labels[index], index, state.selection,
-              static_cast<std::int16_t>(51 + index * 18));
+              static_cast<std::int16_t>(47 + index * 16));
     }
     addInformation(PauseRenderKind::text, PauseRect{240, 44, 101, 60},
                    "Options\n" + data_.mission.location);
     addHint(PauseAcdLayout::hint, "%x select   %t back");
+    break;
+  }
+  case PauseScreen::cheats: {
+    addLeft(PauseRenderKind::title, PauseRect{56, 36, 157, 10}, "Cheats",
+            PauseColorRole::accent);
+    for (std::size_t index = 0; index < retail_cheat_count; ++index) {
+      const auto cheat = retailCheatAt(index);
+      const auto selected = index == state.selection;
+      const auto y = static_cast<std::int16_t>(51 + index * 21);
+      auto &item = addLeft(PauseRenderKind::menu_item,
+                           PauseRect{56, y, 126, 11},
+                           retailCheatDisplayName(cheat),
+                           selected ? PauseColorRole::selected
+                                    : PauseColorRole::normal,
+                           PauseTextAlignment::left);
+      item.id = static_cast<std::uint32_t>(index);
+      item.selected = selected;
+      addLeft(PauseRenderKind::text, PauseRect{184, y, 29, 11},
+              data_.cheats.enabled(cheat) ? "On" : "Off",
+              selected ? PauseColorRole::selected : PauseColorRole::normal,
+              PauseTextAlignment::right);
+    }
+    addInformation(PauseRenderKind::text, PauseRect{240, 44, 101, 60},
+                   "Cheats\nRetail Codes");
+    addHint(PauseAcdLayout::hint, "%x toggle   %t back");
     break;
   }
   case PauseScreen::mission_select: {
@@ -1502,19 +1608,18 @@ std::vector<PauseRenderCommand> PauseMenu::buildRenderCommands() const {
         asset.id = weapon.id;
       }
       if (state.expanded) {
-        addLeft(PauseRenderKind::title, PauseRect{66, 31, 143, 10},
-                weapon.name, PauseColorRole::accent);
+        addLeft(PauseRenderKind::title, PauseRect{66, 31, 143, 10}, weapon.name,
+                PauseColorRole::accent);
 
         const auto roman = [](std::uint8_t value) {
           return std::string(std::min<std::uint8_t>(value, 5U), 'I');
         };
-        const auto clip_size =
-            weapon.clip_size.empty() ? std::to_string(weapon.ammo)
-                                     : weapon.clip_size;
-        const auto maximum_rounds =
-            weapon.maximum_rounds.empty()
-                ? std::to_string(weapon.maximum_ammo)
-                : weapon.maximum_rounds;
+        const auto clip_size = weapon.clip_size.empty()
+                                   ? std::to_string(weapon.ammo)
+                                   : weapon.clip_size;
+        const auto maximum_rounds = weapon.maximum_rounds.empty()
+                                        ? std::to_string(weapon.maximum_ammo)
+                                        : weapon.maximum_rounds;
         const auto add_specification = [&](std::int16_t y,
                                            std::string_view label,
                                            std::string_view value) {
@@ -1541,14 +1646,14 @@ std::vector<PauseRenderCommand> PauseMenu::buildRenderCommands() const {
         auto y = std::int16_t{31};
         for (auto index = first; index < last; ++index) {
           const auto &entry = data_.weapons[index];
-          const auto item_width = static_cast<std::int16_t>(std::clamp(
-              originalHudTextWidth(entry.name) + 6, 24, 143));
-          auto &item = addLeft(
-              PauseRenderKind::menu_item, PauseRect{66, y, item_width, 11},
-              entry.name,
-              index == selected ? PauseColorRole::selected
-                                : (entry.available ? PauseColorRole::normal
-                                                   : PauseColorRole::muted));
+          const auto item_width = static_cast<std::int16_t>(
+              std::clamp(originalHudTextWidth(entry.name) + 6, 24, 143));
+          auto &item = addLeft(PauseRenderKind::menu_item,
+                               PauseRect{66, y, item_width, 11}, entry.name,
+                               index == selected
+                                   ? PauseColorRole::selected
+                                   : (entry.available ? PauseColorRole::normal
+                                                      : PauseColorRole::muted));
           item.id = static_cast<std::uint32_t>(index);
           item.selected = index == selected;
           item.enabled = entry.available;
@@ -1747,6 +1852,8 @@ std::string_view pauseScreenName(PauseScreen screen) noexcept {
     return "Briefing";
   case PauseScreen::options:
     return "Options";
+  case PauseScreen::cheats:
+    return "Cheats";
   case PauseScreen::sound:
     return "Sound";
   case PauseScreen::controller:

@@ -119,6 +119,7 @@ add_library(sf_game
     src/game/pause_menu_data.cpp
     src/game/player_controller.cpp
     src/game/retail_pause_map.cpp
+    src/game/retail_cheats.cpp
     src/game/state_stack.cpp
     src/game/supported_games.cpp
     src/game/system.cpp

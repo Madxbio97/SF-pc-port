@@ -87,7 +87,7 @@ runtime; rendering, platform integration and selected presentation systems are
 native. Bug reports should include the mission number, reproduction steps, GPU,
 screenshot and the generated log, but never a BIN/CUE image.
 
-## User data and developer unlock
+## User data and original cheats
 
 Saves and launcher settings are stored outside the installation directory:
 
@@ -96,9 +96,13 @@ Saves and launcher settings are stored outside the installation directory:
 ```
 
 The release archive contains no saves, settings or mission unlocks. Mission
-selection follows campaign progress. For development only, creating an empty file
-named `syphon_filter_cheats` beside `syphon_filter.exe` unlocks the mission list;
-that marker is intentionally excluded from source and release artifacts.
+selection normally follows campaign progress. The original PS1 button cheats are
+available in their original title/pause-menu contexts and their current state is
+shown under **Options > Cheats**. Creating an empty file
+named `syphon_filter_cheats` beside `syphon_filter.exe` enables every persistent
+cheat and unlocks the complete in-game mission list automatically. The launcher
+itself intentionally contains no mission or cheat controls; the marker is
+excluded from release artifacts.
 
 ## Controls
 

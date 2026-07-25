@@ -36,8 +36,12 @@ packaged directory structure. Re-extract the verified archive if they are missin
 ## Mission selection is locked
 
 This is expected on a clean profile. Missions unlock sequentially from campaign
-progress. A save on mission N unlocks missions 1 through N. The developer override
-requires a manually created `syphon_filter_cheats` marker beside the executable.
+progress. A save on mission N unlocks missions 1 through N. The original stage
+select code is entered inside **Pause > Options > Select Mission**. A manually
+created `syphon_filter_cheats` marker beside the executable enables the complete
+in-game list and all persistent retail cheats. Their state appears under
+**Pause > Options > Cheats**. The launcher never exposes mission selection or
+cheat controls.
 
 ## I need a clean profile
 

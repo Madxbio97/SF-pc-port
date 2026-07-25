@@ -35,6 +35,13 @@ readLocalizedAsset(std::string_view relative_path) noexcept;
 // dynamic numeric values) and owns the returned storage.
 [[nodiscard]] std::string localizeTextCopy(std::string_view english);
 
+// Retail can expose a gameplay status while its type-on animation has only
+// submitted a prefix of the source glyphs. Resolve known HUD prefixes back to
+// their complete English source so localization preserves both the intended
+// text and the original reveal timing.
+[[nodiscard]] std::optional<std::string_view>
+completeGameplayTextSource(std::string_view observed) noexcept;
+
 struct LocalizedMissionBriefing {
   std::string location;
   std::string mission_title;

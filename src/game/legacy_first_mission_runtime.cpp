@@ -307,13 +307,66 @@ bool LegacyFirstMissionRuntime::activateRetailAllWeaponsCheat() noexcept {
   }
   try {
     if (vm_->invoke(all_weapons_entry, {}, execution_budget).completed() &&
-        publishPresentationFrame()) {
+        publishPresentationFrame() && missionBridge()) {
+      retail_infinite_ammo_ = missionBridge()->inventory;
       return true;
     }
   } catch (...) {
   }
   markFault();
   return false;
+}
+
+bool LegacyFirstMissionRuntime::setRetailAllWeaponsCheat(
+    bool enabled) noexcept {
+  if (enabled) {
+    return activateRetailAllWeaponsCheat();
+  }
+  if (!ready_ || finished_ || faulted_ || !vm_) {
+    return false;
+  }
+  // The retail grant itself is one-way. Turning the menu switch off stops
+  // only the host-maintained infinite-ammunition refill and leaves weapons
+  // already granted by the original routine in the inventory.
+  retail_infinite_ammo_.reset();
+  return true;
+}
+
+bool LegacyFirstMissionRuntime::setRetailHardMode(bool enabled) noexcept {
+  if (!ready_ || finished_ || faulted_ || !vm_) {
+    return false;
+  }
+  return vm_->setRetailHardMode(enabled);
+}
+
+bool LegacyFirstMissionRuntime::setRetailOneShotKills(bool enabled) noexcept {
+  if (!ready_ || finished_ || faulted_ || !vm_) {
+    return false;
+  }
+  return vm_->setRetailOneShotKills(enabled);
+}
+
+bool LegacyFirstMissionRuntime::setRetailWeakEnemies(bool enabled) noexcept {
+  if (!ready_ || finished_ || faulted_ || !vm_) {
+    return false;
+  }
+  retail_weak_enemies_ = enabled;
+  const auto *mission = missionBridge();
+  return mission != nullptr && maintainRetailCheats(*mission);
+}
+
+bool LegacyFirstMissionRuntime::activateRetailMovieTheaterCheat() noexcept {
+  constexpr std::uint32_t retail_transition_entry = 0x800177ccU;
+  constexpr std::uint64_t execution_budget = 5'000'000U;
+  if (!ready_ || finished_ || faulted_ || !vm_ || mission_index_ != 0U) {
+    return false;
+  }
+  // The retail transition vector is spatially selected by the mission. At the
+  // Georgia Street theater door this is the same resident call issued by
+  // MENU.OVL; elsewhere it fails closed without inventing a native teleport.
+  const std::array<std::uint32_t, 1U> arguments{0U};
+  return vm_->invoke(retail_transition_entry, arguments, execution_budget)
+      .completed();
 }
 
 bool LegacyFirstMissionRuntime::applyCampaignCarryState(
@@ -518,6 +571,8 @@ void LegacyFirstMissionRuntime::reset() noexcept {
     checkpoint_.reset();
     host_pad_state_ = {};
     latched_pad_buttons_ = 0U;
+    retail_infinite_ammo_.reset();
+    retail_weak_enemies_ = false;
     guest_frame_ = 0U;
     native_update_phase_ = 0U;
     consecutive_renderer_snapshot_replays_ = 0U;
@@ -681,6 +736,10 @@ void LegacyFirstMissionRuntime::advanceHostUpdate() noexcept {
       markFault();
       return;
     }
+    if (!maintainRetailCheats(*mission)) {
+      markFault();
+      return;
+    }
     classifyTransitionRequest(frame.state_before, frame.state_after, *mission);
     ++guest_frame_;
     if (!publishPresentationFrame()) {
@@ -691,6 +750,41 @@ void LegacyFirstMissionRuntime::advanceHostUpdate() noexcept {
   } catch (...) {
     markFault();
   }
+}
+
+bool LegacyFirstMissionRuntime::maintainRetailCheats(
+    const LegacyMissionBridgeState &mission) noexcept {
+  if (!vm_) {
+    return false;
+  }
+  if (retail_infinite_ammo_) {
+    auto inventory = mission.inventory;
+    inventory.owned_weapons |= retail_infinite_ammo_->owned_weapons;
+    for (std::size_t weapon = 0U; weapon < inventory.magazines.size();
+         ++weapon) {
+      inventory.magazines[weapon] = std::max(
+          inventory.magazines[weapon], retail_infinite_ammo_->magazines[weapon]);
+      inventory.reserves[weapon] = std::max(
+          inventory.reserves[weapon], retail_infinite_ammo_->reserves[weapon]);
+    }
+    if (!vm_->writeHostInventoryState(inventory)) {
+      return false;
+    }
+  }
+  if (retail_weak_enemies_ && bridge()) {
+    std::vector<std::uint32_t> enemies;
+    for (const auto &object : bridge()->objects) {
+      if (object.slot != static_cast<std::uint32_t>(mission.player_slot) &&
+          object.ai_controller != 0U && object.health > 1 &&
+          object.target_slot == mission.player_slot) {
+        enemies.push_back(object.slot);
+      }
+    }
+    if (!enemies.empty() && !vm_->weakenRetailEnemySlots(enemies)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 bool LegacyFirstMissionRuntime::setRetailAudioVolumes(

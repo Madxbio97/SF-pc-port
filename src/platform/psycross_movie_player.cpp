@@ -554,7 +554,8 @@ bool waitVideoFrame(
     MoviePlaybackClock& clock,
     PADRAW& pad,
     std::uint16_t& previous_buttons,
-    MovieAudioPlayer& audio) {
+    MovieAudioPlayer& audio,
+    bool allow_skip) {
     video_texture.upload(frame);
     if (!clock.running) {
         clock.start();
@@ -564,7 +565,7 @@ bool waitVideoFrame(
         const auto pressed = updateInput(pad, previous_buttons);
         audio.update();
         presentMovieFrame(video_texture);
-        if ((pressed & skip_buttons) != 0) {
+        if (allow_skip && (pressed & skip_buttons) != 0) {
             return false;
         }
     } while (clock.elapsedSeconds() < end_time_seconds);
@@ -603,7 +604,8 @@ bool holdVideoFrame(
     double duration_seconds,
     PADRAW& pad,
     std::uint16_t& previous_buttons,
-    MovieAudioPlayer& audio) {
+    MovieAudioPlayer& audio,
+    bool allow_skip) {
     video_texture.upload(frame);
     const auto frequency = SDL_GetPerformanceFrequency();
     const auto started = SDL_GetPerformanceCounter();
@@ -611,7 +613,7 @@ bool holdVideoFrame(
         const auto pressed = updateInput(pad, previous_buttons);
         audio.update();
         presentMovieFrame(video_texture);
-        if ((pressed & skip_buttons) != 0) {
+        if (allow_skip && (pressed & skip_buttons) != 0) {
             return false;
         }
     } while (frequency != 0U &&
@@ -652,13 +654,14 @@ bool drainAudio(
     MovieVideoTexture& video_texture,
     PADRAW& pad,
     std::uint16_t& previous_buttons,
-    MovieAudioPlayer& audio) {
+    MovieAudioPlayer& audio,
+    bool allow_skip) {
     constexpr int maximum_drain_frames = 120;
     constexpr double drain_frame_seconds = 1.0 / 60.0;
     for (int index = 0; index < maximum_drain_frames && !audio.empty(); ++index) {
         if (!holdVideoFrame(
                 frame, video_texture, drain_frame_seconds, pad,
-                previous_buttons, audio)) {
+                previous_buttons, audio, allow_skip)) {
             return false;
         }
     }
@@ -669,7 +672,8 @@ bool playMovieData(
     std::string_view path,
     std::vector<std::byte> sectors,
     PADRAW& pad,
-    std::uint16_t& previous_buttons) {
+    std::uint16_t& previous_buttons,
+    bool allow_skip = true) {
     std::cout << "Playing " << path << '\n';
     // OpenAL source state is stream-local.  Reusing a stopped source across
     // consecutive STR files can retain an implementation-defined queue/
@@ -704,14 +708,16 @@ bool playMovieData(
                 clock,
                 pad,
                 previous_buttons,
-                audio)) {
+                audio,
+                allow_skip)) {
             audio.reset();
             return false;
         }
     }
     if (has_frame) {
         if (!drainAudio(
-                last_frame, video_texture, pad, previous_buttons, audio)) {
+                last_frame, video_texture, pad, previous_buttons, audio,
+                allow_skip)) {
             audio.reset();
             return false;
         }
@@ -723,16 +729,20 @@ bool playMovieData(
 bool playMovie(
     game::DiscMovie& movie,
     PADRAW& pad,
-    std::uint16_t& previous_buttons) {
+    std::uint16_t& previous_buttons,
+    bool allow_skip = true) {
     return playMovieData(
-        movie.path, std::move(movie.sectors.bytes), pad, previous_buttons);
+        movie.path, std::move(movie.sectors.bytes), pad, previous_buttons,
+        allow_skip);
 }
 
 bool playMovie(
     const game::DiscMovie& movie,
     PADRAW& pad,
-    std::uint16_t& previous_buttons) {
-    return playMovieData(movie.path, movie.sectors.bytes, pad, previous_buttons);
+    std::uint16_t& previous_buttons,
+    bool allow_skip = true) {
+    return playMovieData(
+        movie.path, movie.sectors.bytes, pad, previous_buttons, allow_skip);
 }
 
 bool drainOverlayAudio(
@@ -817,12 +827,18 @@ bool playBackgroundPass(
 std::uint16_t PsyCrossMoviePlayer::playStandalone(
     const game::DiscMovie& movie,
     PADRAW& pad,
-    std::uint16_t previous_buttons) {
+    std::uint16_t previous_buttons,
+    StandaloneMovieSkipPolicy skip_policy) {
     PsyX_Log_Info("Standalone movie entered: %s\n", movie.path.c_str());
     const ScopedPsyCrossVideoMode video_mode{movie_video_mode, gameplay_video_mode};
     PsyCrossAudioContext session;
-    static_cast<void>(playMovie(movie, pad, previous_buttons));
-    PsyX_Log_Info("Standalone movie finished: %s\n", movie.path.c_str());
+    const auto completed = playMovie(
+        movie, pad, previous_buttons,
+        skip_policy == StandaloneMovieSkipPolicy::allow);
+    PsyX_Log_Info(
+        "Standalone movie %s: %s\n",
+        completed ? "finished" : "skipped",
+        movie.path.c_str());
     return previous_buttons;
 }
 

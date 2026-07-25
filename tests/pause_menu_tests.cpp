@@ -2,6 +2,7 @@
 #include "sf/game/mission.hpp"
 #include "sf/game/pause_menu.hpp"
 #include "sf/game/pause_menu_data.hpp"
+#include "sf/game/retail_cheats.hpp"
 
 #include <algorithm>
 #include <array>
@@ -234,13 +235,15 @@ void testOriginalRootComposition() {
     return command.kind == PauseRenderKind::map_marker &&
            command.id ==
                static_cast<std::uint32_t>(sf::game::MapMarkerKind::objective) &&
-           command.color == sf::game::PauseColorRole::map_highlight;
+           command.color == sf::game::PauseColorRole::map_highlight &&
+           command.selected;
   }));
   require(std::ranges::any_of(commands, [](const auto &command) {
     return command.kind == PauseRenderKind::map_marker &&
            command.id ==
                static_cast<std::uint32_t>(sf::game::MapMarkerKind::player) &&
-           command.color == sf::game::PauseColorRole::map_highlight;
+           command.color == sf::game::PauseColorRole::map_highlight &&
+           command.selected;
   }));
   require(std::ranges::any_of(commands, [](const auto &command) {
     return command.kind == PauseRenderKind::text && command.id == 1U &&
@@ -298,6 +301,44 @@ void testRetailMapInformationWrapsIntoTheWindow() {
   require(information.back()->bounds.y + information.back()->bounds.height ==
           PauseAcdLayout::information_content.y +
               PauseAcdLayout::information_content.height);
+}
+
+void testRussianMapObjectivesFitInsideInformationPanel() {
+  sf::game::setGameLanguage(sf::game::GameLanguage::russian_vit);
+  auto menu = makeMenu();
+  auto data = menu.data();
+  data.mission.objectives = {
+      {1U, "Avoid damaging viral delivery systems or explosive bombs"},
+      {2U, "Protect CBDC bomb squad"},
+      {3U, "Eliminate Kravitch and destroy comm. array"},
+      {4U, "Turn off power to terminal security doors"},
+  };
+  data.mission.map.markers = {
+      {sf::game::MapMarkerKind::player, 0.5F, 0.5F, 0.0F, true, 0U, {}, 0U},
+      {sf::game::MapMarkerKind::objective, 0.7F, 0.8F, 0.0F, true, 1U, {}, 0U},
+      {sf::game::MapMarkerKind::objective, 0.4F, 0.2F, 0.0F, true, 2U, {}, 0U},
+      {sf::game::MapMarkerKind::objective, 0.2F, 0.6F, 0.0F, true, 3U, {}, 0U},
+      {sf::game::MapMarkerKind::objective, 0.8F, 0.4F, 0.0F, true, 4U, {}, 0U},
+  };
+  menu.reset(std::move(data));
+
+  std::array<bool, 5U> visible_entries{};
+  auto rendered_lines = std::size_t{};
+  for (const auto &command : menu.buildRenderCommands()) {
+    if (command.kind != PauseRenderKind::text ||
+        command.panel != PausePanelRole::right_information) {
+      continue;
+    }
+    require(contains(PauseAcdLayout::information_content, command.bounds));
+    require(command.id < visible_entries.size());
+    require(command.text.find('?') == std::string::npos);
+    visible_entries[command.id] = true;
+    ++rendered_lines;
+  }
+  require(rendered_lines <= 10U);
+  require(std::ranges::all_of(visible_entries,
+                              [](bool visible) { return visible; }));
+  sf::game::setGameLanguage(sf::game::GameLanguage::english);
 }
 
 void testOptionsPreviewIsImmediatelyComplete() {
@@ -359,6 +400,7 @@ void testRetailOptionsAndControllerOrder() {
       "Game Brightness",
       "Screen Centering",
       "Controller",
+      "Cheats",
   };
   const auto options = menu.buildRenderCommands();
   for (std::size_t index = 0; index < option_labels.size(); ++index) {
@@ -366,7 +408,8 @@ void testRetailOptionsAndControllerOrder() {
         options, [index, &option_labels](const auto &command) {
           return command.kind == PauseRenderKind::menu_item &&
                  command.panel == PausePanelRole::left_content &&
-                 command.id == index && command.text == option_labels[index];
+                 command.id == index && command.text == option_labels[index] &&
+                 contains(PauseAcdLayout::left_content, command.bounds);
         }));
   }
 
@@ -389,6 +432,42 @@ void testRetailOptionsAndControllerOrder() {
                  command.text.starts_with(controller_prefixes[index]);
         }));
   }
+}
+
+void testRetailCheatsMenu() {
+  auto menu = makeMenu();
+  openRootSection(menu, 5);
+  moveNext(menu, 8);
+  require(!menu.update({.confirm = true}));
+  settleTransition(menu);
+  require(menu.screen() == PauseScreen::cheats);
+  requireRetailComposition(menu);
+
+  constexpr std::array labels{
+      "All Weapons + Infinite Ammo", "Hard Mode",    "One-Shot Kills",
+      "Stage Select",                "Weak Enemies", "Movie Theater",
+  };
+  const auto commands = menu.buildRenderCommands();
+  for (std::size_t index = 0; index < labels.size(); ++index) {
+    require(std::ranges::any_of(
+        commands, [index, &labels](const auto &command) {
+          return command.kind == PauseRenderKind::menu_item &&
+                 command.panel == PausePanelRole::left_content &&
+                 command.id == index && command.text == labels[index] &&
+                 contains(PauseAcdLayout::left_content, command.bounds);
+        }));
+  }
+
+  const auto enabled = menu.update({.confirm = true});
+  require(enabled.type == sf::game::PauseCommandType::set_retail_cheat);
+  require(enabled.subject ==
+              static_cast<std::uint32_t>(sf::game::RetailCheat::all_weapons) &&
+          enabled.value == 1 &&
+          menu.data().cheats.enabled(sf::game::RetailCheat::all_weapons));
+  const auto disabled = menu.update({.left = true});
+  require(disabled.type == sf::game::PauseCommandType::set_retail_cheat &&
+          disabled.value == 0 &&
+          !menu.data().cheats.enabled(sf::game::RetailCheat::all_weapons));
 }
 
 void testEverySectionKeepsAcdComposition() {
@@ -822,12 +901,11 @@ void testWeaponLabelsAndControllerRecovery() {
   require(!menu.update({.confirm = true}));
   weapon_commands = menu.buildRenderCommands();
   for (const auto label : {"Fire Rate", "Damage", "Clip Size", "Max Rounds"}) {
-    require(std::ranges::any_of(
-        weapon_commands, [label](const auto &command) {
-          return command.kind == PauseRenderKind::text &&
-                 command.panel == PausePanelRole::left_content &&
-                 command.text == label;
-        }));
+    require(std::ranges::any_of(weapon_commands, [label](const auto &command) {
+      return command.kind == PauseRenderKind::text &&
+             command.panel == PausePanelRole::left_content &&
+             command.text == label;
+    }));
   }
 
   menu = makeMenu();
@@ -1029,29 +1107,47 @@ void testCompoundRussianMenuLocalization() {
   require(sf::game::localizeTextCopy("Gas Granade") != "Gas Granade");
   require(sf::game::localizeTextCopy("N/A") != "N/A");
   require(sf::game::localizeTextCopy("Infinite") != "Infinite");
-  for (const auto description : {
-           "The 9mm handgun is the standard issue side-arm for NATO and all "
-           "five branches of the US armed forces since passing the 1979 MRBF "
-           "(Mean Rounds Before operational Failure) performance test, "
-           "expending 35,000 rounds, six times the pistol's service life.",
-           "Primarily used as a stealth weapon against multiple targets, this "
-           "grenade releases trace amounts of Soman nerve agent into the air. "
-           "The gas quickly dissipates, but not before rendering victims "
-           "unconscious. If no antidote is administered, death follows within "
-           "15 minutes.",
-           "These incendiary blocks are made of a putty-like material which "
-           "can be molded to the user's liking. The C4 explosive putty is then "
-           "wired to a fuse and a friction igniter, allowing the user to "
-           "detonate the explosive from a distant or protected position.",
-           "The overly heavy recoil of this 12 gauge shotgun is more than "
-           "compensated for by it's unparalleled stopping power and its "
-           "recoil-inertia operation which is significantly faster than the "
-           "gas operated system found in most autoloading shotguns.",
-           "The 12-gauge modified choke shotgun is standard issue for the DEA, "
-           "FBI and USSS. In firing tests using tactical 00 shot with nine lead "
-           "on an ISCP regulation target at 25 yards, the payload was delivered "
-           "into the \"A\" kill zone with limited collateral damage.",
-       }) {
+  for (const auto message :
+       {"Campaign Complete", "CAMPAIGN COMPLETED", "CAMPAING COMPLETED"}) {
+    const auto translated = sf::game::localizeTextCopy(message);
+    require(translated != message &&
+            translated.find("Campaign") == std::string::npos &&
+            translated.find("CAMPAIGN") == std::string::npos &&
+            translated.find("CAMPAING") == std::string::npos);
+  }
+  const auto completed_slot =
+      sf::game::localizeTextCopy("Slot 2  Campaign Complete");
+  require(completed_slot.find("Slot") == std::string::npos &&
+          completed_slot.find("Campaign") == std::string::npos);
+  require(sf::game::completeGameplayTextSource("Scope Pwr O") ==
+          std::optional<std::string_view>{"Scope Pwr On"});
+  require(sf::game::completeGameplayTextSource("No Target Avail") ==
+          std::optional<std::string_view>{"No Target Available"});
+  require(!sf::game::completeGameplayTextSource("No"));
+  for (
+      const auto description : {
+          "The 9mm handgun is the standard issue side-arm for NATO and all "
+          "five branches of the US armed forces since passing the 1979 MRBF "
+          "(Mean Rounds Before operational Failure) performance test, "
+          "expending 35,000 rounds, six times the pistol's service life.",
+          "Primarily used as a stealth weapon against multiple targets, this "
+          "grenade releases trace amounts of Soman nerve agent into the air. "
+          "The gas quickly dissipates, but not before rendering victims "
+          "unconscious. If no antidote is administered, death follows within "
+          "15 minutes.",
+          "These incendiary blocks are made of a putty-like material which "
+          "can be molded to the user's liking. The C4 explosive putty is then "
+          "wired to a fuse and a friction igniter, allowing the user to "
+          "detonate the explosive from a distant or protected position.",
+          "The overly heavy recoil of this 12 gauge shotgun is more than "
+          "compensated for by it's unparalleled stopping power and its "
+          "recoil-inertia operation which is significantly faster than the "
+          "gas operated system found in most autoloading shotguns.",
+          "The 12-gauge modified choke shotgun is standard issue for the DEA, "
+          "FBI and USSS. In firing tests using tactical 00 shot with nine lead "
+          "on an ISCP regulation target at 25 yards, the payload was delivered "
+          "into the \"A\" kill zone with limited collateral damage.",
+      }) {
     const auto translated = sf::game::localizeTextCopy(description);
     require(translated != description &&
             translated.find('?') == std::string::npos);
@@ -1062,17 +1158,17 @@ void testCompoundRussianMenuLocalization() {
           confirmation.find('?') == confirmation.size() - 1U);
   for (const auto message :
        {"9mm taken", "9 mm taken", "Sniper Rifle bullet taken",
-        "Nightvision Rifle shell taken", "Grenade taken",
-        "Gas Grenade taken", "Gas Granade taken", "GAS GRENADE taken",
-        "Objective Updated", "Objective Complete", "OBJECTIVE COMPLETE"}) {
+        "Nightvision Rifle shell taken", "Grenade taken", "Gas Grenade taken",
+        "Gas Granade taken", "GAS GRENADE taken", "Objective Updated",
+        "Objective Complete", "OBJECTIVE COMPLETE"}) {
     const auto translated = sf::game::localizeTextCopy(message);
     require(translated != message && translated.find('?') == std::string::npos);
   }
   const auto gas_grenade_pickup =
       sf::game::localizeTextCopy("Gas Grenade taken");
-  for (const auto variant : {"GAS GRENADE TAKEN", "GAS GRANADE TAKEN",
-                             "Gas Grenades taken", "Gas Granades Taken",
-                             "Gas Grenade  taken"}) {
+  for (const auto variant :
+       {"GAS GRENADE TAKEN", "GAS GRANADE TAKEN", "Gas Grenades taken",
+        "Gas Granades Taken", "Gas Grenade  taken"}) {
     require(sf::game::localizeTextCopy(variant) == gas_grenade_pickup);
   }
   for (const auto message : {
@@ -1280,6 +1376,41 @@ void testFormattedMissionLocalization() {
   std::filesystem::remove_all(root);
 }
 
+void testRetailCheatChordsAndContexts() {
+  using sf::game::RetailCheat;
+  using sf::game::RetailPauseCheatContext;
+  sf::game::RetailCheatState state;
+  state.enableAll();
+  for (std::size_t index = 0U; index < sf::game::retail_cheat_count; ++index) {
+    require(state.enabled(sf::game::retailCheatAt(index)));
+  }
+  state.set(RetailCheat::hard_mode, false);
+  require(!state.hard_mode);
+
+  const auto hard = sf::game::detectRetailTitleCheat(0xe681U, true);
+  require(hard && *hard == RetailCheat::hard_mode);
+  require(!sf::game::detectRetailTitleCheat(0xe681U, false));
+
+  const auto all_weapons = sf::game::detectRetailPauseCheat(
+      0xe320U, RetailPauseCheatContext::weapons_section);
+  require(all_weapons && *all_weapons == RetailCheat::all_weapons);
+  require(!sf::game::detectRetailPauseCheat(
+      0xe320U, RetailPauseCheatContext::map));
+
+  const auto stage_select = sf::game::detectRetailPauseCheat(
+      0xed00U, RetailPauseCheatContext::select_mission);
+  require(stage_select && *stage_select == RetailCheat::stage_select);
+  require(!sf::game::detectRetailPauseCheat(
+      0xfd00U, RetailPauseCheatContext::select_mission));
+
+  const auto weak = sf::game::detectRetailPauseCheat(
+      0x4c20U, RetailPauseCheatContext::map);
+  const auto theater = sf::game::detectRetailPauseCheat(
+      0x4920U, RetailPauseCheatContext::map);
+  require(weak && *weak == RetailCheat::weak_enemies);
+  require(theater && *theater == RetailCheat::movie_theater);
+}
+
 } // namespace
 
 int main() {
@@ -1287,9 +1418,11 @@ int main() {
     testRetailLayoutContract();
     testOriginalRootComposition();
     testRetailMapInformationWrapsIntoTheWindow();
+    testRussianMapObjectivesFitInsideInformationPanel();
     testOptionsPreviewIsImmediatelyComplete();
     testRetailControllerBindingsAreVisible();
     testRetailOptionsAndControllerOrder();
+    testRetailCheatsMenu();
     testEverySectionKeepsAcdComposition();
     testNestedScreensStayInsideLeftPanel();
     testAdjustmentScreensStayInsideLeftPanel();
@@ -1309,6 +1442,7 @@ int main() {
     testCompoundRussianMenuLocalization();
     testProofreadRussianCampaignTextIsBuiltIn();
     testFormattedMissionLocalization();
+    testRetailCheatChordsAndContexts();
   } catch (const std::exception &error) {
     std::fprintf(stderr, "%s\n", error.what());
     return 1;

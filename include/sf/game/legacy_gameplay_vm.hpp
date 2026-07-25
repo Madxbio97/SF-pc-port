@@ -1043,6 +1043,12 @@ public:
       const LegacyInventoryBridgeState &state,
       const LegacyNativeMissionBridgeProfile &profile =
           syphonFilterUsaV11NativeMissionBridgeProfile()) noexcept;
+  [[nodiscard]] bool setRetailHardMode(bool enabled) noexcept;
+  [[nodiscard]] bool setRetailOneShotKills(bool enabled) noexcept;
+  [[nodiscard]] bool
+  weakenRetailEnemySlots(std::span<const std::uint32_t> slots,
+                         const LegacyGameplayBridgeProfile &profile =
+                             syphonFilterUsaV11GameplayBridgeProfile()) noexcept;
   [[nodiscard]] bool
   synchronizeHostRoom(std::int16_t room,
                       const LegacyNativeMissionBridgeProfile &profile =

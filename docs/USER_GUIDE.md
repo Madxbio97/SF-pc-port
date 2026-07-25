@@ -45,7 +45,7 @@ remain unchanged.
 
 Select **DEPLOY** to save the settings and start the game.
 
-## Saves and mission selection
+## Saves, mission selection and retail cheats
 
 User data is stored in:
 
@@ -57,15 +57,33 @@ Campaign progress remembers the highest unlocked mission. Replaying an earlier
 mission does not erase later unlocks. In a clean installation only legitimately
 unlocked missions are selectable.
 
-For development only, an empty `syphon_filter_cheats` file beside the executable
-unlocks the complete mission list. Public releases and this repository exclude
-that file.
+The launcher contains no mission selector or cheat controls. In-game cheat state
+is visible and can be switched under **Pause > Options > Cheats**. The original
+PS1 codes also work in their retail contexts:
+
+- **All weapons / infinite ammo:** pause, highlight **Weapons**, hold
+  Right + L2 + R2 + Square + Circle + X.
+- **Hard mode:** highlight **New Game**, hold
+  Left + L1 + R2 + Select + Square + Circle + X.
+- **One-shot kills:** pause, open **Weapons**, highlight **Silenced 9mm**, hold
+  Left + Select + Square + X + L1 + R2.
+- **Stage select:** pause, open **Options**, highlight **Select Mission**, hold
+  Left + L1 + R1 + Select + Square + X.
+- **Weak enemies:** pause, highlight **Map**, hold Right + L1 + R1 + X.
+- **Movie theater:** at the Georgia Street theater door, pause, highlight
+  **Map**, hold L2 + R1 + X + Right.
+
+The documented PAL aliases are accepted as well. For development, an empty
+`syphon_filter_cheats` file beside the executable enables all persistent modes
+and the complete in-game mission list without exposing any launcher controls.
+Public releases and this repository exclude that file.
 
 ## Pause menu
 
 Open the in-game menu with Escape or Enter. The active page reproduces the PS1
 map/objective/parameter/briefing/weapon/options structure. Opening the menu mutes
 world audio but menu sounds remain active; closing it restores the previous mix.
+The Options page includes a Cheats screen for all six restored retail modes.
 
 Map pages show the current position on the correct layer and active objectives
 with highlighted indicators. Weapon details include description, ammunition,

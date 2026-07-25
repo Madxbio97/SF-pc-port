@@ -18,6 +18,7 @@
 #include "sf/game/mission.hpp"
 #include "sf/game/pause_menu.hpp"
 #include "sf/game/pause_menu_data.hpp"
+#include "sf/game/retail_cheats.hpp"
 #include "sf/platform/player_input.hpp"
 #include "sf/platform/stable_frame_vector.hpp"
 
@@ -9044,6 +9045,37 @@ std::string reconstructOriginalHudText(
   return result;
 }
 
+std::string uppercaseAscii(std::string_view text) {
+  auto result = std::string{text};
+  for (auto &character : result) {
+    if (character >= 'a' && character <= 'z') {
+      character = static_cast<char>(character - 'a' + 'A');
+    }
+  }
+  return result;
+}
+
+std::optional<std::string> rifleScopeEnglishSource(
+    const game::LegacyUiMessageBridgeState &message) {
+  if (!game::russianLanguageActive()) {
+    return std::nullopt;
+  }
+  const auto resolve = [](std::string_view observed)
+      -> std::optional<std::string> {
+    if (observed.empty()) {
+      return std::nullopt;
+    }
+    if (const auto completed = game::completeGameplayTextSource(observed)) {
+      return std::string{*completed};
+    }
+    return std::nullopt;
+  };
+  if (auto source = resolve(message.text)) {
+    return source;
+  }
+  return resolve(reconstructOriginalHudText(message.glyphs));
+}
+
 bool drawBoundKeyboardMousePrompt(
     const HudTextureAtlas &textures,
     const game::LegacyUiMessageBridgeState &message,
@@ -9098,29 +9130,47 @@ bool drawBoundKeyboardMousePrompt(
 bool drawLocalizedGameplayMessage(
     const HudTextureAtlas &textures,
     const game::LegacyUiMessageBridgeState &message, int offset_x, int offset_y,
-    const game::LegacyUiBackdropBridgeState *layout_backdrop) {
-  if (!game::russianLanguageActive() || message.glyphs.empty()) {
+    const game::LegacyUiBackdropBridgeState *layout_backdrop,
+    std::string_view forced_english = {}) {
+  if (message.glyphs.empty() ||
+      (!game::russianLanguageActive() && forced_english.empty())) {
     return false;
   }
-  auto source = message.text;
-  auto localized = game::localizeTextCopy(source);
-  if (source.empty() || localized == source) {
-    auto reconstructed = reconstructOriginalHudText(message.glyphs);
-    auto reconstructed_localized = game::localizeTextCopy(reconstructed);
-    if (reconstructed.empty() || reconstructed_localized == reconstructed) {
+  std::string source;
+  std::string localized;
+  const auto resolve = [&](std::string_view observed) {
+    if (observed.empty()) {
       return false;
     }
-    source = std::move(reconstructed);
-    localized = std::move(reconstructed_localized);
-  }
-  if (localized == source) {
-    return false;
+    source = std::string{observed};
+    localized = game::localizeTextCopy(source);
+    if (localized != source) {
+      return true;
+    }
+    const auto completed = game::completeGameplayTextSource(observed);
+    if (!completed) {
+      return false;
+    }
+    source = std::string{*completed};
+    localized = game::localizeTextCopy(source);
+    return localized != source;
+  };
+  if (!forced_english.empty()) {
+    source = std::string{forced_english};
+    // The ViT atlas intentionally replaces lowercase ASCII cells with
+    // Cyrillic capitals. Rifle scopes retain retail English, so use the
+    // untouched uppercase ASCII cells instead of sampling those remapped
+    // slots and producing mixed-language garbage.
+    localized = uppercaseAscii(forced_english);
+  } else {
+    if (!resolve(message.text) &&
+        !resolve(reconstructOriginalHudText(message.glyphs))) {
+      return false;
+    }
   }
 
   const auto source_glyph_count =
-      std::max(std::size_t{1U}, message.text.empty()
-                                    ? message.glyphs.size()
-                                    : originalHudDrawableGlyphCount(source));
+      std::max(std::size_t{1U}, originalHudDrawableGlyphCount(source));
   const auto localized_glyph_count = originalHudDrawableGlyphCount(localized);
   if (source_glyph_count == 0U || localized_glyph_count == 0U) {
     return false;
@@ -10111,8 +10161,12 @@ void drawGameplayHud(const HudTextureAtlas &textures,
                 status_backdrop != gameplay.legacyUiMessages().end()
             ? &*status_backdrop->backdrop
             : nullptr;
-    if (!drawLocalizedGameplayMessage(textures, message, offset_x, offset_y,
-                                      layout_backdrop) &&
+    const auto scope_english =
+        scoped ? rifleScopeEnglishSource(message) : std::nullopt;
+    if (!drawLocalizedGameplayMessage(
+            textures, message, offset_x, offset_y, layout_backdrop,
+            scope_english ? std::string_view{*scope_english}
+                          : std::string_view{}) &&
         !drawBoundKeyboardMousePrompt(textures, message, bindings, offset_x,
                                       offset_y)) {
       drawRetailUiGlyphs(textures, message.glyphs, offset_x, offset_y);
@@ -10185,6 +10239,25 @@ PauseRgb pauseColor(game::PauseColorRole role) noexcept {
     return {255U, 142U, 24U};
   }
   return {110U, 130U, 200U};
+}
+
+PauseRgb pauseMapHighlightColor(PauseRgb color) noexcept {
+  // MENU.OVL's objective light is periodic, but tying its hard on/off state to
+  // host frames made it flash faster at 60/120/240 FPS. Drive one gentle
+  // triangular glow from wall time instead: the marker never disappears and
+  // its matching list entry uses exactly the same phase.
+  constexpr std::uint64_t step_ms = 50U;
+  constexpr std::uint64_t period_steps = 32U;
+  constexpr std::uint64_t half_period = period_steps / 2U;
+  const auto step = (SDL_GetTicks64() / step_ms) % period_steps;
+  const auto triangle = step <= half_period ? step : period_steps - step;
+  const auto intensity = 196U + static_cast<unsigned int>(triangle) * 59U /
+                                    static_cast<unsigned int>(half_period);
+  const auto modulate = [intensity](std::uint8_t channel) {
+    return static_cast<std::uint8_t>(static_cast<unsigned int>(channel) *
+                                     intensity / 255U);
+  };
+  return {modulate(color.red), modulate(color.green), modulate(color.blue)};
 }
 
 void drawPauseFontRegion(const assets::TimImage &image, int source_x,
@@ -10972,10 +11045,15 @@ bool drawPauseMenu(const game::PauseMenu &menu,
   interface_textures.restoreFont();
   const auto animated_section = animatedSectionSelection(menu);
   const auto animated_item = animatedItemSelection(menu, commands);
+  const auto map_highlight =
+      pauseMapHighlightColor(pauseColor(game::PauseColorRole::map_highlight));
 
   for (const auto &command : commands) {
     const auto command_bounds = animatedScreenCommandBounds(menu, command);
-    const auto color = pauseColor(command.color);
+    const auto color =
+        command.selected && command.color == game::PauseColorRole::map_highlight
+            ? map_highlight
+            : pauseColor(command.color);
     switch (command.kind) {
     case game::PauseRenderKind::dim_background:
       // The ACD owns an opaque black framebuffer in the original game.
@@ -10987,11 +11065,10 @@ bool drawPauseMenu(const game::PauseMenu &menu,
                 command.line_height);
       break;
     case game::PauseRenderKind::text:
-      draw_text(command.text, command_bounds, 1,
-                command.selected && ((animation_tick / 8U) & 1U) == 0U
-                    ? pauseColor(game::PauseColorRole::selected)
-                    : color,
-                command.alignment, command.line_height);
+      // The selected objective/location and its map light share the same
+      // low-contrast, fixed-rate pulse calculated above.
+      draw_text(command.text, command_bounds, 1, color, command.alignment,
+                command.line_height);
       break;
     case game::PauseRenderKind::menu_item:
       if (command.panel == game::PausePanelRole::right_sections) {
@@ -11126,21 +11203,18 @@ bool drawPauseMenu(const game::PauseMenu &menu,
       } else if (marker_kind == game::MapMarkerKind::objective) {
         const auto center_x = marker.x + marker.width / 2;
         const auto center_y = marker.y + marker.height / 2;
-        const auto pulse = 1 + static_cast<int>((animation_tick / 4U) % 3U);
-        if (((animation_tick / 4U) & 1U) == 0U) {
-          drawAcdOutline(
-              game::PauseRect{
-                  static_cast<std::int16_t>(center_x - pulse - 1),
-                  static_cast<std::int16_t>(center_y - pulse - 1),
-                  static_cast<std::int16_t>(pulse * 2 + 3),
-                  static_cast<std::int16_t>(pulse * 2 + 3),
-              },
-              color);
-        }
+        constexpr auto glow_radius = std::int16_t{3};
+        drawAcdOutline(
+            game::PauseRect{
+                static_cast<std::int16_t>(center_x - glow_radius),
+                static_cast<std::int16_t>(center_y - glow_radius),
+                static_cast<std::int16_t>(glow_radius * 2 + 1),
+                static_cast<std::int16_t>(glow_radius * 2 + 1),
+            },
+            color);
         drawSolidRect(center_x - 1, center_y - 1, 3, 3, color.red, color.green,
                       color.blue);
-        drawSolidRect(center_x, center_y - 3 - (pulse & 1), 1, 3, 255U, 210U,
-                      96U);
+        drawSolidRect(center_x, center_y - 5, 1, 3, 255U, 210U, 96U);
       } else {
         drawBorderedRect(marker, color, PauseRgb{255U, 255U, 255U});
       }
@@ -11335,13 +11409,24 @@ SceneViewerResult PsyCrossSceneViewer::run(
   // carry snapshot while those tables are still coherent so campaign flow
   // never depends on reading already-unloaded guest pointers.
   auto latest_campaign_carry = gameplay.campaignCarryState();
-  const auto apply_gameplay_tests = [&] {
-    if (tests_.retail_all_weapons &&
+  const auto apply_retail_cheats = [&] {
+    if (cheats_.all_weapons &&
         !gameplay.activateRetailAllWeaponsCheat()) {
-      PsyX_Log_Error("Retail all-weapons test activation failed\n");
+      PsyX_Log_Error("Retail all-weapons cheat activation failed\n");
+    }
+    if (cheats_.hard_mode && !gameplay.setRetailHardMode(true)) {
+      PsyX_Log_Error("Retail hard-mode cheat activation failed\n");
+    }
+    if (cheats_.one_shot_kills &&
+        !gameplay.setRetailOneShotKills(true)) {
+      PsyX_Log_Error("Retail one-shot cheat activation failed\n");
+    }
+    if (cheats_.weak_enemies &&
+        !gameplay.setRetailWeakEnemies(true)) {
+      PsyX_Log_Error("Retail weak-enemies cheat activation failed\n");
     }
   };
-  apply_gameplay_tests();
+  apply_retail_cheats();
   auto gameplay_audio = preloaded_audio
                             ? std::move(preloaded_audio)
                             : std::make_unique<PsyCrossAudioOutput>();
@@ -11531,7 +11616,37 @@ SceneViewerResult PsyCrossSceneViewer::run(
   }
   ui_audio.setVolumePercent(pause_settings.sound_effects_volume);
   game::PauseMenu pause_menu;
+  std::optional<game::RetailCheat> latched_pause_cheat;
   std::uint64_t pause_animation_tick = 0U;
+  const auto set_retail_cheat = [&](game::RetailCheat cheat, bool enabled) {
+    auto accepted = false;
+    switch (cheat) {
+    case game::RetailCheat::all_weapons:
+      accepted = gameplay.setRetailAllWeaponsCheat(enabled);
+      break;
+    case game::RetailCheat::hard_mode:
+      accepted = gameplay.setRetailHardMode(enabled);
+      break;
+    case game::RetailCheat::one_shot_kills:
+      accepted = gameplay.setRetailOneShotKills(enabled);
+      break;
+    case game::RetailCheat::stage_select:
+      accepted = true;
+      break;
+    case game::RetailCheat::weak_enemies:
+      accepted = gameplay.setRetailWeakEnemies(enabled);
+      break;
+    case game::RetailCheat::movie_theater:
+      // The retail action is valid only at the Georgia Street theater
+      // trigger. Disabling merely clears the persistent host-side latch.
+      accepted = !enabled || gameplay.activateRetailMovieTheaterCheat();
+      break;
+    }
+    if (accepted) {
+      cheats_.set(cheat, enabled);
+    }
+    return accepted;
+  };
   const auto apply_pause_settings = [&](const game::PauseSettings &settings) {
     SetGeomOffset(screen_width / 2 + settings.screen_center_x,
                   screen_height / 2 + settings.screen_center_y);
@@ -12057,10 +12172,11 @@ SceneViewerResult PsyCrossSceneViewer::run(
       mouse_capture.set(false);
       player_input.synchronize(raw_player_input);
       clear_latched_gameplay_input();
-      pause_menu.reset(
-          game::makePauseMenuData(mission, gameplay, maximum_unlocked_mission),
-          pause_settings);
-      if (tests_.mission_selection_unlocked) {
+      auto pause_data =
+          game::makePauseMenuData(mission, gameplay, maximum_unlocked_mission);
+      pause_data.cheats = cheats_;
+      pause_menu.reset(std::move(pause_data), pause_settings);
+      if (cheats_.stage_select) {
         pause_menu.unlockMissionSelect();
       }
       paused = true;
@@ -12109,7 +12225,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
 
       const auto acd_navigation_ready =
           pause_animation_tick > acd_reveal_duration;
-      const game::PauseMenuInput pause_input{
+      auto pause_input = game::PauseMenuInput{
           .previous = acd_navigation_ready &&
                       ((pressed & up_button) != 0 || analog_up_edge),
           .next = acd_navigation_ready &&
@@ -12122,6 +12238,56 @@ SceneViewerResult PsyCrossSceneViewer::run(
           .cancel = acd_navigation_ready && (pressed & cancel_button) != 0,
           .pause = pause_toggled,
       };
+
+      const auto cheat_context = [&] {
+        if (pause_menu.screen() == game::PauseScreen::root) {
+          if (pause_menu.selection() == 0U) {
+            return game::RetailPauseCheatContext::map;
+          }
+          if (pause_menu.selection() == 1U) {
+            return game::RetailPauseCheatContext::objectives;
+          }
+          if (pause_menu.selection() == 4U) {
+            return game::RetailPauseCheatContext::weapons_section;
+          }
+        }
+        if (pause_menu.screen() == game::PauseScreen::options &&
+            pause_menu.selection() == 3U) {
+          return game::RetailPauseCheatContext::select_mission;
+        }
+        if (pause_menu.screen() == game::PauseScreen::weapons &&
+            pause_menu.selection() < pause_menu.data().weapons.size() &&
+            pause_menu.data().weapons[pause_menu.selection()].id ==
+                static_cast<std::uint32_t>(game::WeaponId::silenced_9mm)) {
+          return game::RetailPauseCheatContext::silenced_9mm;
+        }
+        return game::RetailPauseCheatContext::none;
+      }();
+      const auto detected_cheat =
+          game::detectRetailPauseCheat(held, cheat_context);
+      auto cheat_consumed_input = false;
+      if (!detected_cheat) {
+        latched_pause_cheat.reset();
+      } else if (detected_cheat != latched_pause_cheat) {
+        const auto enabled = *detected_cheat == game::RetailCheat::one_shot_kills
+                                 ? !cheats_.one_shot_kills
+                                 : true;
+        const auto activated = set_retail_cheat(*detected_cheat, enabled);
+        if (activated) {
+          pause_menu.setRetailCheatEnabled(*detected_cheat, enabled);
+        }
+        PsyX_Log_Info("Retail cheat %s: %s\n",
+                      game::retailCheatName(*detected_cheat),
+                      activated ? "activated" : "not available here");
+        if (activated) {
+          ui_audio.play(PsyCrossUiCue::confirm);
+        }
+        latched_pause_cheat = detected_cheat;
+        cheat_consumed_input = true;
+      }
+      if (cheat_consumed_input) {
+        pause_input = {};
+      }
 
       const auto previous_pause_screen = pause_menu.screen();
       const auto previous_pause_selection = pause_menu.selection();
@@ -12215,6 +12381,26 @@ SceneViewerResult PsyCrossSceneViewer::run(
       case game::PauseCommandType::begin_controller_binding:
         binding_capture = true;
         break;
+      case game::PauseCommandType::set_retail_cheat: {
+        if (command.subject >= game::retail_cheat_count) {
+          break;
+        }
+        const auto cheat =
+            game::retailCheatAt(static_cast<std::size_t>(command.subject));
+        const auto enabled = command.value != 0;
+        const auto accepted = set_retail_cheat(cheat, enabled);
+        if (!accepted) {
+          pause_menu.setRetailCheatEnabled(cheat, !enabled);
+        } else {
+          pause_menu.setMissionSelectUnlocked(cheats_.stage_select);
+        }
+        ui_audio.play(accepted ? PsyCrossUiCue::confirm
+                               : PsyCrossUiCue::cancel);
+        PsyX_Log_Info("Retail cheat %s: %s\n", game::retailCheatName(cheat),
+                      accepted ? (enabled ? "enabled" : "disabled")
+                               : "not available here");
+        break;
+      }
       case game::PauseCommandType::restart_checkpoint:
         pause_settings = pause_menu.settings();
         if (!gameplay.restartCheckpoint()) {
@@ -12223,7 +12409,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
           return SceneViewerResult{previous_buttons,
                                    SceneExitReason::return_to_title};
         }
-        apply_gameplay_tests();
+        apply_retail_cheats();
         discard_gameplay_audio("pause-restart-checkpoint");
         ui_audio.reset();
         paused = false;
@@ -12251,7 +12437,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
       case game::PauseCommandType::restart_mission:
         pause_settings = pause_menu.settings();
         gameplay.reset();
-        apply_gameplay_tests();
+        apply_retail_cheats();
         discard_gameplay_audio("pause-restart-mission");
         ui_audio.reset();
         paused = false;
@@ -12321,7 +12507,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
         return SceneViewerResult{previous_buttons,
                                  SceneExitReason::return_to_title};
       }
-      apply_gameplay_tests();
+      apply_retail_cheats();
       discard_gameplay_audio("failure-restart-checkpoint");
       fire_animation = FireAnimation{gameplay};
       actor_tick = 0U;

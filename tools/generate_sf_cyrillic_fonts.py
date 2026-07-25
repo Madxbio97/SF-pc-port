@@ -243,6 +243,48 @@ def _render_glyph(
     # to clip only the excess accent/descender pixels at its outer edges.
     baseline = height - 1
     draw.text((-left, baseline), character, font=font, fill=255, anchor="ls")
+
+    if character in ("Ш", "Щ", "ш", "щ"):
+        # Industry's middle stem begins at the x-height while the two outer
+        # stems reach the cap height. At eight logical pixels this reads as a
+        # visibly broken/short post. Find the first row containing all three
+        # vertical strokes and continue only the middle run up to the common
+        # top, preserving the font's own antialias coverage at both edges.
+        top = next(
+            (
+                row
+                for row in range(height)
+                if any(
+                    canvas.getpixel((column, row))
+                    for column in range(canvas.width)
+                )
+            ),
+            None,
+        )
+        if top is not None:
+            for row in range(top, height):
+                runs: list[tuple[int, int]] = []
+                start = None
+                for column in range(canvas.width + 1):
+                    covered = (
+                        column < canvas.width
+                        and canvas.getpixel((column, row)) != 0
+                    )
+                    if covered and start is None:
+                        start = column
+                    elif not covered and start is not None:
+                        runs.append((start, column))
+                        start = None
+                if len(runs) < 3:
+                    continue
+                middle_start, middle_end = runs[len(runs) // 2]
+                for fill_row in range(top, row):
+                    for column in range(middle_start, middle_end):
+                        canvas.putpixel(
+                            (column, fill_row), canvas.getpixel((column, row))
+                        )
+                break
+
     bounds = canvas.getbbox()
     if bounds is None:
         return Image.new("L", (1, height), 0)
@@ -439,6 +481,33 @@ def write_regenerated_fonts(
         if bounds is None or bounds[3] != reference_bottom:
             raise ValueError(
                 f"Cyrillic Й cell 0x{code:02X} does not share the font baseline"
+            )
+
+    for code in (0xE0, 0xE1, 0xEC, 0xF7):  # Every encoded Ш/Щ cell.
+        bounds = cell_bounds(code)
+        if bounds is None:
+            raise ValueError(f"Cyrillic Ш/Щ cell 0x{code:02X} is empty")
+        x, y, _ = cells[code]
+        runs: list[tuple[int, int]] = []
+        start = None
+        for column in range(8 * atlas_scale + 1):
+            covered = (
+                column < 8 * atlas_scale
+                and _read_sheet_pixel(
+                    sheets,
+                    x * atlas_scale + column,
+                    y * atlas_scale + bounds[1],
+                )
+                != TRANSPARENT_INDEX
+            )
+            if covered and start is None:
+                start = column
+            elif not covered and start is not None:
+                runs.append((start, column))
+                start = None
+        if len(runs) < 3:
+            raise ValueError(
+                f"Cyrillic Ш/Щ cell 0x{code:02X} middle stem does not reach cap height"
             )
 
     output.mkdir(parents=True, exist_ok=True)

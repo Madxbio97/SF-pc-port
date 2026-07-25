@@ -1468,6 +1468,34 @@ bool GameplaySession::activateRetailAllWeaponsCheat() noexcept {
   return !legacy_runtime_faulted_;
 }
 
+bool GameplaySession::setRetailAllWeaponsCheat(bool enabled) noexcept {
+  if (enabled) {
+    return activateRetailAllWeaponsCheat();
+  }
+  return legacy_first_mission_ &&
+         legacy_first_mission_->setRetailAllWeaponsCheat(false);
+}
+
+bool GameplaySession::setRetailHardMode(bool enabled) noexcept {
+  return legacy_first_mission_ &&
+         legacy_first_mission_->setRetailHardMode(enabled);
+}
+
+bool GameplaySession::setRetailOneShotKills(bool enabled) noexcept {
+  return legacy_first_mission_ &&
+         legacy_first_mission_->setRetailOneShotKills(enabled);
+}
+
+bool GameplaySession::setRetailWeakEnemies(bool enabled) noexcept {
+  return legacy_first_mission_ &&
+         legacy_first_mission_->setRetailWeakEnemies(enabled);
+}
+
+bool GameplaySession::activateRetailMovieTheaterCheat() noexcept {
+  return legacy_first_mission_ &&
+         legacy_first_mission_->activateRetailMovieTheaterCheat();
+}
+
 bool GameplaySession::setAudioVolumes(
     const GameplayAudioVolumes &volumes) noexcept {
   if (!volumes.valid() || !legacy_first_mission_) {

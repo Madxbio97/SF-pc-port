@@ -5479,6 +5479,48 @@ bool LegacyGameplayVm::writeHostInventoryState(
   return true;
 }
 
+bool LegacyGameplayVm::setRetailHardMode(bool enabled) noexcept {
+  // Retail title code stores this byte before mission bootstrap. Enemy aim and
+  // reaction routines read it directly on every update.
+  constexpr std::uint32_t hard_mode_flag = 0x801168d0U;
+  return runtime_.write8(hard_mode_flag, enabled ? 1U : 0U);
+}
+
+bool LegacyGameplayVm::setRetailOneShotKills(bool enabled) noexcept {
+  // MENU.OVL's 9mm super-ammo action toggles this resident byte. The common
+  // damage path consumes it for every player firearm, despite the historical
+  // cheat being entered while the Silenced 9mm is highlighted.
+  constexpr std::uint32_t super_ammo_flag = 0x801168d1U;
+  return runtime_.write8(super_ammo_flag, enabled ? 1U : 0U);
+}
+
+bool LegacyGameplayVm::weakenRetailEnemySlots(
+    std::span<const std::uint32_t> slots,
+    const LegacyGameplayBridgeProfile &profile) noexcept {
+  constexpr std::uint32_t object_record_stride = 0x4cU;
+  constexpr std::uint32_t object_health_offset = 0x40U;
+  std::uint32_t records{};
+  std::uint32_t count_bits{};
+  if (!runtime_.read32(profile.object_records_pointer, records) ||
+      !runtime_.read32(profile.object_count, count_bits) || records == 0U) {
+    return false;
+  }
+  const auto count = std::bit_cast<std::int32_t>(count_bits);
+  if (count < 0 ||
+      static_cast<std::uint32_t>(count) > profile.maximum_objects) {
+    return false;
+  }
+  for (const auto slot : slots) {
+    if (slot >= static_cast<std::uint32_t>(count) ||
+        !runtime_.write16(records + slot * object_record_stride +
+                              object_health_offset,
+                          1U)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 bool LegacyGameplayVm::synchronizeHostRoom(
     std::int16_t room, const LegacyNativeMissionBridgeProfile &profile,
     std::uint64_t execution_budget) noexcept {

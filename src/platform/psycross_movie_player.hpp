@@ -12,6 +12,11 @@ class TitleMovies;
 
 namespace sf::platform::detail {
 
+enum class StandaloneMovieSkipPolicy : std::uint8_t {
+    allow,
+    prevent,
+};
+
 struct MovieOverlayCallbacks {
     std::function<bool(std::uint16_t, std::uint32_t)> update;
     std::function<void()> draw;
@@ -23,7 +28,9 @@ public:
     [[nodiscard]] std::uint16_t playStandalone(
         const game::DiscMovie& movie,
         PADRAW& pad,
-        std::uint16_t previous_buttons);
+        std::uint16_t previous_buttons,
+        StandaloneMovieSkipPolicy skip_policy =
+            StandaloneMovieSkipPolicy::allow);
 
     [[nodiscard]] std::uint16_t play(
         game::TitleMovies& movies,

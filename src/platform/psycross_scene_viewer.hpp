@@ -56,10 +56,9 @@ private:
 
 class PsyCrossSceneViewer final {
 public:
-  explicit PsyCrossSceneViewer(
-      KeyboardMouseBindings input = defaultKeyboardMouseBindings(),
-      GameplayTestSettings tests = {}) noexcept
-      : input_(input), tests_(tests) {}
+  PsyCrossSceneViewer(KeyboardMouseBindings input,
+                      game::RetailCheatState &cheats) noexcept
+      : input_(input), cheats_(cheats) {}
 
   [[nodiscard]] SceneViewerResult
   run(const game::MissionPackage &mission, PADRAW &pad,
@@ -70,7 +69,7 @@ public:
 
 private:
   KeyboardMouseBindings input_;
-  GameplayTestSettings tests_;
+  game::RetailCheatState &cheats_;
   game::PauseSettings pause_settings_;
   bool pause_settings_initialized_{};
 };

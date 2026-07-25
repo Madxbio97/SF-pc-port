@@ -1,7 +1,6 @@
 #include "launcher.hpp"
 
 #include "sf/game/localization.hpp"
-#include "sf/game/mission.hpp"
 
 #ifdef _WIN32
 
@@ -45,9 +44,7 @@ constexpr int bilinear_control_id = 1004;
 constexpr int fullscreen_control_id = 1005;
 constexpr int launch_control_id = 1006;
 constexpr int cancel_control_id = 1007;
-constexpr int mission_control_id = 1008;
 constexpr int controls_control_id = 1009;
-constexpr int all_weapons_control_id = 1010;
 constexpr int anisotropic_control_id = 1011;
 constexpr int game_image_control_id = 1012;
 constexpr int browse_image_control_id = 1013;
@@ -84,14 +81,10 @@ constexpr COLORREF dossier_accent_color = RGB(183, 239, 67);
 struct LauncherState {
   GraphicsSettings settings;
   KeyboardMouseBindings input;
-  GameplayTestSettings tests;
   game::GameLanguage language{game::GameLanguage::english};
   std::filesystem::path cue_path;
-  std::uint32_t mission_index{};
-  bool mission_selection_enabled{};
   std::vector<std::pair<int, int>> resolutions;
   std::vector<std::uint32_t> frame_limits;
-  HWND mission_combo{};
   HWND resolution_combo{};
   HWND aspect_combo{};
   HWND msaa_combo{};
@@ -100,7 +93,6 @@ struct LauncherState {
   HWND language_combo{};
   int desktop_width{};
   int desktop_height{};
-  bool cheats_visible{};
   HFONT title_font{};
   HFONT heading_font{};
   HFONT ui_font{};
@@ -321,27 +313,6 @@ void saveSettingsFile(const GraphicsSettings &graphics,
                         static_cast<int>(input[action]));
   }
   saveGameImagePath(cue_path);
-}
-
-void populateMissions(LauncherState &state) {
-  const auto missions = game::missionCatalog();
-  int selected{};
-  for (std::size_t index = 0; index < missions.size(); ++index) {
-    const auto &mission = missions[index];
-    auto label = std::to_wstring(index + 1U) + L". " +
-                 widenAscii(mission.title) + L" [" +
-                 widenAscii(mission.resource_name) + L"]";
-    SendMessageW(state.mission_combo, CB_ADDSTRING, 0,
-                 reinterpret_cast<LPARAM>(label.c_str()));
-    if (mission.index == state.mission_index) {
-      selected = static_cast<int>(index);
-    }
-  }
-  SendMessageW(state.mission_combo, CB_SETCURSEL, static_cast<WPARAM>(selected),
-               0);
-  SendMessageW(state.mission_combo, CB_SETDROPPEDWIDTH, 320, 0);
-  EnableWindow(state.mission_combo,
-               state.mission_selection_enabled ? TRUE : FALSE);
 }
 
 HWND createControl(HWND parent, const wchar_t *class_name, const wchar_t *text,
@@ -1706,18 +1677,6 @@ void acceptSettings(HWND window, LauncherState &state) {
     state.cue_path = image_path;
   }
 
-  if (state.cheats_visible) {
-    const auto selected = SendMessageW(state.mission_combo, CB_GETCURSEL, 0, 0);
-    const auto missions = game::missionCatalog();
-    if (selected < 0 || static_cast<std::size_t>(selected) >= missions.size()) {
-      showStyledNotice(window, L"INVALID INSERTION POINT",
-                       L"Select one of the 20 retail missions.");
-      SetFocus(state.mission_combo);
-      return;
-    }
-    state.mission_index = missions[static_cast<std::size_t>(selected)].index;
-  }
-
   const auto resolution = selectedResolution(state);
   if (!resolution) {
     showStyledNotice(
@@ -1766,9 +1725,6 @@ void acceptSettings(HWND window, LauncherState &state) {
     SetFocus(state.language_combo);
     return;
   }
-  state.tests.retail_all_weapons =
-      state.cheats_visible &&
-      IsDlgButtonChecked(window, all_weapons_control_id) == BST_CHECKED;
   state.accepted = true;
   DestroyWindow(window);
 }
@@ -1946,32 +1902,15 @@ LRESULT CALLBACK launcherWindowProc(HWND window, UINT message, WPARAM w_param,
                   WS_TABSTOP | BS_AUTOCHECKBOX, 48, 444, 294, 24,
                   fullscreen_control_id, state->ui_font);
 
+    createControl(window, L"STATIC", L"MISSION CONTROL", 0, 410, 188, 286,
+                  26, 0, state->heading_font);
     createControl(window, L"STATIC",
-                  state->cheats_visible ? L"RESTRICTED ACCESS"
-                                        : L"MISSION CONTROL",
-                  0, 410, 188, 286, 26, 0, state->heading_font);
-    if (state->cheats_visible) {
-      createControl(window, L"STATIC", L"Insertion point", 0, 414, 228, 96, 20,
-                    0, state->ui_font);
-      state->mission_combo = createControl(
-          window, L"COMBOBOX", L"", WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL,
-          516, 222, 204, 420, mission_control_id, state->ui_font);
-      createControl(window, L"BUTTON", L"Full weapons authorization",
-                    WS_TABSTOP | BS_AUTOCHECKBOX, 414, 278, 294, 24,
-                    all_weapons_control_id, state->ui_font);
-      createControl(window, L"STATIC",
-                    L"Developer override detected. Campaign routing and "
-                    L"inventory bypass are available for this session.",
-                    SS_LEFT, 414, 328, 294, 58, 0, state->ui_font);
-    } else {
-      createControl(window, L"STATIC",
-                    L"Retail campaign routing active. Mission progress "
-                    L"and equipment are managed by the game.",
-                    SS_LEFT, 414, 228, 294, 62, 0, state->ui_font);
-      createControl(window, L"STATIC",
-                    L"GRAPHICS / INPUT / AUDIO\nSYSTEM STATUS: READY", SS_LEFT,
-                    414, 342, 294, 42, 0, state->ui_font);
-    }
+                  L"Retail campaign routing active. Mission progress "
+                  L"and equipment are managed by the game.",
+                  SS_LEFT, 414, 228, 294, 62, 0, state->ui_font);
+    createControl(window, L"STATIC",
+                  L"GRAPHICS / INPUT / AUDIO\nSYSTEM STATUS: READY", SS_LEFT,
+                  414, 342, 294, 42, 0, state->ui_font);
     createControl(window, L"STATIC", L"Text language", 0, 414, 306, 98, 20, 0,
                   state->ui_font);
     state->language_combo =
@@ -1994,12 +1933,6 @@ LRESULT CALLBACK launcherWindowProc(HWND window, UINT message, WPARAM w_param,
                                                          : BST_UNCHECKED);
     CheckDlgButton(window, vsync_control_id,
                    state->settings.vsync ? BST_CHECKED : BST_UNCHECKED);
-    if (state->cheats_visible) {
-      CheckDlgButton(window, all_weapons_control_id,
-                     state->tests.retail_all_weapons ? BST_CHECKED
-                                                     : BST_UNCHECKED);
-      populateMissions(*state);
-    }
     populateResolutions(*state);
     populateAspectRatios(*state);
     populateMsaa(*state);
@@ -2108,11 +2041,8 @@ void loadLauncherSettings(GraphicsSettings &graphics,
 
 bool showGraphicsLauncher(GraphicsSettings &settings,
                           KeyboardMouseBindings &input,
-                          GameplayTestSettings &tests,
                           game::GameLanguage &language,
-                          std::filesystem::path &cue_path,
-                          std::uint32_t &mission_index,
-                          bool mission_selection_enabled) {
+                          std::filesystem::path &cue_path) {
   const auto instance = GetModuleHandleW(nullptr);
   WNDCLASSW window_class{};
   window_class.lpfnWndProc = launcherWindowProc;
@@ -2133,12 +2063,8 @@ bool showGraphicsLauncher(GraphicsSettings &settings,
   LauncherState state{};
   state.settings = settings;
   state.input = input;
-  state.tests = tests;
   state.language = language;
   state.cue_path = cue_path.empty() ? loadGameImagePath() : cue_path;
-  state.mission_index = mission_index;
-  state.mission_selection_enabled = mission_selection_enabled;
-  state.cheats_visible = mission_selection_enabled && cheatMarkerExists();
   state.title_font =
       CreateFontW(-32, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                   OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
@@ -2196,10 +2122,8 @@ bool showGraphicsLauncher(GraphicsSettings &settings,
   if (state.accepted) {
     settings = state.settings;
     input = state.input;
-    tests = state.tests;
     language = state.language;
     cue_path = state.cue_path;
-    mission_index = state.mission_index;
     try {
       saveSettingsFile(settings, input, language, cue_path);
     } catch (...) {
@@ -2210,7 +2134,7 @@ bool showGraphicsLauncher(GraphicsSettings &settings,
   return state.accepted;
 }
 
-bool launcherCheatsEnabled() noexcept { return cheatMarkerExists(); }
+bool retailCheatMarkerExists() noexcept { return cheatMarkerExists(); }
 
 void showLauncherError(std::string_view title,
                        std::string_view message) noexcept {
@@ -2234,12 +2158,11 @@ void loadLauncherSettings(GraphicsSettings &, KeyboardMouseBindings &,
                           game::GameLanguage &) noexcept {}
 
 bool showGraphicsLauncher(GraphicsSettings &, KeyboardMouseBindings &,
-                          GameplayTestSettings &, game::GameLanguage &,
-                          std::filesystem::path &, std::uint32_t &, bool) {
+                          game::GameLanguage &, std::filesystem::path &) {
   return true;
 }
 
-bool launcherCheatsEnabled() noexcept { return false; }
+bool retailCheatMarkerExists() noexcept { return false; }
 
 void showLauncherError(std::string_view, std::string_view) noexcept {}
 

@@ -503,6 +503,11 @@ public:
   void reset();
   [[nodiscard]] bool restartCheckpoint();
   [[nodiscard]] bool activateRetailAllWeaponsCheat() noexcept;
+  [[nodiscard]] bool setRetailAllWeaponsCheat(bool enabled) noexcept;
+  [[nodiscard]] bool setRetailHardMode(bool enabled) noexcept;
+  [[nodiscard]] bool setRetailOneShotKills(bool enabled) noexcept;
+  [[nodiscard]] bool setRetailWeakEnemies(bool enabled) noexcept;
+  [[nodiscard]] bool activateRetailMovieTheaterCheat() noexcept;
   [[nodiscard]] std::optional<CampaignCarryState>
   campaignCarryState() const noexcept;
   [[nodiscard]] bool
