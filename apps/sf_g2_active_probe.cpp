@@ -634,6 +634,9 @@ public:
 
   std::optional<std::string> step(const sf::game::GameplayInput &input) {
     gameplay_.update(input);
+    if (!gameplay_.advanceAudioFrameClock()) {
+      return "production audio/hardware clock stopped";
+    }
     if (const auto validation =
             validateSession(gameplay_, layout_, previous_sequence_)) {
       return *validation;
@@ -854,6 +857,10 @@ replayActiveTrace(const sf::game::MissionPackage &package,
   auto previous_sequence = initial->sequence;
   for (std::size_t index = 0U; index < trace.samples.size(); ++index) {
     gameplay->update(trace.samples[index].input);
+    if (!gameplay->advanceAudioFrameClock()) {
+      return "replay audio/hardware clock stopped at update=" +
+             std::to_string(index);
+    }
     if (const auto validation = validateSession(
             *gameplay, package.layout(), previous_sequence)) {
       return "replay update=" + std::to_string(index) + " " + *validation;

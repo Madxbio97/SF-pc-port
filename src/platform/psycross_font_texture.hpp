@@ -6,10 +6,10 @@
 
 namespace sf::platform::detail {
 
-// Russian FONTA/B/C are stored at twice the retail pixel density.  PsyCross
-// exposes an RGBA override texture whose logical dimensions can remain 128x128;
-// existing UVs and screen-space metrics therefore keep their exact layout
-// while each logical font pixel is backed by four source texels.
+// PsyCross exposes FONTA/B/C as one RGBA override texture with the retail
+// 128x128 logical layout. Both the original 1x sheets and the Russian 2x sheets
+// use the same guest UVs, so callers can switch atlases without rewriting any
+// completed retail glyph packets.
 class PsyCrossFontTexture final {
 public:
   PsyCrossFontTexture(const assets::TimImage &font_a,

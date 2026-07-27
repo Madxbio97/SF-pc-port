@@ -3,7 +3,7 @@
 All notable public-test changes are documented here. The project currently uses
 pre-release tags rather than a stable semantic-versioning promise.
 
-## Unreleased
+## 0.1.0-public-test.8 - 2026-07-27
 
 ### Gameplay and presentation
 
@@ -16,6 +16,29 @@ pre-release tags rather than a stable semantic-versioning promise.
   flashing with a synchronized low-contrast objective glow.
 - Protected the final campaign stream from an inherited input edge so the
   credits and post-credits sequence play to completion.
+- Added dynamic scene lights and geometry-driven shadows for Gabe, allies and
+  enemies, including stable floor/wall projection and bounded translucency.
+- Restored original English sniper/night-vision scope labels and resolved every
+  button token against the active keyboard, mouse or gamepad binding.
+- Isolated mission-menu overrides to the selected locale so Russian objective
+  records can never replace the original English guest strings.
+
+### Rendering and streaming
+
+- Reworked VRAM texture aliases around explicit scene generations and complete
+  page/CLUT identity, preventing stale room textures and disappearing actors.
+- Corrected mission texture-bank validation and retail SCRIM copy semantics
+  across streamed segments without weakening invalid-state guards.
+- Added an opt-in Surface Picker that highlights one submitted surface and
+  writes a complete diagnostic dump on request.
+
+### Audio and timing
+
+- Separated the 120 Hz retail SPU clock from presentation rates up to 240 FPS,
+  and made synchronous CD/DMA completion advance devices without generating
+  future audio.
+- Rebuilt OpenAL buffering and underrun recovery around one bounded monotonic
+  timeline, avoiding stale replay, dropped samples and accumulated latency.
 
 ### Architecture
 
@@ -24,6 +47,17 @@ pre-release tags rather than a stable semantic-versioning promise.
 - Kept cheat state alive across mission transitions and returns to the title
   screen, with one activation path for both original button codes and menu
   switches.
+- Split dynamic lighting, scope-text policy, mission texture ownership and
+  Surface Picker diagnostics into testable modules with regression coverage.
+- Updated headless gameplay probes to advance the same independently driven
+  120 Hz hardware/audio clock as the real frontend, without double-clocking the
+  production runtime.
+
+### Release artifact
+
+- File: `SyphonFilterPC-0.1.0-public-test.8-win64.zip`
+- Checksum: supplied in the accompanying `.zip.sha256` file.
+- Supported disc: *Syphon Filter* USA v1.1 (`SCUS-94240`), BIN/CUE.
 
 ## 0.1.0-public-test.7 - 2026-07-25
 

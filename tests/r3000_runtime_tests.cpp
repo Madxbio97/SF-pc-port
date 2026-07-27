@@ -798,6 +798,24 @@ void testMachineCdRomDmaAndSnapshot() {
               machine.restoreState(checkpoint),
           "Could not restore CD-ROM state after DMA preflight rejection tests");
 
+  const auto atomic_dma_tick = machine.currentTick();
+  const auto atomic_dma_mixed_frames = machine.spu().state().mixed_frames;
+  require(runtime.write32(dpcr, machine.dma().dpcr() | 0x00008000U) &&
+              runtime.write32(cdrom_dma, destination) &&
+              runtime.write32(cdrom_dma + 4U, 0x00010200U) &&
+              runtime.write32(cdrom_dma + 8U, 0x11000000U) &&
+              machine.dma().scheduledToken(sf::psx::DmaChannel::cdrom) != 0U &&
+              machine.completePendingDmaTransfers() &&
+              machine.currentTick() == atomic_dma_tick &&
+              machine.spu().state().mixed_frames == atomic_dma_mixed_frames &&
+              (machine.dma().chcr(sf::psx::DmaChannel::cdrom) & 0x01000000U) ==
+                  0U &&
+              machine.dma().scheduledToken(sf::psx::DmaChannel::cdrom) == 0U,
+          "Clock-neutral CD-ROM DMA did not complete without advancing SPU");
+  require(runtime.restoreRam(ram_checkpoint) &&
+              machine.restoreState(checkpoint),
+          "Could not restore CD-ROM state after clock-neutral DMA test");
+
   const auto run_dma = [&]() {
     if (!runtime.write32(dpcr, machine.dma().dpcr() | 0x00008000U) ||
         !runtime.write32(cdrom_dma, destination) ||
@@ -2069,6 +2087,71 @@ void testLegacyGameplayVmBoundary() {
               audio_callback_count == 6U,
           "Retail 120 Hz audio callback did not run six times per frame");
 
+  // A ready-sector callback executes inside the 120 Hz scheduler. It must not
+  // advance CD/SPU hardware a second time merely because guest instructions
+  // are needed to acknowledge the sector. That old double clock generated
+  // excess PCM at every streamed room transition and eventually forced the
+  // frontend to drop complete sounds.
+  constexpr std::uint32_t cd_ready_callback_address = 0x80114cc4U;
+  constexpr std::uint32_t cd_ready_callback = 0x80022020U;
+  std::uint32_t cd_ready_callback_count{};
+  vm.bindHostCall(
+      cd_ready_callback,
+      [&cd_ready_callback_count](sf::game::LegacyHostCallContext &context) {
+        ++cd_ready_callback_count;
+        context.setReturnValue(0U);
+      });
+  auto ready_cdrom = vm.machine().cdrom().captureState();
+  ready_cdrom.interrupt_flags = 1U;
+  ready_cdrom.response_position = 0U;
+  ready_cdrom.response_count = 1U;
+  ready_cdrom.response[0] = 2U;
+  require(vm.runtime().write32(cd_ready_callback_address, cd_ready_callback) &&
+              vm.machine().cdrom().restoreState(ready_cdrom),
+          "Could not seed a retail CD ready callback");
+  vm.clearPcm();
+  const auto ready_callback_tick = vm.machine().currentTick();
+  std::ranges::fill(pcm, sf::psx::SpuPcmFrame{});
+  require(vm.advanceAudioFrameClock(audio_profile) &&
+              cd_ready_callback_count == 1U &&
+              vm.machine().currentTick() ==
+                  ready_callback_tick + audio_ticks_per_frame &&
+              vm.takePcm(pcm) == pcm.size(),
+          "CD ready callback advanced the hardware/audio timeline twice");
+  require(vm.unbindHostCall(cd_ready_callback),
+          "Could not remove the CD ready callback fixture");
+
+  // Non-data CD interrupts belong to the guest CD handler, not to the audio
+  // scheduler. In retail gameplay an INT2/INT3 can remain latched while a room
+  // stream changes state. It must neither be acknowledged here nor terminate
+  // the independent 120 Hz SPU clock.
+  auto command_cdrom = vm.machine().cdrom().captureState();
+  command_cdrom.interrupt_flags = 2U;
+  command_cdrom.response_position = 0U;
+  command_cdrom.response_count = 1U;
+  command_cdrom.response[0] = 2U;
+  require(vm.machine().cdrom().restoreState(command_cdrom) &&
+              vm.advanceAudioSliceClock(audio_profile),
+          "A non-data CD interrupt stopped the audio clock");
+  const auto retained_command_cdrom = vm.machine().cdrom().captureState();
+  require((retained_command_cdrom.interrupt_flags & 0x07U) == 2U &&
+              retained_command_cdrom.response_position == 0U &&
+              retained_command_cdrom.response_count == 1U &&
+              retained_command_cdrom.response[0] == 2U &&
+              audio_callback_count == 13U,
+          "A non-data CD interrupt stopped or was consumed by the audio clock");
+  constexpr std::uint32_t cdrom_register_base = 0x1f801800U;
+  require(vm.runtime().write8(cdrom_register_base, 1U) &&
+              vm.runtime().write8(cdrom_register_base + 3U, 0x1fU) &&
+              vm.runtime().write8(cdrom_register_base, 0U),
+          "Could not acknowledge the command-complete interrupt fixture");
+  const auto acknowledged_command_cdrom =
+      vm.machine().cdrom().captureState();
+  require((acknowledged_command_cdrom.interrupt_flags & 0x07U) == 0U &&
+              acknowledged_command_cdrom.response_position == 0U &&
+              acknowledged_command_cdrom.response_count == 0U,
+          "Guest CD interrupt acknowledgement left response state latched");
+
   // Streaming can consume more than one retail frame of guest CPU time before
   // returning to the native outer loop. Real timer IRQs latch one pending bit;
   // replaying every elapsed edge as an immediate callback makes sequenced
@@ -2077,10 +2160,10 @@ void testLegacyGameplayVmBoundary() {
   vm.machine().advanceTicks(audio_ticks_per_frame * 2U);
   const auto overdue_target = overdue_start + audio_ticks_per_frame * 2U;
   require(
-      vm.advanceAudioFrameClock(audio_profile) &&
-          vm.machine().currentTick() >= overdue_target &&
-          vm.machine().currentTick() <= overdue_target + 16U &&
-          audio_callback_count == 7U,
+          vm.advanceAudioFrameClock(audio_profile) &&
+              vm.machine().currentTick() >= overdue_target &&
+              vm.machine().currentTick() <= overdue_target + 16U &&
+              audio_callback_count == 14U,
       "Overdue retail audio IRQs were not coalesced at a streaming boundary");
 
   vm.clearPcm();
@@ -2099,16 +2182,16 @@ void testLegacyGameplayVmBoundary() {
   require(unregistered.completed() &&
               unregistered.return_value == audio_callback &&
               vm.advanceAudioFrameClock(audio_profile) &&
-              audio_callback_count == 7U,
+              audio_callback_count == 14U,
           "InterruptCallback did not return and remove the previous callback");
   require(vm.restoreSnapshot(callback_snapshot) &&
               vm.advanceAudioFrameClock(audio_profile) &&
-              audio_callback_count == 13U,
+              audio_callback_count == 20U,
           "Audio callback registration did not survive snapshot restore");
   const auto reset_callbacks = vm.invoke(audio_profile.reset_callback_entry);
   require(reset_callbacks.completed() &&
               vm.advanceAudioFrameClock(audio_profile) &&
-              audio_callback_count == 13U,
+              audio_callback_count == 20U,
           "ResetCallback did not clear the retail audio timer");
   vm.clearPcm();
 
@@ -4281,6 +4364,9 @@ void testLegacyGameplayVmBoundary() {
       sf::game::LegacyVirtualCd::sector_size,
       virtual_cd_read_size_address,
   };
+  const auto virtual_cd_read_tick = vm.machine().currentTick();
+  const auto virtual_cd_read_mixed_frames =
+      vm.machine().spu().state().mixed_frames;
   const auto read_result = vm.invoke(0x800df198U, read_arguments, 1U);
   std::vector<std::byte> virtual_cd_output(
       sf::game::LegacyVirtualCd::sector_size);
@@ -4291,10 +4377,13 @@ void testLegacyGameplayVmBoundary() {
           vm.runtime().read32(virtual_cd_read_size_address,
                               virtual_cd_read_size) &&
           virtual_cd_read_size == virtual_cd_output.size() &&
+          vm.machine().currentTick() == virtual_cd_read_tick + 1U &&
+          vm.machine().spu().state().mixed_frames ==
+              virtual_cd_read_mixed_frames &&
           std::ranges::all_of(
               virtual_cd_output,
               [](std::byte value) { return value == std::byte{0x5a}; }),
-      "Legacy VM virtual CD read HLE mismatch");
+      "Legacy VM virtual CD read HLE changed data or advanced SPU time");
   const std::array close_arguments{virtual_cd_handle_address};
   const auto close_result = vm.invoke(0x800df3b0U, close_arguments, 1U);
   require(
@@ -4583,13 +4672,17 @@ void testLegacyGameplayVmBoundary() {
           vm.runtime().write8(streaming_tail_profile.fade_initialized, 0U) &&
           vm.runtime().write8(streaming_tail_profile.fade_floor_rgb, 0U),
       "Could not seed retail state-7 streaming frame");
+  const auto state7_tick = vm.machine().currentTick();
+  const auto state7_mixed_frames = vm.machine().spu().state().mixed_frames;
   const auto state7_frame =
       vm.tickRetailOuterFrame(outer_profile, streaming_tail_profile, 1U);
   require(
       state7_frame.completed() && state7_frame.state_before == 7U &&
           state7_frame.state_after == 7U && !state7_frame.renderer_tail &&
           state7_frame.platform_tail.completed() &&
-          state7_order == std::vector<std::uint32_t>{1U, 2U, 3U, 4U},
+          state7_order == std::vector<std::uint32_t>{1U, 2U, 3U, 4U} &&
+          vm.machine().currentTick() == state7_tick &&
+          vm.machine().spu().state().mixed_frames == state7_mixed_frames,
       "Retail state 7 did not run input, loader and platform tail in order");
   vm.clearHostCalls();
 

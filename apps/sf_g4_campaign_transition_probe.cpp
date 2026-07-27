@@ -56,6 +56,12 @@ bool coherentPresentation(const sf::game::GameplaySession &gameplay,
          gameplay.legacyPresentationSequence() == frame->sequence;
 }
 
+bool step(sf::game::GameplaySession &gameplay) {
+  gameplay.update({});
+  return gameplay.advanceAudioFrameClock() ||
+         sf::game::G4CampaignTransitionProbeAccess::runtimeFinished(gameplay);
+}
+
 bool captureStableCheckpoint(sf::game::GameplaySession &gameplay) {
   for (std::uint32_t update = 0U; update < maximum_checkpoint_wait_updates;
        ++update) {
@@ -63,8 +69,7 @@ bool captureStableCheckpoint(sf::game::GameplaySession &gameplay) {
             gameplay)) {
       return true;
     }
-    gameplay.update({});
-    if (gameplay.runtimeFaulted()) {
+    if (!step(gameplay) || gameplay.runtimeFaulted()) {
       return false;
     }
   }
@@ -108,7 +113,9 @@ bool waitForActiveGameplay(sf::game::GameplaySession &gameplay,
        update < maximum_control_wait_updates && stable < stable_control_updates;
        ++update) {
     const auto previous_sequence = gameplay.legacyPresentationSequence();
-    gameplay.update({});
+    if (!step(gameplay)) {
+      return false;
+    }
     ++updates;
     // The headless gate acknowledges the same guest edge as the platform;
     // decoding the STR does not mutate gameplay state.
@@ -167,7 +174,9 @@ int runProbe(const std::filesystem::path &cue_path) {
     if (boot_sequence == 0U || gameplay->runtimeFaulted()) {
       return fail(mission.index, "production-boot", *gameplay);
     }
-    gameplay->update({});
+    if (!step(*gameplay)) {
+      return fail(mission.index, "coherent-frame-audio-clock", *gameplay);
+    }
     if (!coherentPresentation(*gameplay, boot_sequence)) {
       return fail(mission.index, "coherent-frame", *gameplay);
     }
@@ -187,7 +196,9 @@ int runProbe(const std::filesystem::path &cue_path) {
     auto restarted = false;
     for (std::uint32_t update = 0U; update < maximum_transition_updates;
          ++update) {
-      gameplay->update({});
+      if (!step(*gameplay)) {
+        return fail(mission.index, "failure-transition-audio-clock", *gameplay);
+      }
       ++transition_updates;
       if (gameplay->runtimeFaulted()) {
         return fail(mission.index, "failure-transition", *gameplay);
@@ -214,7 +225,9 @@ int runProbe(const std::filesystem::path &cue_path) {
       return fail(mission.index, "failure-exactly-once", *gameplay);
     }
     const auto restored_sequence = gameplay->legacyPresentationSequence();
-    gameplay->update({});
+    if (!step(*gameplay)) {
+      return fail(mission.index, "post-restart-audio-clock", *gameplay);
+    }
     if (gameplay->failureRestartRequested() ||
         gameplay->consumeEndingMovieRequest() ||
         !coherentPresentation(*gameplay, restored_sequence)) {
@@ -243,7 +256,9 @@ int runProbe(const std::filesystem::path &cue_path) {
     auto ending_requested = false;
     for (std::uint32_t update = 0U; update < maximum_transition_updates;
          ++update) {
-      gameplay->update({});
+      if (!step(*gameplay)) {
+        return fail(mission.index, "success-transition-audio-clock", *gameplay);
+      }
       ++transition_updates;
       if (gameplay->runtimeFaulted() || gameplay->failureRestartRequested()) {
         return fail(mission.index, "success-transition", *gameplay);

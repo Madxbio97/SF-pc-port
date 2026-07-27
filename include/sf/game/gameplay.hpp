@@ -162,23 +162,40 @@ legacyGuestHmdPoseComplete(std::size_t available_bones,
   return required_bones != 0U && available_bones >= required_bones;
 }
 
+// A current bridge sample may temporarily expose only part of an HMD table
+// while the guest changes display lists. Once an actor lifetime has produced
+// a complete pose, retain that exact pose until the lifetime is explicitly
+// hidden or retired instead of interpreting a presentation transient as a
+// despawn.
+[[nodiscard]] constexpr bool legacyGuestActorPoseAvailable(
+    bool current_pose_complete, bool retained_pose_complete) noexcept {
+  return current_pose_complete || retained_pose_complete;
+}
+
 // A resident instance can be allocated long before its authored encounter.
 // Simulation activation and render readiness are deliberately separate: the
-// actor enters native presentation only after a complete retail HMD pose is
-// available. The retail render bit remains a positive lifetime/visibility
-// override, but never authorizes a bind-pose substitute. Instance byte +0x23
-// bit 1 is the retail dormant/hidden latch and wins over every positive signal.
+// actor enters native presentation only after its lifetime has produced a
+// complete retail HMD pose. A later partial transition sample may retain that
+// pose; the retail render bit remains a positive lifetime/visibility override
+// but never authorizes a bind-pose substitute. Instance byte +0x23 bit 1 is
+// the retail dormant/hidden latch and wins over every positive signal.
 [[nodiscard]] constexpr bool legacyGuestActorStreamVisible(
     bool source_in_active_dat, bool live_position_in_active_dat,
     std::uint32_t pose_flags, bool opening_actor, bool retail_simulated,
-    bool retail_dormant, bool retail_pose_ready) noexcept {
+    bool retail_dormant, bool retail_pose_available) noexcept {
   const auto retail_rendered =
       (pose_flags & legacy_hmd_rendered_this_pass) != 0U;
-  return !retail_dormant && retail_pose_ready &&
+  return !retail_dormant && retail_pose_available &&
          (retail_rendered || opening_actor ||
           (retail_simulated &&
            (source_in_active_dat || live_position_in_active_dat)));
 }
+
+// Stable identity of one retail object lifetime. Dynamic guest slots are
+// recycled; instance is therefore part of the identity even when definition,
+// path and authored coordinates are reused by the next lifetime.
+[[nodiscard]] std::uint64_t
+legacyGuestIdentity(const LegacyObjectBridgeState &guest) noexcept;
 
 // Without a complete world-space bone table, an untouched authored root is a
 // contact point. A moving retail root is instead skeleton/root space unless
@@ -308,6 +325,29 @@ struct SceneObject {
   std::array<std::int16_t, 3U> legacy_hmd_back_color_q12{0x1000, 0x1000,
                                                          0x1000};
   bool legacy_hmd_back_color_valid{};
+};
+
+// Nearest authored support plane used by renderer-only actor presentation.
+// The normal follows the mission's Y-down world convention and points toward
+// the solid side of walkable polygons. Keeping this query in GameplaySession
+// makes shadows use the same floor/elevator choice as movement and pickups.
+struct ActorGroundSurface {
+  double y{};
+  double normal_x{};
+  double normal_y{1.0};
+  double normal_z{};
+};
+
+// First visible authored receiver between a posed actor vertex and its floor
+// projection. It lets renderer-only shadows fold onto walls before reaching
+// the support plane without exposing collision internals to presentation.
+struct ActorShadowSurfaceHit {
+  double x{};
+  double y{};
+  double z{};
+  double normal_x{};
+  double normal_y{};
+  double normal_z{};
 };
 
 enum class ActorAimZone : std::uint8_t {
@@ -480,6 +520,33 @@ resolveTextureBankOwnership(std::uint8_t current_bank,
   return current_bank;
 }
 
+[[nodiscard]] constexpr std::uint8_t resolveAuthoredObjectTextureBank(
+    std::uint8_t current_bank, bool current_is_owner,
+    bool current_is_spatial_owner, std::uint8_t spatial_owner_bank_mask,
+    std::uint8_t authored_owner_bank_mask) noexcept {
+  if (spatial_owner_bank_mask != 0U) {
+    return resolveTextureBankOwnership(current_bank, current_is_spatial_owner,
+                                       spatial_owner_bank_mask);
+  }
+  return resolveTextureBankOwnership(current_bank, current_is_owner,
+                                     authored_owner_bank_mask);
+}
+
+// HMD actors, SPFX and the weapon GMDs are resident mission resources, not
+// room assets. Retail composes them into VRAM bank zero and keeps that source
+// while the streamed world changes banks at portals (for example SUBWAY and
+// MUSEUM). Every HMD texture reference in the 20 retail mission archives is
+// backed by bank zero; the same pages in bank one are unrelated world data or
+// empty. Spatially rebinding an HMD therefore makes the body disappear while
+// its separately submitted weapon remains visible.
+inline constexpr std::uint8_t resident_hmd_texture_bank = 0U;
+inline constexpr std::uint8_t resident_weapon_texture_bank = 0U;
+
+[[nodiscard]] constexpr std::uint8_t resolveDisplayedObjectTextureBank(
+    std::uint8_t object_bank, bool hmd_backed) noexcept {
+  return hmd_backed ? resident_hmd_texture_bank : object_bank;
+}
+
 // A native checkpoint is only the presentation half of one guest snapshot.
 // Restoring it without a healthy runtime would combine unrelated timelines.
 [[nodiscard]] constexpr bool
@@ -580,6 +647,8 @@ public:
   [[nodiscard]] std::uint8_t textureBankAt(double x, double z) const noexcept;
   [[nodiscard]] std::uint8_t
   objectTextureBank(std::uint16_t index) const noexcept;
+  [[nodiscard]] std::uint8_t
+  displayedObjectTextureBank(std::uint16_t index) const noexcept;
   [[nodiscard]] const GameplayHud &hud() const noexcept { return hud_; }
   [[nodiscard]] bool canEquipWeapon(WeaponId id) const noexcept;
   [[nodiscard]] bool equipWeapon(WeaponId id) noexcept;
@@ -766,6 +835,11 @@ public:
   [[nodiscard]] std::optional<double>
   droppedItemGroundY(double x, double z, double reference_y,
                      std::uint16_t retail_room) const noexcept;
+  [[nodiscard]] std::optional<ActorGroundSurface>
+  actorGroundSurface(double x, double z, double reference_y) const noexcept;
+  [[nodiscard]] std::optional<ActorShadowSurfaceHit>
+  actorShadowSurface(double from_x, double from_y, double from_z, double to_x,
+                     double to_y, double to_z) const noexcept;
   [[nodiscard]] bool
   droppedItemVisibleFrom(double from_x, double from_y, double from_z,
                          double to_x, double to_y, double to_z,
@@ -782,6 +856,9 @@ private:
   struct GroundHit {
     double y{};
     std::uint16_t model{};
+    double normal_x{};
+    double normal_y{1.0};
+    double normal_z{};
   };
 
   [[nodiscard]] GroundHit findGround(double x, double z,

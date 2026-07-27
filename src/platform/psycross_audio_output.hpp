@@ -58,20 +58,20 @@ public:
   void reset(std::string_view reason = "explicit") noexcept;
 
 private:
-  // 128 stereo frames are 2.9 ms at the native SPU rate.  Keeping the device
-  // block below one 240 Hz presentation interval prevents a freshly mixed
-  // key-on from sitting behind an entire visible frame.  The queue bound still
-  // covers the slowest supported presentation cadence; renderer stalls are
-  // handled by AudioOutputCatchUpPolicy before they can build a stale tail.
+  // 128 stereo frames are 2.9 ms at the native SPU rate. The callback sink
+  // consumes a lock-free jitter ring, while the producer keeps any temporarily
+  // unwritten frames in FIFO staging. No generated SPU frame is replaced by a
+  // newer frame merely because the renderer or audio device stalled.
   static constexpr std::size_t frames_per_buffer = 128U;
   static constexpr std::size_t maximum_queued_buffers = 24U;
   static constexpr std::size_t maximum_stream_frames =
-      frames_per_buffer * maximum_queued_buffers;
+      psx::Spu::sample_rate / 2U;
   static constexpr std::size_t maximum_staged_frames =
       psx::Spu::pcm_queue_capacity;
   static constexpr std::size_t restart_fade_frames =
       psx::Spu::sample_rate / 200U;
   void collectProcessed();
+  void fillCallbackRing();
   void uploadReadyBuffers(bool flush_partial);
   void uploadBuffer(std::span<const psx::SpuPcmFrame> frames);
   void compactStaging();
@@ -104,7 +104,6 @@ private:
   std::atomic<bool> callback_starved_{};
   std::uint64_t submitted_frames_{};
   std::uint64_t uploaded_frames_{};
-  std::uint64_t discarded_staged_frames_{};
   std::uint64_t recycled_buffers_{};
   std::uint64_t source_starts_{};
   std::uint64_t source_underruns_{};

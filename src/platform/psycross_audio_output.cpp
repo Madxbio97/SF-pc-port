@@ -51,9 +51,26 @@ void requireAl(const char *operation) {
 bool psyCrossAudioDiagnosticsEnabled() noexcept {
   static const auto enabled = [] {
     const auto *value = SDL_getenv("SF_AUDIO_DIAGNOSTICS");
-    return value != nullptr && value[0] != '\0' && std::strcmp(value, "0") != 0;
+    // Keep the one-second clock/SPU/sink trace enabled in public builds.  The
+    // log is bounded by presentation time rather than callback count and is
+    // the only reliable way to distinguish guest under-production, host
+    // scheduling stalls and device underruns after a long play session.
+    return value == nullptr || value[0] == '\0' || std::strcmp(value, "0") != 0;
   }();
   return enabled;
+}
+
+bool callbackBufferRequested() noexcept {
+  static const auto requested = [] {
+    const auto *value = SDL_getenv("SF_OPENAL_CALLBACK_BUFFER");
+    // OpenAL Soft's callback buffer is the primary continuous sink. It keeps
+    // the device source alive across host scheduling jitter and avoids the
+    // stop/unqueue/restart races inherent to short AL buffer queues. Keep the
+    // queued implementation as a compatibility fallback and an explicit
+    // diagnostic override.
+    return value == nullptr || value[0] == '\0' || std::strcmp(value, "0") != 0;
+  }();
+  return requested;
 }
 
 PsyCrossAudioContext::PsyCrossAudioContext() {
@@ -84,15 +101,13 @@ PsyCrossAudioContext::~PsyCrossAudioContext() {
   }
 }
 
-PsyCrossAudioOutput::PsyCrossAudioOutput(
-    std::size_t minimum_start_buffers, std::string diagnostic_name,
-    PsyCrossAudioStreamKind stream_kind)
-    : diagnostic_name_(std::move(diagnostic_name)),
-      stream_kind_(stream_kind),
-      minimum_start_frames_(
-          std::clamp<std::size_t>(minimum_start_buffers, 1U,
-                                  maximum_queued_buffers) *
-          frames_per_buffer),
+PsyCrossAudioOutput::PsyCrossAudioOutput(std::size_t minimum_start_buffers,
+                                         std::string diagnostic_name,
+                                         PsyCrossAudioStreamKind stream_kind)
+    : diagnostic_name_(std::move(diagnostic_name)), stream_kind_(stream_kind),
+      minimum_start_frames_(std::clamp<std::size_t>(minimum_start_buffers, 1U,
+                                                    maximum_queued_buffers) *
+                            frames_per_buffer),
       start_policy_(std::clamp<std::size_t>(
           stream_kind == PsyCrossAudioStreamKind::continuous
               ? std::max<std::size_t>(minimum_start_buffers, 8U)
@@ -115,7 +130,12 @@ PsyCrossAudioOutput::PsyCrossAudioOutput(
     alSourcef(source_, AL_GAIN, gain_policy_.gain());
     requireAl("Cannot configure gameplay audio gain");
 
+    // The callback buffer consumes the SPSC ring directly on OpenAL's device
+    // thread. Variable callback sizes are harmless because producer overflow
+    // remains in FIFO staging and is copied into the ring by update()/flush().
+    // No resampling, time stretching or newest-tail replacement is involved.
     if (stream_kind_ == PsyCrossAudioStreamKind::continuous &&
+        callbackBufferRequested() &&
         alIsExtensionPresent("AL_SOFT_callback_buffer") == AL_TRUE) {
       buffer_callback_ = reinterpret_cast<LPALBUFFERCALLBACKSOFT>(
           alGetProcAddress("alBufferCallbackSOFT"));
@@ -159,7 +179,7 @@ PsyCrossAudioOutput::PsyCrossAudioOutput(
         "[AudioDiag][open] role=%s source=%u device=\"%s\" "
         "device_hz=%d refresh=%d sync=%d sample_hz=%u block_frames=%zu "
         "start_buffers=%zu start_frames=%zu max_buffers=%zu sink=%s "
-        "ring_frames=%zu\n",
+        "ring_frames=%zu callback_opt_in=%u\n",
         diagnostic_name_.c_str(), static_cast<unsigned int>(source_),
         device_name != nullptr ? device_name : "unknown", frequency, refresh,
         synchronous, psx::Spu::sample_rate, frames_per_buffer,
@@ -167,7 +187,7 @@ PsyCrossAudioOutput::PsyCrossAudioOutput(
                                 maximum_queued_buffers),
         minimum_start_frames_, maximum_queued_buffers,
         buffer_callback_ != nullptr ? "callback" : "queued",
-        stream_frames_.capacity());
+        stream_frames_.capacity(), callbackBufferRequested() ? 1U : 0U);
   } catch (...) {
     if (callback_buffer_ != 0U) {
       alSourcei(source_, AL_BUFFER, 0);
@@ -212,17 +232,15 @@ void PsyCrossAudioOutput::queue(std::span<const psx::SpuPcmFrame> frames) {
   submitted_frames_ += frames.size();
 
   if (buffer_callback_ != nullptr) {
-    const auto writable = stream_frames_.capacity() - stream_frames_.size();
-    // A producer burst must never turn into an ever-growing stale tail. Keep
-    // the newest part of this wall-clock slice when the bounded jitter ring is
-    // full; already published frames remain untouched for the realtime
-    // consumer, while superseded intermediate samples are discarded.
-    const auto retained = std::min(frames.size(), writable);
-    const auto skipped = frames.size() - retained;
-    const auto accepted =
-        stream_frames_.push(frames.subspan(skipped, retained));
-    uploaded_frames_ += accepted;
-    discarded_staged_frames_ += skipped + retained - accepted;
+    compactStaging();
+    const auto staged_count = staged_frames_.size() - staged_offset_;
+    if (frames.size() > maximum_staged_frames -
+                            std::min(staged_count, maximum_staged_frames)) {
+      throw core::Error{core::ErrorCode::io,
+                        "Gameplay audio timeline exceeded its FIFO bound"};
+    }
+    staged_frames_.insert(staged_frames_.end(), frames.begin(), frames.end());
+    fillCallbackRing();
     applyGainStep();
     startIfNeeded();
     return;
@@ -230,23 +248,12 @@ void PsyCrossAudioOutput::queue(std::span<const psx::SpuPcmFrame> frames) {
 
   compactStaging();
   const auto staged_count = staged_frames_.size() - staged_offset_;
-  if (frames.size() >= maximum_staged_frames) {
-    discarded_staged_frames_ +=
-        staged_count + frames.size() - maximum_staged_frames;
-    staged_frames_.assign(
-        frames.end() - static_cast<std::ptrdiff_t>(maximum_staged_frames),
-        frames.end());
-    staged_offset_ = 0U;
-  } else {
-    if (staged_count + frames.size() > maximum_staged_frames) {
-      const auto discarded =
-          staged_count + frames.size() - maximum_staged_frames;
-      discarded_staged_frames_ += discarded;
-      staged_offset_ += discarded;
-      compactStaging();
-    }
-    staged_frames_.insert(staged_frames_.end(), frames.begin(), frames.end());
+  if (frames.size() > maximum_staged_frames -
+                          std::min(staged_count, maximum_staged_frames)) {
+    throw core::Error{core::ErrorCode::io,
+                      "Gameplay audio timeline exceeded its FIFO bound"};
   }
+  staged_frames_.insert(staged_frames_.end(), frames.begin(), frames.end());
   collectProcessed();
   uploadReadyBuffers(false);
   applyGainStep();
@@ -255,6 +262,7 @@ void PsyCrossAudioOutput::queue(std::span<const psx::SpuPcmFrame> frames) {
 
 void PsyCrossAudioOutput::flush() {
   if (buffer_callback_ != nullptr) {
+    fillCallbackRing();
     applyGainStep();
     startIfNeeded();
     return;
@@ -263,6 +271,21 @@ void PsyCrossAudioOutput::flush() {
   uploadReadyBuffers(true);
   applyGainStep();
   startIfNeeded();
+}
+
+void PsyCrossAudioOutput::fillCallbackRing() {
+  while (staged_offset_ < staged_frames_.size()) {
+    const auto remaining = staged_frames_.size() - staged_offset_;
+    const auto accepted = stream_frames_.push(
+        std::span<const psx::SpuPcmFrame>{staged_frames_}.subspan(
+            staged_offset_, remaining));
+    if (accepted == 0U) {
+      break;
+    }
+    staged_offset_ += accepted;
+    uploaded_frames_ += accepted;
+  }
+  compactStaging();
 }
 
 void PsyCrossAudioOutput::uploadReadyBuffers(bool flush_partial) {
@@ -318,8 +341,7 @@ void PsyCrossAudioOutput::uploadBuffer(
           static_cast<std::int32_t>(restart_fade_frames));
       --fade_remaining;
     }
-    fade_in_frames_remaining_.store(fade_remaining,
-                                    std::memory_order_relaxed);
+    fade_in_frames_remaining_.store(fade_remaining, std::memory_order_relaxed);
     upload_frames = std::span<const psx::SpuPcmFrame>{upload_scratch_};
   }
 
@@ -334,6 +356,7 @@ void PsyCrossAudioOutput::uploadBuffer(
 
 void PsyCrossAudioOutput::update() {
   if (buffer_callback_ != nullptr) {
+    fillCallbackRing();
     applyGainStep();
     startIfNeeded();
     return;
@@ -350,7 +373,7 @@ ALsizei AL_APIENTRY PsyCrossAudioOutput::streamCallback(
     return 0;
   }
   return static_cast<PsyCrossAudioOutput *>(user)->fillStream(samples,
-                                                               byte_count);
+                                                              byte_count);
 }
 
 ALsizei PsyCrossAudioOutput::fillStream(ALvoid *samples,
@@ -387,8 +410,8 @@ ALsizei PsyCrossAudioOutput::fillStream(ALvoid *samples,
 
   auto fade_remaining =
       fade_in_frames_remaining_.load(std::memory_order_relaxed);
-  for (auto index = std::size_t{};
-       index < supplied && fade_remaining != 0U; ++index) {
+  for (auto index = std::size_t{}; index < supplied && fade_remaining != 0U;
+       ++index) {
     const auto completed = restart_fade_frames - fade_remaining;
     const auto numerator = static_cast<std::int32_t>(completed + 1U);
     destination[index].left = static_cast<std::int16_t>(
@@ -426,19 +449,19 @@ void PsyCrossAudioOutput::logDiagnostics(
   alGetSourcef(source_, AL_GAIN, &gain);
   alGetSourcef(source_, AL_PITCH, &pitch);
   const auto error = alGetError();
-  const auto staged =
-      buffer_callback_ != nullptr
-          ? stream_frames_.size()
-          : (staged_frames_.size() >= staged_offset_
-                 ? staged_frames_.size() - staged_offset_
-                 : 0U);
+  const auto producer_staged = staged_frames_.size() >= staged_offset_
+                                   ? staged_frames_.size() - staged_offset_
+                                   : 0U;
+  const auto staged = producer_staged +
+                      (buffer_callback_ != nullptr ? stream_frames_.size()
+                                                   : 0U);
   PsyX_Log_Info(
       "[AudioDiag][host] role=%s context=%.*s valid=%u al_error=%d "
       "sink=%s state=%s(%d) queued=%d processed=%d sample_offset=%d "
       "sec_offset=%.6f staged_frames=%zu buffers=%zu free=%zu "
       "prebuffer=%u gain=%.3f target_gain=%u pitch=%.3f submitted=%llu "
-      "uploaded=%llu "
-      "staged_dropped=%llu recycled=%llu starts=%llu underruns=%llu "
+      "uploaded=%llu producer_staged=%zu recycled=%llu starts=%llu "
+      "underruns=%llu "
       "resets=%llu callback_read=%llu callback_silence=%llu "
       "callback_starvations=%llu\n",
       diagnostic_name_.c_str(), static_cast<int>(context.size()),
@@ -453,7 +476,7 @@ void PsyCrossAudioOutput::logDiagnostics(
       static_cast<double>(pitch),
       static_cast<unsigned long long>(submitted_frames_),
       static_cast<unsigned long long>(uploaded_frames_),
-      static_cast<unsigned long long>(discarded_staged_frames_),
+      producer_staged,
       static_cast<unsigned long long>(recycled_buffers_),
       static_cast<unsigned long long>(source_starts_),
       static_cast<unsigned long long>(source_underruns_),
@@ -485,6 +508,8 @@ void PsyCrossAudioOutput::reset(std::string_view reason) noexcept {
     // publishes the new empty generation. The callback buffer remains
     // attached and can be restarted without reallocating device objects.
     stream_frames_.clear();
+    staged_frames_.clear();
+    staged_offset_ = 0U;
     fade_in_frames_remaining_.store(restart_fade_frames,
                                     std::memory_order_relaxed);
     callback_starved_.store(false, std::memory_order_relaxed);
@@ -591,8 +616,7 @@ void PsyCrossAudioOutput::startIfNeeded() {
           static_cast<unsigned long long>(
               callback_silence_frames_.load(std::memory_order_relaxed)));
     }
-    if (state != AL_PLAYING &&
-        stream_frames_.size() >= minimum_start_frames_) {
+    if (state != AL_PLAYING && stream_frames_.size() >= minimum_start_frames_) {
       alSourcePlay(source_);
       requireAl("Cannot start callback gameplay audio");
       ++source_starts_;

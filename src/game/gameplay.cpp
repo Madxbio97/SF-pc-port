@@ -82,10 +82,8 @@ std::optional<GrenadePresentationPoint> retailGrenadePresentationPoint(
   const auto origin_x = static_cast<double>(trajectory.origin.x);
   const auto origin_y = static_cast<double>(trajectory.origin.y);
   const auto origin_z = static_cast<double>(trajectory.origin.z);
-  const auto horizontal_x =
-      static_cast<double>(trajectory.target.x) - origin_x;
-  const auto horizontal_z =
-      static_cast<double>(trajectory.target.z) - origin_z;
+  const auto horizontal_x = static_cast<double>(trajectory.target.x) - origin_x;
+  const auto horizontal_z = static_cast<double>(trajectory.target.z) - origin_z;
   const auto horizontal_distance = std::hypot(horizontal_x, horizontal_z);
   if (horizontal_distance < 1.0) {
     return std::nullopt;
@@ -101,9 +99,8 @@ std::optional<GrenadePresentationPoint> retailGrenadePresentationPoint(
   const auto cosine = std::cos(launch_angle);
   const auto tangent = std::tan(launch_angle);
   constexpr auto gravity = 10518.0 / 4096.0;
-  const auto denominator =
-      2.0 * cosine * cosine *
-      (horizontal_distance * tangent - vertical_distance);
+  const auto denominator = 2.0 * cosine * cosine *
+                           (horizontal_distance * tangent - vertical_distance);
   if (!std::isfinite(denominator) || denominator <= 0.001) {
     return std::nullopt;
   }
@@ -115,17 +112,14 @@ std::optional<GrenadePresentationPoint> retailGrenadePresentationPoint(
 
   const auto direction_x = horizontal_x / horizontal_distance;
   const auto direction_z = horizontal_z / horizontal_distance;
-  const auto from_origin_x =
-      static_cast<double>(retail_position.x) - origin_x;
-  const auto from_origin_z =
-      static_cast<double>(retail_position.z) - origin_z;
-  const auto travelled = std::clamp(from_origin_x * direction_x +
-                                        from_origin_z * direction_z,
-                                    0.0, horizontal_distance);
+  const auto from_origin_x = static_cast<double>(retail_position.x) - origin_x;
+  const auto from_origin_z = static_cast<double>(retail_position.z) - origin_z;
+  const auto travelled =
+      std::clamp(from_origin_x * direction_x + from_origin_z * direction_z, 0.0,
+                 horizontal_distance);
   const auto ballistic_y =
       origin_y + travelled * tangent -
-      gravity * travelled * travelled /
-          (2.0 * speed_squared * cosine * cosine);
+      gravity * travelled * travelled / (2.0 * speed_squared * cosine * cosine);
   if (!std::isfinite(ballistic_y)) {
     return std::nullopt;
   }
@@ -144,26 +138,6 @@ double fallbackGrenadePresentationY(const LegacyNativePoint &retail_position,
       std::clamp(static_cast<double>(age) / retail_lifetime, 0.0, 1.0);
   const auto lift = 4.0 * apex_height * time * (1.0 - time);
   return -static_cast<double>(retail_position.y) - lift;
-}
-
-std::uint64_t
-legacyGuestIdentity(const LegacyObjectBridgeState &guest) noexcept {
-  auto value =
-      static_cast<std::uint64_t>(guest.definition) |
-      (static_cast<std::uint64_t>(static_cast<std::uint16_t>(guest.class_id))
-       << 32U);
-  const auto mix = [&value](std::uint32_t component) {
-    value ^= static_cast<std::uint64_t>(component) + 0x9e3779b97f4a7c15ULL +
-             (value << 6U) + (value >> 2U);
-  };
-  mix(static_cast<std::uint32_t>(guest.authored_position.x));
-  mix(static_cast<std::uint32_t>(guest.authored_position.y));
-  mix(static_cast<std::uint32_t>(guest.authored_position.z));
-  mix(guest.path_pointer);
-  mix(static_cast<std::uint32_t>(guest.attributes));
-  mix(static_cast<std::uint32_t>(guest.parameter));
-  mix(static_cast<std::uint32_t>(guest.linked_slot));
-  return value == 0U ? 1U : value;
 }
 
 bool legacyRetiredDynamicObject(const LegacyObjectBridgeState &guest) noexcept {
@@ -825,6 +799,27 @@ retailWeaponStepsToTarget(const PlayerInventory &source, WeaponId target,
 }
 
 } // namespace
+
+std::uint64_t
+legacyGuestIdentity(const LegacyObjectBridgeState &guest) noexcept {
+  auto value =
+      static_cast<std::uint64_t>(guest.definition) |
+      (static_cast<std::uint64_t>(static_cast<std::uint16_t>(guest.class_id))
+       << 32U);
+  const auto mix = [&value](std::uint32_t component) {
+    value ^= static_cast<std::uint64_t>(component) + 0x9e3779b97f4a7c15ULL +
+             (value << 6U) + (value >> 2U);
+  };
+  mix(static_cast<std::uint32_t>(guest.authored_position.x));
+  mix(static_cast<std::uint32_t>(guest.authored_position.y));
+  mix(static_cast<std::uint32_t>(guest.authored_position.z));
+  mix(guest.path_pointer);
+  mix(guest.instance);
+  mix(static_cast<std::uint32_t>(guest.attributes));
+  mix(static_cast<std::uint32_t>(guest.parameter));
+  mix(static_cast<std::uint32_t>(guest.linked_slot));
+  return value == 0U ? 1U : value;
+}
 
 std::optional<ActorAimHit> actorAimHit(const ActorAimRay &ray, double actor_x,
                                        double actor_y,
@@ -2022,16 +2017,14 @@ std::vector<std::uint16_t> GameplaySession::buildActiveModels(
   for (const auto model : mission_.layout().visibility(room).active_models) {
     add_unique(model);
   }
-  // The authored DAT visibility record has a prefetch tail immediately past
-  // the current room envelope. Native widescreen presentation can expose that
-  // edge before the retail 4:3 portal traversal does, so render the already
-  // resident prefetch ring as well. This extends the visible world by one
-  // authored streaming step without inventing adjacency or changing retail
-  // simulation/trigger ownership.
-  for (const auto model :
-       mission_.layout().visibility(room).prefetched_models) {
-    add_unique(model);
-  }
+  // Values after the DAT 0xfe marker are a streaming prefetch tail, not a
+  // display list. Treating them as visible made their terrain, static objects
+  // and both texture banks compete with the current portal envelope. Apart
+  // from drawing geometry retail never submitted, that could consume every
+  // native page alias before the player/actor textures were made resident.
+  // The exact guest traversal below is the runtime visibility supplement;
+  // prefetched models remain parsed by LevelLayout but never become active
+  // merely because their resources are staged for a later room.
   // DAT_8012c7d8 contains per-frame portal traversal depths for the retail
   // 4:3 camera, not the complete streamed terrain set. It is useful as a
   // supplemental dynamic visibility signal, but replacing the DAT room
@@ -2109,7 +2102,7 @@ void GameplaySession::rebuildActiveObjects() {
 
 GameplaySession::GroundHit
 GameplaySession::findGround(double x, double z, double reference_y) const {
-  GroundHit best{0.0, std::numeric_limits<std::uint16_t>::max()};
+  GroundHit best{0.0, std::numeric_limits<std::uint16_t>::max(), 0.0, 1.0, 0.0};
   auto best_distance = std::numeric_limits<double>::max();
   for (const auto model_index : active_models_) {
     const auto &model = models_[model_index];
@@ -2132,8 +2125,22 @@ GameplaySession::findGround(double x, double z, double reference_y) const {
           }
           const auto distance = std::abs(height - reference_y);
           if (distance < best_distance) {
+            const auto edge_a = Point3{b.x - a.x, b.y - a.y, b.z - a.z};
+            const auto edge_b = Point3{c.x - a.x, c.y - a.y, c.z - a.z};
+            const auto normal = Point3{
+                edge_a.y * edge_b.z - edge_a.z * edge_b.y,
+                edge_a.z * edge_b.x - edge_a.x * edge_b.z,
+                edge_a.x * edge_b.y - edge_a.y * edge_b.x,
+            };
+            const auto length =
+                std::sqrt(normal.x * normal.x + normal.y * normal.y +
+                          normal.z * normal.z);
+            if (length <= 0.0001) {
+              return;
+            }
             best_distance = distance;
-            best = GroundHit{height, model_index};
+            best = GroundHit{height, model_index, normal.x / length,
+                             normal.y / length, normal.z / length};
           }
         };
         consider(first, second, third);
@@ -2166,7 +2173,7 @@ GameplaySession::findGround(double x, double z, double reference_y) const {
       best_distance = distance;
       // The room below the platform remains the streaming owner at both
       // stops; elevator motion itself is not a portal transition.
-      best = GroundHit{*height, current_room_};
+      best = GroundHit{*height, current_room_, 0.0, 1.0, 0.0};
     }
   }
   return best;
@@ -2424,6 +2431,99 @@ GameplaySession::droppedItemGroundY(double x, double z, double reference_y,
     }
   }
   return best;
+}
+
+std::optional<ActorGroundSurface>
+GameplaySession::actorGroundSurface(double x, double z,
+                                    double reference_y) const noexcept {
+  const auto ground = findGround(x, z, reference_y);
+  if (ground.model >= models_.size()) {
+    return std::nullopt;
+  }
+  return ActorGroundSurface{ground.y, ground.normal_x, ground.normal_y,
+                            ground.normal_z};
+}
+
+std::optional<ActorShadowSurfaceHit>
+GameplaySession::actorShadowSurface(double from_x, double from_y, double from_z,
+                                    double to_x, double to_y,
+                                    double to_z) const noexcept {
+  const Point3 from{from_x, from_y, from_z};
+  const Point3 to{to_x, to_y, to_z};
+  const auto direction = Point3{to.x - from.x, to.y - from.y, to.z - from.z};
+  auto nearest = 1.0;
+  auto result = std::optional<ActorShadowSurfaceHit>{};
+  const auto consider = [&](const Point3 &first, const Point3 &second,
+                            const Point3 &third) {
+    const auto hit =
+        segmentTriangleIntersection(from, to, first, second, third);
+    if (!hit || *hit >= nearest) {
+      return;
+    }
+    const auto edge_a =
+        Point3{second.x - first.x, second.y - first.y, second.z - first.z};
+    const auto edge_b =
+        Point3{third.x - first.x, third.y - first.y, third.z - first.z};
+    auto normal = Point3{
+        edge_a.y * edge_b.z - edge_a.z * edge_b.y,
+        edge_a.z * edge_b.x - edge_a.x * edge_b.z,
+        edge_a.x * edge_b.y - edge_a.y * edge_b.x,
+    };
+    const auto normal_length = std::sqrt(
+        normal.x * normal.x + normal.y * normal.y + normal.z * normal.z);
+    if (!std::isfinite(normal_length) || normal_length <= 0.000001) {
+      return;
+    }
+    normal = {normal.x / normal_length, normal.y / normal_length,
+              normal.z / normal_length};
+    if (normal.x * direction.x + normal.y * direction.y +
+            normal.z * direction.z >
+        0.0) {
+      normal = {-normal.x, -normal.y, -normal.z};
+    }
+    nearest = *hit;
+    result = ActorShadowSurfaceHit{
+        from.x + direction.x * *hit,
+        from.y + direction.y * *hit,
+        from.z + direction.z * *hit,
+        normal.x,
+        normal.y,
+        normal.z,
+    };
+  };
+  for (const auto model_index : active_models_) {
+    if (model_index >= models_.size()) {
+      continue;
+    }
+    const auto &model = models_[model_index];
+    if (!segmentOverlapsBounds(from, to, model.bounds)) {
+      continue;
+    }
+    for (const auto &section : model.scene.sections()) {
+      if (!segmentOverlapsBounds(from, to, section.bounds)) {
+        continue;
+      }
+      for (const auto &polygon : section.polygons) {
+        if (!polygon.renderable ||
+            polygon.vertex_indices[0] >= section.vertices.size() ||
+            polygon.vertex_indices[1] >= section.vertices.size() ||
+            polygon.vertex_indices[2] >= section.vertices.size()) {
+          continue;
+        }
+        const auto first = point(section.vertices[polygon.vertex_indices[0]]);
+        const auto second = point(section.vertices[polygon.vertex_indices[1]]);
+        const auto third = point(section.vertices[polygon.vertex_indices[2]]);
+        consider(first, second, third);
+        if (polygon.quad &&
+            polygon.vertex_indices[3] < section.vertices.size()) {
+          const auto fourth =
+              point(section.vertices[polygon.vertex_indices[3]]);
+          consider(second, fourth, third);
+        }
+      }
+    }
+  }
+  return result;
 }
 
 bool GameplaySession::droppedItemVisibleFrom(
@@ -4261,6 +4361,12 @@ void GameplaySession::syncLegacyResidentObjects(
         actor_hmd != nullptr &&
         legacyGuestHmdPoseComplete(guest.bone_matrix_count,
                                    actor_hmd->parts().size());
+    const auto has_retained_guest_pose =
+        actor_hmd != nullptr &&
+        legacyGuestHmdPoseComplete(objects_[scene].legacy_hmd_bone_count,
+                                   actor_hmd->parts().size());
+    const auto actor_pose_available = legacyGuestActorPoseAvailable(
+        has_complete_guest_pose, has_retained_guest_pose);
     const auto resident_presentation =
         guest.resident && (guest.presentation_controller == 0U ||
                            guest.presentation_enabled != 0U);
@@ -4291,7 +4397,7 @@ void GameplaySession::syncLegacyResidentObjects(
         actor ? legacyGuestActorStreamVisible(
                     source_streamed, live_position_streamed, guest.pose_flags,
                     opening_actor, guest.simulated, retail_dormant,
-                    has_complete_guest_pose)
+                    actor_pose_available)
               : source_streamed || live_position_streamed;
     // Destructible lights such as LIGHT/SPOTLT set both the generic destroyed
     // latch and the dormant bit, then retain the same object record to draw
@@ -4365,8 +4471,13 @@ void GameplaySession::syncLegacyResidentObjects(
                                           ? guest.ground_contact_y
                                           : guest.position.y);
       }
-      syncLegacyHmdBones(objects_[scene], guest, contact_space_fallback,
-                         !has_complete_guest_pose);
+      // A partial/absent table is a guest display-list transition, not a new
+      // actor lifetime. Keep the last complete world-space matrices until the
+      // bridge publishes the next complete table. Explicit hide/retire paths
+      // above still clear the cache immediately.
+      if (has_complete_guest_pose) {
+        syncLegacyHmdBones(objects_[scene], guest, contact_space_fallback);
+      }
       state.home_x = state.x;
       state.home_y = state.y;
       state.home_z = state.z;
@@ -4739,7 +4850,7 @@ void GameplaySession::syncLegacyGameplayBridge() {
       const auto &retail = *source;
       auto x = static_cast<double>(retail.transform.translation.x);
       auto y = fallbackGrenadePresentationY(retail.transform.translation,
-                                             retail.age);
+                                            retail.age);
       auto z = static_cast<double>(retail.transform.translation.z);
       if (player_projectile && legacy_player_grenade_trajectory_) {
         if (const auto point = retailGrenadePresentationPoint(
@@ -5230,18 +5341,27 @@ void GameplaySession::syncLegacyOpeningBridge(
         actor_hmd != nullptr &&
         legacyGuestHmdPoseComplete(guest.bone_matrix_count,
                                    actor_hmd->parts().size());
+    const auto has_retained_guest_pose =
+        actor_hmd != nullptr &&
+        legacyGuestHmdPoseComplete(
+            objects_[*scene_object].legacy_hmd_bone_count,
+            actor_hmd->parts().size());
+    const auto actor_pose_available = legacyGuestActorPoseAvailable(
+        has_complete_guest_pose, has_retained_guest_pose);
     const auto presented =
         guest.resident &&
         (guest.presentation_controller == 0U ||
          guest.presentation_enabled != 0U) &&
         (guest.instance_state[3] & legacy_instance_dormant) == 0U &&
-        has_complete_guest_pose;
+        actor_pose_available;
     if (!presented) {
       resetLegacyBridgedPresentation(state);
       state.active = false;
       state.health = static_cast<std::uint16_t>(std::max<int>(guest.health, 0));
       object_health_[*scene_object] = state.health;
       object_script_hidden_[*scene_object] = true;
+      objects_[*scene_object].legacy_hmd_bone_count = 0U;
+      objects_[*scene_object].legacy_hmd_root_space = false;
       std::erase(active_objects_, *scene_object);
       continue;
     }
@@ -5304,8 +5424,10 @@ void GameplaySession::syncLegacyOpeningBridge(
       state.alert_memory_updates = npc_alert_memory_updates;
     }
 
-    syncLegacyHmdBones(objects_[*scene_object], guest, contact_space_fallback,
-                       !has_complete_guest_pose);
+    if (has_complete_guest_pose) {
+      syncLegacyHmdBones(objects_[*scene_object], guest,
+                         contact_space_fallback);
+    }
     auto &transform = objects_[*scene_object].transform;
     transform.rotation = guest.guest_rotation;
     transform.x = guest.position.x;
@@ -5658,23 +5780,20 @@ GameplaySession::objectTextureBank(std::uint16_t index) const noexcept {
                          static_cast<double>(object.transform.z));
   }
 
-  auto active_owner_bank_mask = std::uint8_t{};
+  auto authored_owner_bank_mask = std::uint8_t{};
   auto spatial_owner_bank_mask = std::uint8_t{};
   auto current_is_owner = false;
   auto current_is_spatial_owner = false;
   const auto authored_owners =
       mission_.objects().roomsContainingObject(object.source_index);
   for (const auto room : authored_owners) {
-    if (std::ranges::find(active_models_, room) == active_models_.end()) {
-      continue;
-    }
     if (room >= models_.size() || room >= mission_.objects().roomCount()) {
       continue;
     }
     current_is_owner |= room == current_room_;
     const auto bank = models_[room].scene.textureBank();
     if (bank < 2U) {
-      active_owner_bank_mask |= static_cast<std::uint8_t>(1U << bank);
+      authored_owner_bank_mask |= static_cast<std::uint8_t>(1U << bank);
       if (containsXZ(models_[room].bounds, object.transform.x,
                      object.transform.z)) {
         spatial_owner_bank_mask |= static_cast<std::uint8_t>(1U << bank);
@@ -5682,16 +5801,25 @@ GameplaySession::objectTextureBank(std::uint16_t index) const noexcept {
       }
     }
   }
-  // Portal display lists intentionally share static objects. The current DAT
-  // may therefore name both banks while only one owner's bounds contains the
-  // authored object. Prefer that spatial owner; selecting the camera room's
-  // bank is what put unrelated metro textures on otherwise correct models.
-  if (spatial_owner_bank_mask != 0U) {
-    return resolveTextureBankOwnership(current_bank, current_is_spatial_owner,
-                                       spatial_owner_bank_mask);
-  }
-  return resolveTextureBankOwnership(current_bank, current_is_owner,
-                                     active_owner_bank_mask);
+  // Retail may keep a guest object resident after its authored room leaves the
+  // native active-room set. Its texture provenance does not leave with that
+  // room: falling back to the new camera bank pasted unrelated metro/museum
+  // texels onto the retained model. Inspect every authored owner, then prefer
+  // the spatial owner when portal display lists name rooms from both banks.
+  return resolveAuthoredObjectTextureBank(
+      current_bank, current_is_owner, current_is_spatial_owner,
+      spatial_owner_bank_mask, authored_owner_bank_mask);
+}
+
+std::uint8_t GameplaySession::displayedObjectTextureBank(
+    std::uint16_t index) const noexcept {
+  const auto *model = displayedObjectModel(index);
+  const auto hmd_backed =
+      model != nullptr &&
+      std::holds_alternative<assets::HmdModel>(model->geometry);
+  const auto bank =
+      hmd_backed ? resident_hmd_texture_bank : objectTextureBank(index);
+  return resolveDisplayedObjectTextureBank(bank, hmd_backed);
 }
 
 NpcAnimationRequest

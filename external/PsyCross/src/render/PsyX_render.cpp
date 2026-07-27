@@ -8,6 +8,7 @@
 #include "PsyX/util/timer.h"
 
 #include <algorithm>
+#include <array>
 #include <assert.h>
 #include <string.h>
 
@@ -77,6 +78,7 @@ int g_RequestedDepthMode = 0;
 float g_PreviousPolygonOffsetSlope = 0.0f;
 float g_PreviousPolygonOffsetUnits = 0.0f;
 int g_PreviousStencilMode = 0;
+int g_ShadowStencilPhase = 0;
 int g_PreviousScissorState = 0;
 int g_PreviousOffscreenState = 0;
 RECT16 g_PreviousFramebuffer = { 0,0,0,0 };
@@ -86,6 +88,7 @@ ShaderID g_PreviousShader = -1;
 
 TextureID g_vramTexturesDouble[2];
 TextureID g_vramTexture;
+TextureID g_vramAliasTexture;
 TextureID g_rgLutTexture;
 int g_vramTextureIdx = 0;
 
@@ -788,6 +791,7 @@ void GR_Shutdown()
 
 	GR_DestroyTexture(g_vramTexturesDouble[0]);
 	GR_DestroyTexture(g_vramTexturesDouble[1]);
+	GR_DestroyTexture(g_vramAliasTexture);
 
 	GR_DestroyTexture(g_whiteTexture);
 	GR_DestroyTexture(g_rgLutTexture);
@@ -863,6 +867,55 @@ void GR_EndScene()
 //----------------------------------------------------------------------------------------
 
 unsigned short vram[VRAM_WIDTH * VRAM_HEIGHT];
+static unsigned short
+	g_vramAliasPages[VRAM_ALIAS_WIDTH * VRAM_ALIAS_HEIGHT]{};
+
+// A bounded CPU-side journal for diagnosing texture-page corruption. Every
+// LoadImage/MoveImage/ClearImage/framebuffer transfer ultimately reaches one
+// of the helpers below, so the scene streamer can report the exact writes
+// which touched a page after it was made resident without logging every GPU
+// command during normal play.
+static constexpr size_t GR_VRAM_WRITE_JOURNAL_CAPACITY = 512;
+static std::array<GrVRAMWriteEvent, GR_VRAM_WRITE_JOURNAL_CAPACITY>
+	g_vramWriteJournal{};
+static unsigned long long g_vramWriteSequence = 0;
+
+static void GR_RecordVRAMWrite(int kind, int source_x, int source_y,
+	int destination_x, int destination_y, int width, int height)
+{
+	if (width <= 0 || height <= 0)
+		return;
+	const unsigned long long sequence = ++g_vramWriteSequence;
+	g_vramWriteJournal[(sequence - 1) % GR_VRAM_WRITE_JOURNAL_CAPACITY] = {
+		sequence, kind, source_x, source_y, destination_x, destination_y,
+		width, height};
+}
+
+unsigned long long GR_GetVRAMWriteSequence()
+{
+	return g_vramWriteSequence;
+}
+
+int GR_ReadVRAMWriteEvents(unsigned long long after_sequence,
+	GrVRAMWriteEvent* events, int capacity)
+{
+	if (events == NULL || capacity <= 0)
+		return 0;
+	const unsigned long long current = g_vramWriteSequence;
+	const unsigned long long oldest =
+		current > GR_VRAM_WRITE_JOURNAL_CAPACITY
+			? current - GR_VRAM_WRITE_JOURNAL_CAPACITY
+			: 0;
+	unsigned long long sequence = std::max(after_sequence, oldest) + 1;
+	int count = 0;
+	while (sequence <= current && count < capacity)
+	{
+		events[count++] =
+			g_vramWriteJournal[(sequence - 1) % GR_VRAM_WRITE_JOURNAL_CAPACITY];
+		++sequence;
+	}
+	return count;
+}
 static u_char rgLUT[LUT_WIDTH * LUT_HEIGHT * sizeof(u_int)];
 
 void GR_ResetDevice()
@@ -885,6 +938,7 @@ typedef struct
 	GLint texelSizeLoc;
 	GLint texLoc;
 	GLint lutLoc;
+	GLint aliasLoc;
 #endif
 } PSXGPU_Shader;
 
@@ -904,8 +958,8 @@ GLint u_textureBlendModeLoc;
 #define GPU_SAMPLE_TEXTURE_4BIT_FUNC\
     "   // returns 16 bit colour\n"\
     "   vec2 samplePSX(vec2 tc) {\n"\
-    "       vec2 uv = (tc * vec2(0.25, 1.0) + v_page_clut.xy) * c_VRAMTexel;\n"\
-    "       vec2 comp = VRAM(uv);\n"\
+    "       vec2 texel = tc * vec2(0.25, 1.0) + v_page_clut.xy;\n"\
+    "       vec2 comp = PAGE(texel);\n"\
     "       int index = int(fract(tc.x / 4.0 + 0.0001) * 4.0);\n"\
     "       float v = _idx2(comp, index / 2) * (255.0 / 16.0);\n"\
     "       float f = floor(v + 0.001);\n"\
@@ -918,8 +972,8 @@ GLint u_textureBlendModeLoc;
 #define GPU_SAMPLE_TEXTURE_8BIT_FUNC\
 	"	// returns 16 bit colour\n"\
 	"	vec2 samplePSX(vec2 tc) {\n"\
-	"		vec2 uv = (tc * vec2(0.5, 1.0) + v_page_clut.xy) * c_VRAMTexel;\n"\
-	"		vec2 comp = VRAM(uv);\n"\
+	"		vec2 texel = tc * vec2(0.5, 1.0) + v_page_clut.xy;\n"\
+	"		vec2 comp = PAGE(texel);\n"\
 	"		vec2 clut_pos = v_page_clut.zw;\n"\
 	"		int index = int(mod(tc.x, 2.0));\n"\
 	"		clut_pos.x += _idx2(comp, index) * 255.0 * c_VRAMTexel.x;\n"\
@@ -929,8 +983,8 @@ GLint u_textureBlendModeLoc;
 
 #define GPU_SAMPLE_TEXTURE_16BIT_FUNC\
 	"	vec2 samplePSX(vec2 tc) {\n"\
-	"		vec2 uv = (tc + v_page_clut.xy) * c_VRAMTexel;\n"\
-	"		vec2 color_rg = VRAM(uv);\n"\
+	"		vec2 texel = tc + v_page_clut.xy;\n"\
+	"		vec2 color_rg = PAGE(texel);\n"\
 	"		return color_rg;\n"\
 	"	}\n"
 
@@ -938,14 +992,20 @@ GLint u_textureBlendModeLoc;
 
 #define GPU_FETCH_VRAM_FUNC \
 		"	const vec2 c_VRAMTexel = vec2(1.0 / 1024.0, 1.0 / 512.0);\n"\
+		"	const vec2 c_AliasTexel = vec2(1.0 / 1024.0, 1.0 / 1024.0);\n"\
 		"	uniform sampler2D s_texture;\n"\
-		"	vec2 VRAM(vec2 uv) { return texture2D(s_texture, uv).ra; }\n"
+		"	uniform sampler2D s_aliasTexture;\n"\
+		"	vec2 VRAM(vec2 uv) { return texture2D(s_texture, uv).ra; }\n"\
+		"	vec2 PAGE(vec2 texel) { return v_alias_page > 0.5 ? texture2D(s_aliasTexture, texel * c_AliasTexel).ra : VRAM(texel * c_VRAMTexel); }\n"
 #else
 
 #define GPU_FETCH_VRAM_FUNC \
 		"	const vec2 c_VRAMTexel = vec2(1.0 / 1024.0, 1.0 / 512.0);\n"\
+		"	const vec2 c_AliasTexel = vec2(1.0 / 1024.0, 1.0 / 1024.0);\n"\
 		"	uniform sampler2D s_texture;\n"\
-		"	vec2 VRAM(vec2 uv) { return texture2D(s_texture, uv).rg; }\n"
+		"	uniform sampler2D s_aliasTexture;\n"\
+		"	vec2 VRAM(vec2 uv) { return texture2D(s_texture, uv).rg; }\n"\
+		"	vec2 PAGE(vec2 texel) { return v_alias_page > 0.5 ? texture2D(s_aliasTexture, texel * c_AliasTexel).rg : VRAM(texel * c_VRAMTexel); }\n"
 #endif
 
 #if defined(RENDERER_OGL) || (OGLES_VERSION == 3)
@@ -1104,6 +1164,7 @@ static const char* gpu_shader_common = R"(
 	varying vec4 v_texcoord;
 	varying vec4 v_color;
 	FLAT varying vec4 v_page_clut;
+	FLAT varying float v_alias_page;
 	FLAT varying vec4 v_texbounds;
 	varying float v_z;
 )";
@@ -1136,11 +1197,12 @@ const char* gpu_shader_32_rgba =
 #endif
 
 #define GTE_VERTEX_SHADER \
-	"	attribute vec4 a_position;\n"\
+	"	attribute vec2 a_position;\n"\
+	"	attribute vec2 a_page_clut; // unsigned host TPAGE and CLUT\n"\
 	"	attribute vec4 a_texcoord; // uv, color multiplier, dither\n"\
 	"	attribute vec2 a_precise_uv;\n"\
 	"	attribute vec4 a_color;\n"\
-	"	attribute vec4 a_extra; // texcoord.xy ofs, unused.xy\n"\
+	"	attribute vec4 a_extra; // texcoord.xy ofs, presentation flag, precise-UV flag\n"\
 	"	attribute vec4 a_texbounds; // inclusive primitive UV bounds\n"\
 	"	attribute vec4 a_zw;\n"\
 	"	uniform mat4 Projection;\n"\
@@ -1154,10 +1216,13 @@ const char* gpu_shader_32_rgba =
 	"		v_texbounds = a_texbounds;\n"\
 	"		v_color = a_color;\n"\
 	"		v_color.xyz *= a_texcoord.z;\n"\
-	"		v_page_clut.x = fract(a_position.z / 16.0) * 1024.0;\n"\
-	"		v_page_clut.y = floor(a_position.z / 16.0) * 256.0;\n"\
-	"		v_page_clut.z = fract(a_position.w / 64.0);\n"\
-	"		v_page_clut.w = floor(a_position.w / 64.0) / 512.0;\n"\
+	"		v_alias_page = floor(a_page_clut.x / 1024.0);\n"\
+	"		float nativePage = mod(a_page_clut.x, 32.0);\n"\
+	"		float aliasIndex = max(v_alias_page - 1.0, 0.0);\n"\
+	"		v_page_clut.x = mix(mod(nativePage, 16.0) * 64.0, mod(aliasIndex, 16.0) * 64.0, step(0.5, v_alias_page));\n"\
+	"		v_page_clut.y = mix(floor(nativePage / 16.0) * 256.0, floor(aliasIndex / 16.0) * 256.0, step(0.5, v_alias_page));\n"\
+	"		v_page_clut.z = fract(a_page_clut.y / 64.0);\n"\
+	"		v_page_clut.w = floor(a_page_clut.y / 64.0) / 512.0;\n"\
 	"		v_page_clut.xy += c_UVFudge;\n"\
 	"		v_page_clut.zw += c_UVFudge;\n"\
 	GTE_PERSPECTIVE_CORRECTION\
@@ -1333,6 +1398,7 @@ ShaderID GR_Shader_Compile(const char* source, int isPsxShader)
 	}
 
 	glBindAttribLocation(program, a_position, "a_position");
+	glBindAttribLocation(program, a_page_clut, "a_page_clut");
 	glBindAttribLocation(program, a_texcoord, "a_texcoord");
 	glBindAttribLocation(program, a_color, "a_color");
 	glBindAttribLocation(program, a_extra, "a_extra");
@@ -1445,6 +1511,7 @@ void GR_CompilePSXShader(PSXGPU_Shader* sh, const char* source)
 	sh->texelSizeLoc = glGetUniformLocation(sh->shader, "texelSize");
 	sh->texLoc = glGetUniformLocation(sh->shader, "s_texture");
 	sh->lutLoc = glGetUniformLocation(sh->shader, "s_rgLut");
+	sh->aliasLoc = glGetUniformLocation(sh->shader, "s_aliasTexture");
 #if USE_PGXP
 	sh->projection3DLoc = glGetUniformLocation(sh->shader, "Projection3D");
 #endif
@@ -1485,6 +1552,8 @@ void GR_InitRG8LUT()
 int GR_InitialisePSX()
 {
 	SDL_memset(vram, 0, VRAM_WIDTH * VRAM_HEIGHT * sizeof(unsigned short));
+	SDL_memset(g_vramAliasPages, 0,
+		VRAM_ALIAS_WIDTH * VRAM_ALIAS_HEIGHT * sizeof(unsigned short));
 	GR_ResetVRAMDirtyRects();
 	GR_InitRG8LUT();
 	GR_GenerateCommonTextures();
@@ -1608,6 +1677,21 @@ int GR_InitialisePSX()
 
 			glBindFramebuffer(GL_FRAMEBUFFER, 0);
 		}
+	}
+
+	// Host-only page aliases are never attached as PS1 VRAM or a framebuffer.
+	// Keeping them separate preserves framebuffer and MoveImage semantics.
+	{
+		glGenTextures(1, &g_vramAliasTexture);
+		glBindTexture(GL_TEXTURE_2D, g_vramAliasTexture);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		glTexImage2D(GL_TEXTURE_2D, 0, VRAM_INTERNAL_FORMAT, VRAM_ALIAS_WIDTH,
+			VRAM_ALIAS_HEIGHT, 0, VRAM_FORMAT, GL_UNSIGNED_BYTE,
+			g_vramAliasPages);
+		glBindTexture(GL_TEXTURE_2D, 0);
 	}
 
 	// gen vertex buffer and index buffer
@@ -1796,6 +1880,7 @@ void GR_SetTexture(TextureID texture, TexFormat texFormat, TextureFilterMode fil
 {
 	GLint texLoc = 0;
 	GLint lutLoc = 0;
+	GLint aliasLoc = -1;
 	GLint textureFilterModeLoc = 0;
 	switch (texFormat)
 	{
@@ -1808,6 +1893,7 @@ void GR_SetTexture(TextureID texture, TexFormat texFormat, TextureFilterMode fil
 		u_presentationScaleLoc = g_gpu_shader_4.presentationScaleLoc;
 		texLoc = g_gpu_shader_4.texLoc;
 		lutLoc = g_gpu_shader_4.lutLoc;
+		aliasLoc = g_gpu_shader_4.aliasLoc;
 		u_texelSizeLoc = -1;
 		break;
 	case TF_8_BIT:
@@ -1819,6 +1905,7 @@ void GR_SetTexture(TextureID texture, TexFormat texFormat, TextureFilterMode fil
 		u_presentationScaleLoc = g_gpu_shader_8.presentationScaleLoc;
 		texLoc = g_gpu_shader_8.texLoc;
 		lutLoc = g_gpu_shader_8.lutLoc;
+		aliasLoc = g_gpu_shader_8.aliasLoc;
 		u_texelSizeLoc = -1;
 		break;
 	case TF_16_BIT:
@@ -1830,6 +1917,7 @@ void GR_SetTexture(TextureID texture, TexFormat texFormat, TextureFilterMode fil
 		u_presentationScaleLoc = g_gpu_shader_16.presentationScaleLoc;
 		texLoc = g_gpu_shader_16.texLoc;
 		lutLoc = g_gpu_shader_16.lutLoc;
+		aliasLoc = g_gpu_shader_16.aliasLoc;
 		u_texelSizeLoc = -1;
 		break;
 	case TF_32_BIT_RGBA:
@@ -1852,6 +1940,8 @@ void GR_SetTexture(TextureID texture, TexFormat texFormat, TextureFilterMode fil
 #if USE_OPENGL
 	glUniform1i(texLoc, 0);
 	glUniform1i(lutLoc, 1);
+	if(aliasLoc != -1)
+		glUniform1i(aliasLoc, 2);
 
 	if (g_lastBoundTexture != texture)
 	{
@@ -1860,6 +1950,9 @@ void GR_SetTexture(TextureID texture, TexFormat texFormat, TextureFilterMode fil
 
 		glActiveTexture(GL_TEXTURE1);
 		glBindTexture(GL_TEXTURE_2D, g_rgLutTexture);
+
+		glActiveTexture(GL_TEXTURE2);
+		glBindTexture(GL_TEXTURE_2D, g_vramAliasTexture);
 
 		glActiveTexture(GL_TEXTURE0);
 		g_lastBoundTexture = texture;
@@ -1929,6 +2022,8 @@ void GR_ClearVRAM(int x, int y, int w, int h, unsigned char r, unsigned char g, 
 
 	if (y + h > VRAM_HEIGHT)
 		h = VRAM_HEIGHT - y;
+
+	GR_RecordVRAMWrite(GR_VRAM_WRITE_CLEAR, x, y, x, y, w, h);
 
 	if (w <= 0 || h <= 0)
 		return;
@@ -2001,6 +2096,7 @@ void GR_CopyRGBAFramebufferToVRAM(u_int* src, int x, int y, int w, int h, int up
 	assert(y >= 0);
 	assert(x + w <= VRAM_WIDTH);
 	assert(y + h <= VRAM_HEIGHT);
+	GR_RecordVRAMWrite(GR_VRAM_WRITE_FRAMEBUFFER, x, y, x, y, w, h);
 
 	ushort* fb = (ushort*)malloc(w * h * sizeof(ushort));
 	uint* data_src = (uint*)src;
@@ -2279,6 +2375,8 @@ void GR_CopyVRAM(unsigned short* src, int x, int y, int w, int h, int dst_x, int
 	int stride = w;
 	const int sourceY = y;
 	const bool internalCopy = src == NULL;
+	GR_RecordVRAMWrite(internalCopy ? GR_VRAM_WRITE_MOVE : GR_VRAM_WRITE_UPLOAD,
+		x, y, dst_x, dst_y, w, h);
 
 	if (internalCopy)
 	{
@@ -2318,6 +2416,48 @@ void GR_ReadVRAM(unsigned short* dst, int x, int y, int dst_w, int dst_h)
 		SDL_memcpy(dst, src, dst_w * sizeof(short));
 		dst += dst_w;
 		src += VRAM_WIDTH;
+	}
+}
+
+void GR_UploadVRAMAliasPage(int page, const unsigned short* src)
+{
+	if (page < 0 || page >= VRAM_ALIAS_PAGE_COUNT || src == NULL)
+		return;
+	const unsigned short* upload = src;
+	const int pageX = (page & 15) * 64;
+	const int pageY = (page >> 4) * 256;
+	unsigned short* destination =
+		g_vramAliasPages + pageX + pageY * VRAM_ALIAS_WIDTH;
+	for (int row = 0; row < 256; ++row)
+	{
+		SDL_memcpy(destination, src, 64 * sizeof(unsigned short));
+		destination += VRAM_ALIAS_WIDTH;
+		src += 64;
+	}
+#if USE_OPENGL
+	glActiveTexture(GL_TEXTURE2);
+	glBindTexture(GL_TEXTURE_2D, g_vramAliasTexture);
+	glTexSubImage2D(GL_TEXTURE_2D, 0, pageX, pageY, 64, 256,
+		VRAM_FORMAT, GL_UNSIGNED_BYTE,
+		upload);
+	glActiveTexture(GL_TEXTURE0);
+	g_lastBoundTexture = 0;
+#endif
+}
+
+void GR_ReadVRAMAliasPage(int page, unsigned short* dst)
+{
+	if (page < 0 || page >= VRAM_ALIAS_PAGE_COUNT || dst == NULL)
+		return;
+	const int pageX = (page & 15) * 64;
+	const int pageY = (page >> 4) * 256;
+	const unsigned short* source =
+		g_vramAliasPages + pageX + pageY * VRAM_ALIAS_WIDTH;
+	for (int row = 0; row < 256; ++row)
+	{
+		SDL_memcpy(dst, source, 64 * sizeof(unsigned short));
+		dst += 64;
+		source += VRAM_ALIAS_WIDTH;
 	}
 }
 
@@ -2423,6 +2563,9 @@ void GR_EnableDepth(int enable)
 
 void GR_SetStencilMode(int drawPrim)
 {
+	if (g_ShadowStencilPhase != 0)
+		return;
+
 	if (g_PreviousStencilMode == drawPrim)
 		return;
 
@@ -2440,6 +2583,55 @@ void GR_SetStencilMode(int drawPrim)
 		glStencilOp(GL_REPLACE, GL_KEEP, GL_KEEP);
 	}
 #endif
+}
+
+void GR_BeginShadowMask(void)
+{
+	g_ShadowStencilPhase = 1;
+#if USE_OPENGL
+	// Preserve the retail mask bit (0x01) and reserve bit 0x02 for the native
+	// shadow union. glClear obeys the stencil write mask, so this never erases
+	// guest-authored PSX mask state from the opaque world pass.
+	glStencilMask(0x02);
+	glClearStencil(0);
+	glClear(GL_STENCIL_BUFFER_BIT);
+	glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+	// Reject guest pixels carrying the retail mask bit while writing only the
+	// native shadow bit. The replacement reference supplies bit 0x02 without
+	// disturbing bit 0x01.
+	glStencilFunc(GL_NOTEQUAL, 0x03, 0x01);
+	glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
+#endif
+}
+
+void GR_BeginShadowShade(void)
+{
+	g_ShadowStencilPhase = 2;
+#if USE_OPENGL
+	glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+	glStencilMask(0x02);
+	glStencilFunc(GL_EQUAL, 0x02, 0x03);
+	// Clear the native bit as each visible pixel is shaded. Overlapping body
+	// triangles consequently darken a receiver exactly once.
+	glStencilOp(GL_KEEP, GL_KEEP, GL_ZERO);
+#endif
+}
+
+void GR_EndShadowMask(void)
+{
+#if USE_OPENGL
+	glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+	// Remove any mask fragment which failed the shade depth test while retaining
+	// the retail PSX bit, then restore the normal mask-test contract.
+	glStencilMask(0x02);
+	glClearStencil(0);
+	glClear(GL_STENCIL_BUFFER_BIT);
+	glStencilMask(0xFF);
+	glStencilFunc(GL_NOTEQUAL, 1, 0xFF);
+	glStencilOp(GL_REPLACE, GL_KEEP, GL_KEEP);
+#endif
+	g_ShadowStencilPhase = 0;
+	g_PreviousStencilMode = 0;
 }
 
 void GR_SetBlendMode(BlendMode blendMode)
@@ -2490,6 +2682,12 @@ void GR_SetBlendMode(BlendMode blendMode)
 
 void GR_SetPolygonOffset(float slope, float units)
 {
+	// GPU split submission restores the generic polygon state for every split.
+	// Keep the receiver bias selected by the two-pass shadow operation until
+	// that operation ends; otherwise coplanar wall portions flicker per split.
+	if (g_ShadowStencilPhase != 0)
+		return;
+
 #if USE_OPENGL
 	if (g_PreviousPolygonOffsetSlope == slope && g_PreviousPolygonOffsetUnits == units)
 		return;
@@ -2531,6 +2729,7 @@ void GR_BindVertexBuffer()
 	glBindBuffer(GL_ARRAY_BUFFER, g_glVertexBuffer[g_curVertexBuffer]);
 
 	glEnableVertexAttribArray(a_position);
+	glEnableVertexAttribArray(a_page_clut);
 	glEnableVertexAttribArray(a_texcoord);
 	glEnableVertexAttribArray(a_color);
 	glEnableVertexAttribArray(a_extra);
@@ -2538,12 +2737,14 @@ void GR_BindVertexBuffer()
 	glEnableVertexAttribArray(a_precise_uv);
 
 #if USE_PGXP
-	glVertexAttribPointer(a_position, 4, GL_FLOAT, GL_FALSE, sizeof(GrVertex), &((GrVertex*)NULL)->x);
+	glVertexAttribPointer(a_position, 2, GL_FLOAT, GL_FALSE, sizeof(GrVertex), &((GrVertex*)NULL)->x);
+	glVertexAttribPointer(a_page_clut, 2, GL_FLOAT, GL_FALSE, sizeof(GrVertex), &((GrVertex*)NULL)->page);
 	glVertexAttribPointer(a_zw, 4, GL_FLOAT, GL_FALSE, sizeof(GrVertex), &((GrVertex*)NULL)->z);
 
 	glEnableVertexAttribArray(a_zw);
 #else
-	glVertexAttribPointer(a_position, 4, GL_SHORT, GL_FALSE, sizeof(GrVertex), &((GrVertex*)NULL)->x);
+	glVertexAttribPointer(a_position, 2, GL_SHORT, GL_FALSE, sizeof(GrVertex), &((GrVertex*)NULL)->x);
+	glVertexAttribPointer(a_page_clut, 2, GL_UNSIGNED_SHORT, GL_FALSE, sizeof(GrVertex), &((GrVertex*)NULL)->page);
 #endif
 	glVertexAttribPointer(a_texcoord, 4, GL_UNSIGNED_BYTE, GL_FALSE, sizeof(GrVertex), &((GrVertex*)NULL)->u);
 	glVertexAttribPointer(a_color, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(GrVertex), &((GrVertex*)NULL)->r);

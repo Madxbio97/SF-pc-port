@@ -16,8 +16,9 @@
 namespace sf::platform::detail {
 namespace {
 
-constexpr int physical_atlas_size = 256;
-constexpr int logical_atlas_size = physical_atlas_size / 2;
+constexpr int retail_atlas_size = 128;
+constexpr int hd_atlas_size = retail_atlas_size * 2;
+constexpr int logical_atlas_size = retail_atlas_size;
 constexpr std::uint16_t expected_base_x = 832U;
 
 std::uint8_t expand5(std::uint16_t value) noexcept {
@@ -25,12 +26,12 @@ std::uint8_t expand5(std::uint16_t value) noexcept {
   return static_cast<std::uint8_t>((channel << 3U) | (channel >> 2U));
 }
 
-void copySheet(const assets::TimImage &image,
-               std::span<std::uint8_t> rgba) {
+void copySheet(const assets::TimImage &image, std::span<std::uint8_t> rgba,
+               unsigned int atlas_size) {
   if (image.mode() != assets::TimPixelMode::indexed8 || !image.clut() ||
       image.clut()->words.size() < 256U || image.pixels().x < expected_base_x) {
     throw core::Error{core::ErrorCode::invalid_format,
-                      "HD font sheet is not an indexed 8-bit TIM"};
+                      "Font sheet is not an indexed 8-bit TIM"};
   }
   const auto &pixels = image.pixels();
   const auto relative_x =
@@ -38,10 +39,9 @@ void copySheet(const assets::TimImage &image,
   const auto relative_y = static_cast<unsigned int>(pixels.y);
   const auto width = static_cast<unsigned int>(image.displayWidth());
   const auto height = static_cast<unsigned int>(image.displayHeight());
-  if (relative_x + width > physical_atlas_size ||
-      relative_y + height > physical_atlas_size) {
+  if (relative_x + width > atlas_size || relative_y + height > atlas_size) {
     throw core::Error{core::ErrorCode::invalid_format,
-                      "HD font sheet exceeds the 256x256 atlas"};
+                      "Font sheet exceeds its native atlas"};
   }
 
   for (auto row = 0U; row < height; ++row) {
@@ -53,7 +53,7 @@ void copySheet(const assets::TimImage &image,
           column % 2U == 0U ? packed & 0xffU : packed >> 8U);
       const auto color = image.clut()->words[palette_index];
       const auto destination =
-          (static_cast<std::size_t>(relative_y + row) * physical_atlas_size +
+          (static_cast<std::size_t>(relative_y + row) * atlas_size +
            relative_x + column) *
           4U;
       rgba[destination] = expand5(color);
@@ -69,18 +69,26 @@ void copySheet(const assets::TimImage &image,
 PsyCrossFontTexture::PsyCrossFontTexture(const assets::TimImage &font_a,
                                          const assets::TimImage &font_b,
                                          const assets::TimImage &font_c) {
-  if (font_a.displayWidth() != 64U || font_a.displayHeight() != 128U ||
-      font_b.displayWidth() != 64U || font_b.displayHeight() != 128U ||
-      font_c.displayWidth() != 84U || font_c.displayHeight() != 246U) {
+  const auto retail_layout =
+      font_a.displayWidth() == 32U && font_a.displayHeight() == 64U &&
+      font_b.displayWidth() == 32U && font_b.displayHeight() == 64U &&
+      font_c.displayWidth() == 42U && font_c.displayHeight() == 123U;
+  const auto hd_layout =
+      font_a.displayWidth() == 64U && font_a.displayHeight() == 128U &&
+      font_b.displayWidth() == 64U && font_b.displayHeight() == 128U &&
+      font_c.displayWidth() == 84U && font_c.displayHeight() == 246U;
+  if (!retail_layout && !hd_layout) {
     throw core::Error{core::ErrorCode::invalid_format,
-                      "Russian font pack is not the expected 2x atlas"};
+                      "Font pack is neither the retail 1x nor native 2x atlas"};
   }
+  const auto physical_atlas_size =
+      static_cast<unsigned int>(hd_layout ? hd_atlas_size : retail_atlas_size);
   std::vector<std::uint8_t> rgba(
       static_cast<std::size_t>(physical_atlas_size) * physical_atlas_size * 4U,
       0U);
   for (const auto &font :
        std::array{std::cref(font_a), std::cref(font_b), std::cref(font_c)}) {
-    copySheet(font.get(), rgba);
+    copySheet(font.get(), rgba, physical_atlas_size);
   }
   texture_ = GR_CreateRGBATexture(physical_atlas_size, physical_atlas_size,
                                   rgba.data());

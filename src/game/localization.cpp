@@ -144,7 +144,7 @@ constexpr std::array base_utf8_translations{
     Utf8Translation{"Parameter", u8"УСЛОВИЕ"},
     Utf8Translation{"Complete", u8"ВЫПОЛНЕНО"},
     Utf8Translation{"Press START to see objectives",
-                    u8"НАЖМИТЕ START ДЛЯ ПРОСМОТРА ЦЕЛЕЙ"},
+                    u8"НАЖМИТЕ %t ДЛЯ ПРОСМОТРА ЦЕЛЕЙ"},
     Utf8Translation{"Playing on HARD difficulty", u8"СЛОЖНОСТЬ: ВЫСОКАЯ"},
     Utf8Translation{"Target Lock", u8"ЗАХВАТ ЦЕЛИ"},
     Utf8Translation{"Head Shot", u8"ВЫСТРЕЛ В ГОЛОВУ"},
@@ -234,9 +234,14 @@ constexpr std::array utf8_translations{
     Utf8Translation{"K3G4", u8"K3G4"},
     Utf8Translation{"Virus Scanner", u8"ДЕТЕКТОР ВИРУСА"},
     Utf8Translation{"Grenade", u8"ГРАНАТА"},
+    Utf8Translation{"Grenades", u8"ГРАНАТЫ"},
+    Utf8Translation{"Granade", u8"ГРАНАТА"},
+    Utf8Translation{"Granades", u8"ГРАНАТЫ"},
     Utf8Translation{"Gas Grenade", u8"ГАЗОВАЯ ГРАНАТА"},
+    Utf8Translation{"Gas Grenades", u8"ГАЗОВЫЕ ГРАНАТЫ"},
     // Some retail call sites use the misspelled item label "Granade".
     Utf8Translation{"Gas Granade", u8"ГАЗОВАЯ ГРАНАТА"},
+    Utf8Translation{"Gas Granades", u8"ГАЗОВЫЕ ГРАНАТЫ"},
     Utf8Translation{"Flashlight", u8"ФОНАРЬ"},
     Utf8Translation{"Chopper Gun", u8"БОРТОВОЙ ПУЛЕМЁТ"},
     Utf8Translation{"Keycard", u8"КЛЮЧ-КАРТА"},
@@ -253,8 +258,8 @@ constexpr std::array utf8_translations{
                     u8"СЕЙЧАС НЕЛЬЗЯ СМЕНИТЬ ОРУЖИЕ"},
     Utf8Translation{
         "Controller missing. Please reinsert controller into controller port 1 "
-        "and press the START button to continue",
-        u8"КОНТРОЛЛЕР НЕ ПОДКЛЮЧЁН. ПОДКЛЮЧИТЕ ЕГО И НАЖМИТЕ START"},
+        "and press the %t button to continue",
+        u8"КОНТРОЛЛЕР НЕ ПОДКЛЮЧЁН. ПОДКЛЮЧИТЕ ЕГО И НАЖМИТЕ %t"},
     Utf8Translation{"Weapons - Ratings", u8"ОРУЖИЕ - ХАРАКТЕРИСТИКИ"},
     Utf8Translation{"Weapons - Description", u8"ОРУЖИЕ - ОПИСАНИЕ"},
     Utf8Translation{"No description available", u8"НЕТ ОПИСАНИЯ"},
@@ -310,8 +315,13 @@ constexpr std::array utf8_translations{
     Utf8Translation{"Plant beacon", u8"УСТАНОВИТЬ МАЯК"},
     Utf8Translation{"Viral detector", u8"ДЕТЕКТОР ВИРУСА"},
     Utf8Translation{"remaining", u8"ОСТАЛОСЬ"},
+    // The first retail %s is a controller glyph, not prose. Keep it as the
+    // native %x action token so presentation can substitute the current PC
+    // interact binding after localization. The second argument is always
+    // Lian Xing in retail, so use the concise Russian call-sign here instead
+    // of copying the guest's English name back into the translated line.
     Utf8Translation{"Press %s to Contact %s",
-                    u8"НАЖМИТЕ КНОПКУ, ЧТОБЫ СВЯЗАТЬСЯ С ЛИАН СИН"},
+                    u8"НАЖМИТЕ %x, ЧТОБЫ СВЯЗАТЬСЯ С ЛИАН"},
     Utf8Translation{"%s undamaged", u8"БРОНЕЖИЛЕТ НЕ ПОВРЕЖДЁН"},
     Utf8Translation{"Complete Objectives", u8"ВЫПОЛНИТЬ ЦЕЛИ"},
     Utf8Translation{"Debug Display", u8"ОТЛАДОЧНЫЙ ЭКРАН"},
@@ -720,11 +730,11 @@ constexpr std::array localized_briefings{
         u8"ИСТОЧНИКИ В МИНИСТЕРСТВЕ ОБОРОНЫ США И ИНТЕРПОЛЕ "
         u8"ПОДТВЕРДИЛИ ЛИЧНОСТИ ТЕРРОРИСТОВ. ВЫ БУДЕТЕ ВЫСАЖЕНЫ ПОСЛЕ "
         u8"НАЧАЛА ОПЕРАЦИИ КОМАНДОВАНИЯ ХИМИЧЕСКОЙ И БИОЛОГИЧЕСКОЙ ЗАЩИТЫ "
-        u8"АРМИИ США.",
+        u8"АРМИИ США (CBDC).",
         u8"ВАШИ ЦЕЛИ - ЭРИХ РОМЕР, ПАВЕЛ КРАВИЧ, МАРА АРАМОВА И АНТОН ГИРДО. "
         u8"СПУТНИКОВАЯ СЛУЖБА ПЕРЕХВАТИЛА КОДИРОВАННЫЙ РАДИООБМЕН. В ЭТОМ "
         u8"РАЙОНЕ ДОЛЖНА НАХОДИТЬСЯ СТАНЦИЯ СВЯЗИ РОМЕРА. ПРИ НЕОБХОДИМОСТИ "
-        u8"ПОМОГИТЕ СЛУЖБЕ ХИМЗАЩИТЫ. ПО ВОЗМОЖНОСТИ ИЗБЕГАЙТЕ ЖЕРТВ СРЕДИ "
+        u8"ПОМОГИТЕ СЛУЖБЕ CBDC. ПО ВОЗМОЖНОСТИ ИЗБЕГАЙТЕ ЖЕРТВ СРЕДИ "
         u8"МИРНЫХ ЖИТЕЛЕЙ. ДОПОЛНИТЕЛЬНЫЕ СВЕДЕНИЯ СМОТРИТЕ В СПИСКЕ ЦЕЛЕЙ."},
     Utf8MissionBriefing{
         u8"ВАШИНГТОН, ОКРУГ КОЛУМБИЯ", "Destroyed subway", "08/23 23:45",
@@ -755,7 +765,7 @@ constexpr std::array localized_briefings{
         u8"ИЗМЕНЕНИЕ ЗАДАНИЯ: КОМАНДОВАНИЕ ХИМИЧЕСКОЙ И БИОЛОГИЧЕСКОЙ "
         u8"ЗАЩИТЫ ЗАПРОСИЛО ПРЯМОЕ ВМЕШАТЕЛЬСТВО И ПОМОЩЬ. НОВЫЕ ПРИКАЗЫ: "
         u8"НАЙТИ ВИРУСНЫЕ БОМБЫ, УСТАНОВИТЬ МАЯКИ, ДОЖДАТЬСЯ ПРИБЫТИЯ "
-        u8"СЛУЖБЫ ХИМЗАЩИТЫ И ОБЕСПЕЧИТЬ ОГНЕВОЕ ПРИКРЫТИЕ. БОМБЫ ВЗОРВУТСЯ "
+        u8"СЛУЖБЫ CBDC И ОБЕСПЕЧИТЬ ОГНЕВОЕ ПРИКРЫТИЕ. БОМБЫ ВЗОРВУТСЯ "
         u8"В ТЕЧЕНИЕ ЧАСА.",
         u8"СОПРОТИВЛЕНИЕ ТЕРРОРИСТОВ ОЧЕНЬ СИЛЬНОЕ. ПО ДАННЫМ АГЕНТСТВА, "
         u8"ОПЕРАЦИЕЙ В ПАРКЕ РУКОВОДИТ АНТОН ГИРДО. БУДЬ ОСТОРОЖЕН. СВЯЗЬ С "
@@ -768,13 +778,13 @@ constexpr std::array localized_briefings{
         u8"НО ВАШЕМУ АГЕНТУ, ВОЗМОЖНО, ПРИДЁТСЯ ИМПРОВИЗИРОВАТЬ И ИСКАТЬ "
         u8"СЛАБОЕ "
         u8"МЕСТО.",
-        u8"НАШ ЭКСПЕРТ ПО ВЗРЫВОТЕХНИКЕ УСТАНОВИЛ: ЛЮБОЙ ВЗРЫВ ПРИВЕДЁТ В "
+        u8"НАШ ДЕМИНЕР УСТАНОВИЛ: ЛЮБОЙ ВЗРЫВ ПРИВЕДЁТ В "
         u8"ДЕЙСТВИЕ ВИРУСНУЮ БОМБУ."},
     Utf8MissionBriefing{
         u8"НЬЮ-ЙОРК", "Expo Center Reception", "08/25 19:00",
         u8"СООБЩЕНИЕ ОТ ТОМАСА МАРКИНСОНА:\n\n"
         u8"Я ОДОБРИЛ ТВОЙ ЗАПРОС НА ДОСТУП К ДОСЬЕ ФБР НА ДЖОНАТАНА ФЭЙГАНА. "
-        u8"ВОЗМОЖНО, ТВОИ ПОДОЗРЕНИЯ ВЕРНЫ. ВЕЧЕРИНКА ФАРКОМ МОЖЕТ БЫТЬ "
+        u8"ВОЗМОЖНО, ТВОИ ПОДОЗРЕНИЯ ВЕРНЫ. ВЕЧЕРНИЙ ПРИЕМ ФАРКОМ МОЖЕТ БЫТЬ "
         u8"ПРИКРЫТИЕМ ДЛЯ ВСТРЕЧИ ФЭЙГАНА С РОМЕРОМ. НЕ ВЫПУСКАЙ ФЭЙГАНА "
         u8"ИЗ ВИДУ.",
         u8"ТЕБЯ НЕ ДОЛЖНЫ ЗАМЕТИТЬ ИЛИ ЗАХВАТИТЬ. ОХРАНУ ФЭЙГАНА "
@@ -844,17 +854,17 @@ constexpr std::array localized_briefings{
         u8"ООН В ЯРОСТИ. АГЕНТСТВО, РАЗУМЕЕТСЯ, ПЕРЕКЛАДЫВАЕТ ВИНУ НА "
         u8"КОМАНДОВАНИЕ НАТО. СЕЙЧАС ТЫ НА ПОЛПУТИ ЧЕРЕЗ КРЕПОСТЬ РОМЕРА. ПО "
         u8"СХЕМАМ ИНТЕРПОЛА ВХОД В КАТАКОМБЫ, ВЕРОЯТНО, НАХОДИТСЯ В ЧАСОВНЕ "
-        u8"РОЗ. НАЙДИТЕ ЕГО.",
+        u8"РОЗ. НАЙДИ ЭТУ ЧАСОВНЮ.",
         u8"ВСЕ ЦЕЛИ МИССИИ ОСТАЮТСЯ В СИЛЕ: ЛИКВИДИРУЙ УЧЁНЫХ ФАРКОМ, "
         u8"ВВЕДИ АНТИГЕН ПОДОПЫТНЫМ И НАЙДИ ДЖОНАТАНА ФЭЙГАНА."},
     Utf8MissionBriefing{
         u8"УЖГОРОД, УКРАИНА", "Stronghold catacombs", "09/07 08:00",
         u8"СООБЩЕНИЕ ОТ ТОМАСА МАРКИНСОНА:\n\n"
         u8"ЕСЛИ ЭТИ КАТАКОМБЫ ПОХОЖИ НА ТЕ, ЧТО МЫ ЗАКРЫЛИ ПОД ПАРИЖЕМ, ТО "
-        u8"ДЛЯ ОХРАНЫ РОМЕР ИСПОЛЬЗУЕТ СИСТЕМУ РАСПОЗНАВАНИЯ ЛАДОНИ. ВАМ "
+        u8"ДЛЯ ОХРАНЫ РОМЕР ИСПОЛЬЗУЕТ СИСТЕМУ РАСПОЗНАВАНИЯ ЛАДОНИ. ТЕБЕ "
         u8"ПРИДЁТСЯ ПРОСЛЕДОВАТЬ ЗА ОХРАННИКОМ ИЛИ СОТРУДНИКОМ ЛАБОРАТОРИИ "
         u8"РОМЕРА ДО КАМЕРЫ ФЭЙГАНА И ДОЖДАТЬСЯ, ПОКА ОН ОТКРОЕТ ДВЕРЬ. "
-        u8"ПОМНИТЕ: ФЭЙГАН НУЖЕН МНЕ ЖИВЫМ.",
+        u8"ПОМНИ: ФЭЙГАН НУЖЕН МНЕ ЖИВЫМ.",
         u8"АГЕНТСТВО ПРЕКРАТИЛО КОНТАКТЫ С ГОСДЕПАРТАМЕНТОМ. НЕ ОТВЕЧАЙ НА "
         u8"СООБЩЕНИЯ ОТ ДРУГИХ СОТРУДНИКОВ АГЕНТСТВА. У НАС КОНЧАЕТСЯ "
         u8"ВРЕМЯ."},
@@ -1432,7 +1442,7 @@ std::string localizeLine(std::string_view source) {
   }
   if (normalized_service.starts_with("PRESS ") &&
       normalized_service.find("CONTACT") != std::string::npos) {
-    return encodeVit(u8"НАЖМИТЕ КНОПКУ, ЧТОБЫ СВЯЗАТЬСЯ С ЛИАН СИН");
+    return encodeVit(u8"НАЖМИТЕ %x, ЧТОБЫ СВЯЗАТЬСЯ С ЛИАН");
   }
 
   // FUN_8005fbd4 builds pickup notifications from the item name followed by
@@ -1672,6 +1682,24 @@ completeGameplayTextSource(std::string_view observed) noexcept {
   if (normalized.size() < 4U) {
     return std::nullopt;
   }
+  auto compact = normalized;
+  std::erase(compact, ' ');
+  constexpr std::array gas_grenade_pickup_sources{
+      std::string_view{"GASGRENADETAKEN"},
+      std::string_view{"GASGRANADETAKEN"},
+      std::string_view{"GASGRENADESTAKEN"},
+      std::string_view{"GASGRANADESTAKEN"},
+  };
+  if (std::ranges::any_of(gas_grenade_pickup_sources,
+                          [&compact](std::string_view candidate) {
+                            return candidate.starts_with(compact);
+                          })) {
+    // The status hook can observe either the full pickup string or the
+    // currently revealed glyph prefix. Collapse every retail spelling to one
+    // canonical source before Russian substitution; otherwise the early
+    // English prefix is sampled from Cyrillic font cells.
+    return std::string_view{"Gas Grenade taken"};
+  }
   constexpr std::array candidates{
       std::string_view{"Scope Pwr On"},
       std::string_view{"No Target Available"},
@@ -1752,6 +1780,14 @@ std::optional<LocalizedMissionMenuTexts>
 localizedMissionMenuTexts(std::uint32_t mission_index,
                           std::span<const std::string> objectives,
                           std::span<const std::string> parameters) noexcept {
+  // Mission-menu overrides are encoded for the ViT Cyrillic atlas. Returning
+  // them while the English locale is active makes otherwise English pause
+  // screens render Russian text (or Cyrillic bytes through the retail font).
+  // Match every other localized asset accessor and leave the original guest
+  // strings untouched unless the Russian pack is explicitly selected.
+  if (!russianLanguageActive()) {
+    return std::nullopt;
+  }
   const auto &pack = missionMenuPack();
   if (objectives.size() > 32U || parameters.size() > 32U) {
     return std::nullopt;

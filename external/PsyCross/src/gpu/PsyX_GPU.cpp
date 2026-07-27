@@ -432,8 +432,8 @@ static void SetTexcoordFilteringState(GrVertex* vertex, int count,
 }
 
 void MakeTexcoordQuad(GrVertex* vertex, unsigned char* uv0, unsigned char* uv1,
-					  unsigned char* uv2, unsigned char* uv3, short page,
-					  short clut, unsigned char dither)
+					  unsigned char* uv2, unsigned char* uv3, u_short page,
+					  u_short clut, unsigned char dither)
 {
 	assert(uv0);
 	assert(uv1);
@@ -483,8 +483,8 @@ void MakeTexcoordQuad(GrVertex* vertex, unsigned char* uv0, unsigned char* uv1,
 }
 
 void MakeTexcoordTriangle(GrVertex* vertex, unsigned char* uv0,
-						  unsigned char* uv1, unsigned char* uv2, short page,
-						  short clut, unsigned char dither)
+						  unsigned char* uv1, unsigned char* uv2, u_short page,
+						  u_short clut, unsigned char dither)
 {
 	assert(uv0);
 	assert(uv1);
@@ -515,8 +515,8 @@ void MakeTexcoordTriangle(GrVertex* vertex, unsigned char* uv0,
 	SetTexcoordFilteringState(vertex, 3, 0);
 }
 
-void MakeTexcoordRect(GrVertex* vertex, unsigned char* uv, short page,
-					  short clut, short w, short h)
+void MakeTexcoordRect(GrVertex* vertex, unsigned char* uv, u_short page,
+					  u_short clut, short w, short h)
 {
 	assert(uv);
 

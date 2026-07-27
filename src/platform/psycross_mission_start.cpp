@@ -1,6 +1,7 @@
 #include "psycross_mission_start.hpp"
 #include "psycross_audio_output.hpp"
 #include "psycross_retail_briefing.hpp"
+#include "psycross_window_mode.hpp"
 
 #include "sf/core/error.hpp"
 #include "sf/game/gameplay.hpp"
@@ -52,6 +53,7 @@ PsyCrossMissionStart::takePreloadedAudio() noexcept {
 std::uint16_t
 PsyCrossMissionStart::run(const game::MissionPackage &mission, PADRAW &pad,
                           std::uint16_t previous_buttons,
+                          const KeyboardMouseBindings &bindings,
                           std::optional<game::CampaignCarryState> carry) {
   // The retail briefing is also the level-loading boundary. Remove the STR
   // framebuffer and its texture-page residue before presenting it; the
@@ -59,7 +61,7 @@ PsyCrossMissionStart::run(const game::MissionPackage &mission, PADRAW &pad,
   RECT16 whole_vram{0, 0, 1024, 512};
   ClearImage(&whole_vram, 0, 0, 0);
   DrawSync(0);
-  PsyCrossRetailBriefing retail_briefing{mission};
+  PsyCrossRetailBriefing retail_briefing{mission, bindings};
   preloaded_gameplay_.reset();
   preloaded_audio_ = std::make_unique<PsyCrossAudioOutput>();
   auto preload = std::async(std::launch::async, [&mission, carry] {
@@ -79,13 +81,11 @@ PsyCrossMissionStart::run(const game::MissionPackage &mission, PADRAW &pad,
   auto audio_callback_tick = std::optional<std::uint64_t>{};
   auto audio_clock_started = false;
   constexpr std::uint32_t retail_audio_callback_hz = 120U;
-  AudioOutputCatchUpPolicy audio_catch_up{retail_audio_callback_hz / 20U};
+  constexpr std::uint64_t maximum_audio_updates_per_iteration = 30U;
   std::array<psx::SpuPcmFrame, 4096U> briefing_pcm{};
   std::uint64_t audio_slices_completed{};
   std::uint64_t audio_pcm_frames_pumped{};
   std::uint64_t audio_pcm_blocks_pumped{};
-  std::uint64_t audio_guest_clear_events{};
-  std::uint64_t audio_catch_up_events{};
   std::uint64_t audio_diagnostic_sequence{};
   const auto periodic_audio_diagnostics = psyCrossAudioDiagnosticsEnabled();
   auto next_audio_diagnostic_counter =
@@ -106,6 +106,25 @@ PsyCrossMissionStart::run(const game::MissionPackage &mission, PADRAW &pad,
     PsyX_UpdateInput();
     previous_buttons = readButtons(pad);
     const auto held = static_cast<std::uint16_t>(~previous_buttons);
+    int keyboard_count{};
+    const auto *keyboard = SDL_GetKeyboardState(&keyboard_count);
+    const auto mouse_buttons = SDL_GetMouseState(nullptr, nullptr);
+    const auto keyboard_state =
+        keyboard != nullptr && keyboard_count > 0
+            ? std::span<const std::uint8_t>{
+                  keyboard, static_cast<std::size_t>(keyboard_count)}
+            : std::span<const std::uint8_t>{};
+    const auto bound_actions = sampleKeyboardMouseActions(
+        bindings,
+        KeyboardMouseDeviceState{
+            .keyboard = keyboard_state,
+            .mouse_left = (mouse_buttons & SDL_BUTTON_LMASK) != 0U,
+            .mouse_right = (mouse_buttons & SDL_BUTTON_RMASK) != 0U,
+            .mouse_middle = (mouse_buttons & SDL_BUTTON_MMASK) != 0U,
+            .mouse_x1 = (mouse_buttons & SDL_BUTTON_X1MASK) != 0U,
+            .mouse_x2 = (mouse_buttons & SDL_BUTTON_X2MASK) != 0U,
+            .mouse_wheel_delta = consumePsyCrossMouseWheel(),
+        });
 
     if (!preloaded_gameplay_ && preload.wait_for(std::chrono::seconds{0}) ==
                                     std::future_status::ready) {
@@ -136,31 +155,18 @@ PsyCrossMissionStart::run(const game::MissionPackage &mission, PADRAW &pad,
       }
       const auto pending_audio_updates =
           static_cast<std::size_t>(callback_tick - *audio_callback_tick);
-      if (audio_catch_up.beginFrame(pending_audio_updates)) {
-        ++audio_catch_up_events;
-        PsyX_Log_Warning(
-            "[AudioDiag][briefing-catch-up] sequence=%llu pending=%zu\n",
-            static_cast<unsigned long long>(audio_catch_up_events),
-            pending_audio_updates);
-        // Preserve the live host queue. Only stale guest PCM is discarded;
-        // resetting OpenAL here extends a loading hitch into audible silence.
-        preloaded_gameplay_->clearPcm();
-        ++audio_guest_clear_events;
-      }
-      while (*audio_callback_tick < callback_tick) {
+      auto audio_updates = std::uint64_t{};
+      while (*audio_callback_tick < callback_tick &&
+             audio_updates < maximum_audio_updates_per_iteration) {
         if (!preloaded_gameplay_->advanceAudioSliceClock()) {
           throw core::Error{core::ErrorCode::invalid_format,
                             "Mission briefing audio clock failed"};
         }
         ++*audio_callback_tick;
         ++audio_slices_completed;
-        if (!audio_catch_up.retainCompletedUpdate(static_cast<std::size_t>(
-                callback_tick - *audio_callback_tick))) {
-          preloaded_gameplay_->clearPcm();
-          ++audio_guest_clear_events;
-        }
+        ++audio_updates;
+        pump_audio();
       }
-      pump_audio();
       if (periodic_audio_diagnostics && performance_frequency != 0U &&
           current_counter >= next_audio_diagnostic_counter) {
         ++audio_diagnostic_sequence;
@@ -168,15 +174,15 @@ PsyCrossMissionStart::run(const game::MissionPackage &mission, PADRAW &pad,
         PsyX_Log_Info(
             "[AudioDiag][briefing-clock] sequence=%llu callback_tick=%llu "
             "pending=%zu slices=%llu pcm_frames=%llu pcm_blocks=%llu "
-            "guest_clears=%llu catch_ups=%llu\n",
+            "remaining=%llu\n",
             static_cast<unsigned long long>(audio_diagnostic_sequence),
             static_cast<unsigned long long>(*audio_callback_tick),
             pending_audio_updates,
             static_cast<unsigned long long>(audio_slices_completed),
             static_cast<unsigned long long>(audio_pcm_frames_pumped),
             static_cast<unsigned long long>(audio_pcm_blocks_pumped),
-            static_cast<unsigned long long>(audio_guest_clear_events),
-            static_cast<unsigned long long>(audio_catch_up_events));
+            static_cast<unsigned long long>(callback_tick -
+                                            *audio_callback_tick));
         if (const auto guest = preloaded_gameplay_->audioDiagnostics()) {
           PsyX_Log_Info(
               "[AudioDiag][briefing-guest] sequence=%llu machine_tick=%llu "
@@ -205,7 +211,9 @@ PsyCrossMissionStart::run(const game::MissionPackage &mission, PADRAW &pad,
           retail_briefing.draw(mission.briefing(), retail_time);
       PsyX_EndScene();
     }
-    if (gate.update((held & confirm_buttons) != 0U, text_animation_complete) &&
+    if (gate.update((held & confirm_buttons) != 0U ||
+                        bound_actions[KeyboardMouseAction::interact],
+                    text_animation_complete) &&
         preloaded_gameplay_) {
       PsyX_Log_Info("Mission briefing confirmed; entering gameplay\n");
       return previous_buttons;

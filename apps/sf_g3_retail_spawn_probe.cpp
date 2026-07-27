@@ -347,6 +347,10 @@ bool step(sf::game::GameplaySession &gameplay,
           const sf::game::GameplayInput &input, std::uint16_t scene,
           SpawnObservation &observation, std::string &failure) {
   gameplay.update(input);
+  if (!gameplay.advanceAudioFrameClock()) {
+    failure = "production audio/hardware clock stopped";
+    return false;
+  }
   return observeKravitch(gameplay, scene, observation, failure);
 }
 

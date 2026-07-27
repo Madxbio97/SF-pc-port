@@ -106,7 +106,8 @@ struct DynamicLightFrame {
     std::span<const PersistentDynamicLightState> persistent,
     std::span<const TransientDynamicLightState> transient,
     DynamicLightPoint observer,
-    std::span<const DirectionalDynamicLightState> directional = {}) noexcept;
+    std::span<const DirectionalDynamicLightState> directional = {},
+    std::uint64_t animation_tick = 0U) noexcept;
 
 struct DynamicLightModulation {
   double red{};
@@ -114,11 +115,20 @@ struct DynamicLightModulation {
   double blue{};
 };
 
-// Returns additive normalized modulation. Lighting is radial and deliberately
-// shadow-free; existing retail fog/depth cue remains responsible for distance.
+// Returns additive normalized modulation. Shadow projection is a separate
+// actor-only pass; existing retail fog/depth cue remains responsible for
+// distance.
 [[nodiscard]] DynamicLightModulation
 sampleDynamicLighting(const DynamicLightFrame &frame,
                       DynamicLightPoint point) noexcept;
+
+// Surface-aware variant used by scene geometry. The supplied normal is
+// expected to face the visible side of the polygon. It keeps point sources
+// from illuminating the back of walls while retaining a small wrapped edge
+// response on the deliberately low-poly retail meshes.
+[[nodiscard]] DynamicLightModulation
+sampleDynamicLighting(const DynamicLightFrame &frame, DynamicLightPoint point,
+                      DynamicLightPoint surface_normal) noexcept;
 
 struct DynamicLightVertexColor {
   std::uint8_t red{128U};
@@ -207,6 +217,32 @@ applyRetailVertexLighting(DynamicLightVertexColor base,
 [[nodiscard]] DynamicLightVertexColor
 applyDynamicLighting(DynamicLightVertexColor base,
                      DynamicLightModulation modulation) noexcept;
+
+struct DynamicShadowProjection {
+  // Direction travelled by light rays in the mission's Y-down coordinates.
+  DynamicLightPoint ray_direction{0.2971125411, 0.9284766909, 0.2228344058};
+  double darkness{0.16};
+  bool source_driven{};
+};
+
+// Blends every eligible source which can physically cast onto the supplied
+// support plane. Continuous score weights avoid hard direction changes when
+// two nearby lights exchange dominance. Low/behind-floor effects are rejected
+// and grazing rays are bounded, preventing an actor shadow from stretching
+// across the whole room. A stable scene key light keeps actors grounded.
+[[nodiscard]] DynamicShadowProjection
+selectDynamicShadowProjection(const DynamicLightFrame &frame,
+                              DynamicLightPoint actor_anchor,
+                              DynamicLightPoint ground_normal) noexcept;
+
+// Projects one posed actor vertex onto an arbitrary support plane. The small
+// normal offset avoids coplanar Z fighting while the dedicated depth-tested,
+// non-depth-writing shadow pass keeps walls and actors in front.
+[[nodiscard]] std::optional<DynamicLightPoint>
+projectDynamicShadowPoint(DynamicLightPoint vertex,
+                          DynamicLightPoint ground_point,
+                          DynamicLightPoint ground_normal,
+                          const DynamicShadowProjection &projection) noexcept;
 
 struct DynamicLightSurfaceTriangle {
   DynamicLightPoint first;

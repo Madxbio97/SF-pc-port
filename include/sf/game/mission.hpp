@@ -84,6 +84,9 @@ public:
     return character_animations_;
   }
   [[nodiscard]] const assets::HogArchive &textureBank(std::size_t bank) const;
+  [[nodiscard]] std::size_t textureBankCount() const noexcept {
+    return texture_banks_.size();
+  }
   [[nodiscard]] const assets::LevelLayout &layout() const noexcept {
     return layout_;
   }

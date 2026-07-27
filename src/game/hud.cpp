@@ -31,39 +31,37 @@ constexpr std::array weapon_definitions{
     WeaponDefinition{WeaponId::unarmed, "No Weapon", weaponIcon(), 0U, 0U,
                      false, false},
     WeaponDefinition{WeaponId::silenced_9mm, "Silenced 9mm",
-                     weaponIcon("PISTOL1A.TIM", "PISTOL1B.TIM"), 15U, 5U,
-                     true, true},
-    WeaponDefinition{WeaponId::pistol_9mm, "9mm", weaponIcon(), 15U, 5U,
-                     true, true},
-    WeaponDefinition{WeaponId::unused_357, ".357", weaponIcon(), 0U, 0U,
-                     false, false},
-    WeaponDefinition{WeaponId::pistol_45, ".45",
-                     weaponIcon("PISTOL4A.TIM", "PISTOL4B.TIM"), 10U, 5U,
-                     true, true},
-    WeaponDefinition{WeaponId::g_18, "G-18",
-                     weaponIcon("PISTOL5A.TIM", "PISTOL5B.TIM"), 33U, 5U,
-                     true, true},
-    WeaponDefinition{WeaponId::combat_shotgun, "Combat Shotgun",
-                     weaponIcon("SHOT1A.TIM", "SHOT1B.TIM", "SHOT1C.TIM"),
-                     30U, 0U, true, true},
-    WeaponDefinition{WeaponId::shotgun, "Shotgun",
-                     weaponIcon("SHOT2A.TIM", "SHOT2B.TIM", "SHOT2C.TIM"),
-                     25U, 0U, true, true},
-    WeaponDefinition{WeaponId::pk_102, "PK-102",
-                     weaponIcon("AS1A.TIM", "AS1B.TIM", "AS1C.TIM"), 30U,
-                     5U, true, true},
-    WeaponDefinition{WeaponId::m_16, "M-16",
-                     weaponIcon("AS2A.TIM", "AS2B.TIM", "AS2C.TIM"), 30U,
-                     5U, true, true},
-    WeaponDefinition{WeaponId::biz_2, "BIZ-2",
-                     weaponIcon("AS3A.TIM", "AS3B.TIM", "AS3C.TIM"), 66U,
-                     5U, true, true},
-    WeaponDefinition{WeaponId::hk_5, "HK-5",
-                     weaponIcon("AS4A.TIM", "AS4B.TIM"), 32U, 5U, true,
+                     weaponIcon("PISTOL1A.TIM", "PISTOL1B.TIM"), 15U, 5U, true,
                      true},
+    WeaponDefinition{WeaponId::pistol_9mm, "9mm", weaponIcon(), 15U, 5U, true,
+                     true},
+    WeaponDefinition{WeaponId::unused_357, ".357", weaponIcon(), 0U, 0U, false,
+                     false},
+    WeaponDefinition{WeaponId::pistol_45, ".45",
+                     weaponIcon("PISTOL4A.TIM", "PISTOL4B.TIM"), 10U, 5U, true,
+                     true},
+    WeaponDefinition{WeaponId::g_18, "G-18",
+                     weaponIcon("PISTOL5A.TIM", "PISTOL5B.TIM"), 33U, 5U, true,
+                     true},
+    WeaponDefinition{WeaponId::combat_shotgun, "Combat Shotgun",
+                     weaponIcon("SHOT1A.TIM", "SHOT1B.TIM", "SHOT1C.TIM"), 30U,
+                     0U, true, true},
+    WeaponDefinition{WeaponId::shotgun, "Shotgun",
+                     weaponIcon("SHOT2A.TIM", "SHOT2B.TIM", "SHOT2C.TIM"), 25U,
+                     0U, true, true},
+    WeaponDefinition{WeaponId::pk_102, "PK-102",
+                     weaponIcon("AS1A.TIM", "AS1B.TIM", "AS1C.TIM"), 30U, 5U,
+                     true, true},
+    WeaponDefinition{WeaponId::m_16, "M-16",
+                     weaponIcon("AS2A.TIM", "AS2B.TIM", "AS2C.TIM"), 30U, 5U,
+                     true, true},
+    WeaponDefinition{WeaponId::biz_2, "BIZ-2",
+                     weaponIcon("AS3A.TIM", "AS3B.TIM", "AS3C.TIM"), 66U, 5U,
+                     true, true},
+    WeaponDefinition{WeaponId::hk_5, "HK-5", weaponIcon("AS4A.TIM", "AS4B.TIM"),
+                     32U, 5U, true, true},
     WeaponDefinition{WeaponId::nightvision_rifle, "Nightvision Rifle",
-                     weaponIcon("SNIPER1A.TIM", "SNIPER1B.TIM",
-                                "SNIPER1C.TIM"),
+                     weaponIcon("SNIPER1A.TIM", "SNIPER1B.TIM", "SNIPER1C.TIM"),
                      10U, 2U, true, true},
     WeaponDefinition{WeaponId::sniper_rifle, "Sniper Rifle",
                      weaponIcon("SUPER1A.TIM", "SUPER1B.TIM", "SUPER1C.TIM"),
@@ -74,35 +72,34 @@ constexpr std::array weapon_definitions{
     // Native item slot 15 deliberately points at HUD group zero. FLAKA/B are
     // present in INTRFACE.HOG, but are not assigned to this weapon by the
     // original SCUS_942.40 item table.
-    WeaponDefinition{WeaponId::flamethrower, "Flamethrower", weaponIcon(),
-                     90U, 5U, true, true},
+    WeaponDefinition{WeaponId::flamethrower, "Flamethrower", weaponIcon(), 90U,
+                     5U, true, true},
     WeaponDefinition{WeaponId::m_79, "M-79",
-                     weaponIcon("GRENLANA.TIM", "GRENLANB.TIM",
-                                "GRENLANC.TIM"),
+                     weaponIcon("GRENLANA.TIM", "GRENLANB.TIM", "GRENLANC.TIM"),
                      15U, 0U, true, true},
-    WeaponDefinition{WeaponId::k3g4, "K3G4",
-                     weaponIcon("G3A.TIM", "G3B.TIM"), 20U, 5U, true, true},
+    WeaponDefinition{WeaponId::k3g4, "K3G4", weaponIcon("G3A.TIM", "G3B.TIM"),
+                     20U, 5U, true, true},
     WeaponDefinition{WeaponId::virus_scanner, "Virus Scanner",
                      weaponIcon("SNIFFER.TIM"), 0U, 0U, false, false},
     WeaponDefinition{WeaponId::fragmentation_grenade, "Grenade",
-                     weaponIcon("GRENADEA.TIM", "GRENADEB.TIM"), 10U, 0U,
-                     true, true},
+                     weaponIcon("GRENADEA.TIM", "GRENADEB.TIM"), 10U, 0U, true,
+                     true},
     WeaponDefinition{WeaponId::gas_grenade, "Gas Grenade",
-                     weaponIcon("GASGRENA.TIM", "GASGRENB.TIM"), 10U, 0U,
-                     true, true},
+                     weaponIcon("GASGRENA.TIM", "GASGRENB.TIM"), 10U, 0U, true,
+                     true},
     WeaponDefinition{WeaponId::flashlight, "Flashlight",
-                     weaponIcon("FLASHLTA.TIM", "FLASHLTB.TIM"), 0U, 0U,
-                     false, false},
+                     weaponIcon("FLASHLTA.TIM", "FLASHLTB.TIM"), 0U, 0U, false,
+                     false},
     WeaponDefinition{WeaponId::chopper_gun, "Chopper Gun", weaponIcon(), 90U,
                      5U, true, true},
     WeaponDefinition{WeaponId::key_card, "Keycard",
-                     weaponIcon("KEYCARDA.TIM", "KEYCARDB.TIM"), 0U, 0U,
-                     false, false},
+                     weaponIcon("KEYCARDA.TIM", "KEYCARDB.TIM"), 0U, 0U, false,
+                     false},
     WeaponDefinition{WeaponId::c4_explosives, "C4 Explosives",
                      weaponIcon("DEVICE.TIM"), 0U, 0U, false, false},
     WeaponDefinition{WeaponId::viral_antigen, "Viral Antigen",
-                     weaponIcon("ANTIDOTA.TIM", "ANTIDOTB.TIM"), 0U, 0U,
-                     false, false},
+                     weaponIcon("ANTIDOTA.TIM", "ANTIDOTB.TIM"), 0U, 0U, false,
+                     false},
 };
 
 // Original SCUS_942.40 tables at 0x8010c6e0 and 0x8010c6c4.
@@ -146,18 +143,25 @@ static_assert(linksStayInRange(next_weapon));
 static_assert(linksStayInRange(previous_weapon));
 
 constexpr std::array<OriginalHudGlyph, 10> hud_digit_glyphs{{
-    {0U, 0U, 5U}, {8U, 0U, 5U}, {16U, 0U, 5U}, {24U, 0U, 5U},
-    {0U, 8U, 5U}, {8U, 8U, 5U}, {16U, 8U, 5U}, {24U, 8U, 5U},
-    {0U, 16U, 5U}, {8U, 16U, 5U},
+    {0U, 0U, 5U},
+    {8U, 0U, 5U},
+    {16U, 0U, 5U},
+    {24U, 0U, 5U},
+    {0U, 8U, 5U},
+    {8U, 8U, 5U},
+    {16U, 8U, 5U},
+    {24U, 8U, 5U},
+    {0U, 16U, 5U},
+    {8U, 16U, 5U},
 }};
 
 constexpr std::array<OriginalHudGlyph, 26> hud_lower_glyphs{{
-    {8U, 32U, 5U}, {16U, 32U, 4U}, {24U, 32U, 4U}, {0U, 40U, 5U},
-    {8U, 40U, 4U}, {16U, 40U, 4U}, {24U, 40U, 5U}, {0U, 48U, 5U},
-    {8U, 48U, 1U}, {16U, 48U, 4U}, {24U, 48U, 4U}, {0U, 56U, 4U},
-    {8U, 56U, 6U}, {16U, 56U, 5U}, {24U, 56U, 5U}, {32U, 0U, 4U},
-    {40U, 0U, 5U}, {48U, 0U, 4U}, {56U, 0U, 4U}, {32U, 8U, 5U},
-    {40U, 8U, 5U}, {48U, 8U, 5U}, {56U, 8U, 8U}, {32U, 16U, 5U},
+    {8U, 32U, 5U},  {16U, 32U, 4U}, {24U, 32U, 4U}, {0U, 40U, 5U},
+    {8U, 40U, 4U},  {16U, 40U, 4U}, {24U, 40U, 5U}, {0U, 48U, 5U},
+    {8U, 48U, 1U},  {16U, 48U, 4U}, {24U, 48U, 4U}, {0U, 56U, 4U},
+    {8U, 56U, 6U},  {16U, 56U, 5U}, {24U, 56U, 5U}, {32U, 0U, 4U},
+    {40U, 0U, 5U},  {48U, 0U, 4U},  {56U, 0U, 4U},  {32U, 8U, 5U},
+    {40U, 8U, 5U},  {48U, 8U, 5U},  {56U, 8U, 8U},  {32U, 16U, 5U},
     {40U, 16U, 5U}, {48U, 16U, 4U},
 }};
 
@@ -167,8 +171,8 @@ constexpr std::array<OriginalHudGlyph, 26> hud_upper_glyphs{{
     {56U, 32U, 1U}, {32U, 40U, 4U}, {40U, 40U, 5U}, {48U, 40U, 4U},
     {56U, 40U, 7U}, {32U, 48U, 6U}, {40U, 48U, 5U}, {48U, 48U, 5U},
     {56U, 48U, 6U}, {32U, 56U, 5U}, {40U, 56U, 5U}, {48U, 56U, 5U},
-    {56U, 56U, 5U}, {64U, 0U, 6U}, {72U, 0U, 9U}, {88U, 0U, 6U},
-    {96U, 0U, 6U}, {64U, 8U, 5U},
+    {56U, 56U, 5U}, {64U, 0U, 6U},  {72U, 0U, 9U},  {88U, 0U, 6U},
+    {96U, 0U, 6U},  {64U, 8U, 5U},
 }};
 
 // SCES-01913 ViT Co. glyph metadata. The translation keeps the original
@@ -274,6 +278,88 @@ int originalHudTextWidth(std::string_view text) noexcept {
   return width == 0 ? 0 : width - 2;
 }
 
+std::string originalHudWrapText(std::string_view text, int maximum_width) {
+  if (text.empty() || maximum_width <= 0) {
+    return std::string{text};
+  }
+
+  std::string wrapped;
+  wrapped.reserve(text.size() + text.size() / 16U);
+  auto line_width = 0;
+  const auto append_newline = [&] {
+    while (!wrapped.empty() && wrapped.back() == ' ') {
+      wrapped.pop_back();
+    }
+    wrapped.push_back('\n');
+    line_width = 0;
+  };
+  const auto append_word = [&](std::string_view word) {
+    const auto word_width = originalHudTextWidth(word);
+    const auto separator_width = line_width == 0 ? 0 : 4;
+    if (line_width != 0 &&
+        line_width + separator_width + word_width <= maximum_width) {
+      wrapped.push_back(' ');
+      wrapped.append(word);
+      line_width += separator_width + word_width;
+      return;
+    }
+    if (line_width != 0) {
+      append_newline();
+    }
+    if (word_width <= maximum_width) {
+      wrapped.append(word);
+      line_width = word_width;
+      return;
+    }
+
+    // Technical tokens and user-defined input names can be wider than one
+    // line. Split only those exceptional words; normal prose remains wrapped
+    // at spaces.
+    for (const auto character : word) {
+      const auto glyph = originalHudGlyph(character);
+      const auto advance = glyph ? glyph->advance() : 0;
+      if (line_width != 0 && line_width + advance > maximum_width) {
+        append_newline();
+      }
+      wrapped.push_back(character);
+      line_width += advance;
+    }
+    if (line_width >= 2) {
+      line_width -= 2;
+    }
+  };
+
+  auto cursor = std::size_t{};
+  while (cursor <= text.size()) {
+    const auto paragraph_end = text.find('\n', cursor);
+    const auto end =
+        paragraph_end == std::string_view::npos ? text.size() : paragraph_end;
+    auto word_cursor = cursor;
+    while (word_cursor < end) {
+      while (word_cursor < end && text[word_cursor] == ' ') {
+        ++word_cursor;
+      }
+      const auto word_end = text.find(' ', word_cursor);
+      const auto clipped_end =
+          word_end == std::string_view::npos ? end : std::min(word_end, end);
+      if (word_cursor < clipped_end) {
+        append_word(text.substr(word_cursor, clipped_end - word_cursor));
+      }
+      word_cursor = clipped_end;
+    }
+    if (paragraph_end == std::string_view::npos) {
+      break;
+    }
+    append_newline();
+    cursor = paragraph_end + 1U;
+  }
+  while (!wrapped.empty() && wrapped.back() == '\n' &&
+         (text.empty() || text.back() != '\n')) {
+    wrapped.pop_back();
+  }
+  return wrapped;
+}
+
 std::string originalAmmoText(const WeaponDefinition &definition,
                              const WeaponState &weapon) {
   if (!definition.shows_ammo) {
@@ -332,29 +418,32 @@ originalAimReticleGeometry(bool head_target) noexcept {
   // Recovered at native resolution from FUN_80041830 and the retail output.
   // A body lock follows the full projected torso, while HEAD SHOT contracts
   // the same four-ray box to the head volume.
-  return head_target
-      ? OriginalAimReticleGeometry{10, 7, 10, 7}
-      : OriginalAimReticleGeometry{17, 8, 17, 9};
+  return head_target ? OriginalAimReticleGeometry{10, 7, 10, 7}
+                     : OriginalAimReticleGeometry{17, 8, 17, 9};
 }
 
-OriginalHeadshotCalloutGeometry
-originalHeadshotCalloutGeometry() noexcept {
+OriginalHeadshotCalloutGeometry originalHeadshotCalloutGeometry() noexcept {
   return OriginalHeadshotCalloutGeometry{
-      0, -14,
-      9, -20,
-      16, -20,
-      8, -28,
+      0, -14, 9, -20, 16, -20, 8, -28,
   };
 }
 
-OriginalWeaponMenuGeometry
-originalWeaponMenuGeometry() noexcept {
+OriginalWeaponMenuGeometry originalWeaponMenuGeometry() noexcept {
   // Native POLY_F4/LINE_F2 packets from FUN_800405f4. The command word
   // 0x28503028 encodes RGB 40,48,80; both quads use average blending.
   return OriginalWeaponMenuGeometry{
-      -200, -90, 200, -69,
-      -49, -93, 49, -66,
-      -200, 200, -92, -68,
+      -200,
+      -90,
+      200,
+      -69,
+      -49,
+      -93,
+      49,
+      -66,
+      -200,
+      200,
+      -92,
+      -68,
       HudRgb{40U, 48U, 80U},
       HudRgb{128U, 128U, 128U},
   };
@@ -538,7 +627,7 @@ PlayerInventory::quickSlot(std::size_t slot) const noexcept {
   std::size_t owned_index = 0U;
   for (std::size_t index = 1U; index < weapon_slot_count; ++index) {
     const auto id = static_cast<WeaponId>(index);
-    const auto& definition = weapon_definitions[index];
+    const auto &definition = weapon_definitions[index];
     if (!states_[index].owned || definition.icon.layerCount() == 0U) {
       continue;
     }
@@ -628,13 +717,15 @@ void GameplayHud::update(const HudInput &input) noexcept {
   auto changed = false;
   if (input.weapon_menu_delta != 0) {
     weapon_menu_frames_ = weapon_menu_duration;
-    const auto signed_steps = static_cast<std::int64_t>(input.weapon_menu_delta);
+    const auto signed_steps =
+        static_cast<std::int64_t>(input.weapon_menu_delta);
     const auto magnitude = signed_steps < 0 ? -signed_steps : signed_steps;
     const auto steps = std::min<std::size_t>(
         weapon_slot_count, static_cast<std::size_t>(magnitude));
     for (std::size_t step = 0; step < steps; ++step) {
       changed = (signed_steps > 0 ? inventory_.selectNext()
-                                  : inventory_.selectPrevious()) || changed;
+                                  : inventory_.selectPrevious()) ||
+                changed;
     }
   } else if (input.next_weapon != input.previous_weapon) {
     changed = input.next_weapon ? inventory_.selectNext()
@@ -648,8 +739,7 @@ void GameplayHud::update(const HudInput &input) noexcept {
   // armor is depleted the red endpoint remains and becomes the visible bar.
   displayed_primary_bar_ = approachBar(displayed_primary_bar_, armorBar());
   displayed_primary_trail_ = approachBar(
-      displayed_primary_trail_,
-      std::max(displayed_primary_bar_, healthBar()));
+      displayed_primary_trail_, std::max(displayed_primary_bar_, healthBar()));
   displayed_danger_bar_ = approachBar(displayed_danger_bar_, dangerBar());
   displayed_target_bar_ =
       approachBar(displayed_target_bar_, targetBar().value_or(0U));
@@ -719,8 +809,8 @@ std::uint8_t GameplayHud::approachBar(std::uint8_t displayed,
         std::min<unsigned int>(displayed + bar_animation_step, target));
   }
   if (displayed > target) {
-    return static_cast<std::uint8_t>(
-        std::max<int>(static_cast<int>(displayed) - bar_animation_step, target));
+    return static_cast<std::uint8_t>(std::max<int>(
+        static_cast<int>(displayed) - bar_animation_step, target));
   }
   return displayed;
 }
@@ -740,9 +830,7 @@ std::uint8_t GameplayHud::approachReveal(std::uint8_t displayed,
 }
 
 std::uint8_t GameplayHud::primaryBar() const noexcept {
-  return primaryStatus() == PrimaryStatus::armor
-             ? armorBar()
-             : healthBar();
+  return primaryStatus() == PrimaryStatus::armor ? armorBar() : healthBar();
 }
 
 std::uint8_t GameplayHud::armorBar() const noexcept {
@@ -760,7 +848,7 @@ HudRgb GameplayHud::healthBarColor() const noexcept {
 
   // Exact 16-step output of the retail rcos-based critical-health pulse.
   constexpr std::array<std::uint8_t, 16> pulse{
-      255U, 245U, 217U, 175U, 127U, 78U, 36U, 8U,
+      255U, 245U, 217U, 175U, 127U, 78U,  36U,  8U,
       0U,   8U,   36U,  78U,  127U, 175U, 217U, 245U,
   };
   return {pulse[static_cast<std::size_t>(tick_ & 15U)], 0U, 0U};

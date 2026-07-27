@@ -1,5 +1,7 @@
 #pragma once
 
+#include "sf/platform/player_input.hpp"
+
 #include <cstdint>
 #include <memory>
 
@@ -15,7 +17,8 @@ namespace sf::platform::detail {
 
 class PsyCrossRetailBriefing final {
 public:
-  explicit PsyCrossRetailBriefing(const game::MissionPackage &mission);
+  PsyCrossRetailBriefing(const game::MissionPackage &mission,
+                         KeyboardMouseBindings bindings);
   ~PsyCrossRetailBriefing();
 
   PsyCrossRetailBriefing(const PsyCrossRetailBriefing &) = delete;

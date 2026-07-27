@@ -20,13 +20,21 @@ bool controlReady(const sf::game::GameplaySession &gameplay) noexcept {
          !frame->renderer->state.camera.locked;
 }
 
+bool step(sf::game::GameplaySession &gameplay,
+          const sf::game::GameplayInput &input = {}) {
+  gameplay.update(input);
+  return gameplay.advanceAudioFrameClock();
+}
+
 int run(const std::filesystem::path &cue, std::uint32_t mission_index) {
   auto disc = sf::game::GameDisc::open(cue);
   const auto package = sf::game::MissionPackage::load(disc, mission_index);
   auto gameplay = sf::game::GameplaySession{package};
   auto stable = std::uint32_t{};
   for (std::uint32_t update = 0U; update < 2'000U && stable < 8U; ++update) {
-    gameplay.update({});
+    if (!step(gameplay)) {
+      return 2;
+    }
     stable = controlReady(gameplay) ? stable + 1U : 0U;
   }
   if (stable != 8U || !gameplay.activateRetailAllWeaponsCheat()) {
@@ -36,13 +44,17 @@ int run(const std::filesystem::path &cue, std::uint32_t mission_index) {
   constexpr auto weapon = sf::game::WeaponId::fragmentation_grenade;
   for (std::uint32_t update = 0U;
        update < 300U && !gameplay.canEquipWeapon(weapon); ++update) {
-    gameplay.update({});
+    if (!step(gameplay)) {
+      return 3;
+    }
   }
   if (!gameplay.canEquipWeapon(weapon) || !gameplay.equipWeapon(weapon)) {
     return 3;
   }
   for (std::uint32_t update = 0U; update < 300U; ++update) {
-    gameplay.update({});
+    if (!step(gameplay)) {
+      return 4;
+    }
     if (gameplay.hud().inventory().current() == weapon) {
       break;
     }
@@ -68,11 +80,13 @@ int run(const std::filesystem::path &cue, std::uint32_t mission_index) {
   auto projectile_followed_parabola = false;
   auto first_projectile_position = sf::game::LegacyNativePoint{};
   for (std::uint32_t update = 0U; update < 180U; ++update) {
-    gameplay.update(sf::game::GameplayInput{
-        .aim = update < 150U,
-        .fire_pressed = update == 20U,
-        .fire_held = update >= 20U && update < 52U,
-    });
+    if (!step(gameplay, sf::game::GameplayInput{
+                            .aim = update < 150U,
+                            .fire_pressed = update == 20U,
+                            .fire_held = update >= 20U && update < 52U,
+                        })) {
+      return 5;
+    }
     const auto frame = gameplay.legacyPresentationFrame();
     if (!frame || !frame->renderer) {
       return 5;

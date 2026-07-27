@@ -38,7 +38,8 @@ struct SceneViewerResult {
 // PsyCross's debug-font VRAM page, which gameplay legitimately overwrites.
 class PsyCrossCampaignSaveRenderer final {
 public:
-  explicit PsyCrossCampaignSaveRenderer(const game::MissionPackage &mission);
+  PsyCrossCampaignSaveRenderer(const game::MissionPackage &mission,
+                               KeyboardMouseBindings input);
   ~PsyCrossCampaignSaveRenderer();
 
   PsyCrossCampaignSaveRenderer(const PsyCrossCampaignSaveRenderer &) = delete;

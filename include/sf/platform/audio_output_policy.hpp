@@ -140,56 +140,6 @@ private:
   bool prebuffering_{true};
 };
 
-// Keeps a short, current recovery window after a renderer stall. Retaining
-// only one 120 Hz slice cannot satisfy OpenAL's recovery prebuffer and turns a
-// transient stall into a longer silence; three slices cover the eight
-// 128-frame buffers used by the gameplay source without preserving a stale
-// historical tail.
-class AudioOutputCatchUpPolicy final {
-public:
-  explicit AudioOutputCatchUpPolicy(std::size_t maximum_coherent_updates = 1U,
-                                    std::size_t recovery_updates = 3U) noexcept
-      : maximum_coherent_updates_(
-            std::max<std::size_t>(1U, maximum_coherent_updates)),
-        recovery_updates_(std::max<std::size_t>(1U, recovery_updates)) {}
-
-  // Returns true once when stale guest PCM must be discarded. The live host
-  // queue remains attached so a long frame does not manufacture an underrun.
-  [[nodiscard]] bool beginFrame(std::size_t pending_updates) noexcept {
-    if (pending_updates <= maximum_coherent_updates_) {
-      return false;
-    }
-    const auto reset_output = !catching_up_;
-    catching_up_ = true;
-    return reset_output;
-  }
-
-  // Returns true for the newest recovery window. Older catch-up blocks are
-  // deliberately discarded, while the final few slices can immediately meet
-  // the source's recovery prebuffer.
-  [[nodiscard]] bool
-  retainCompletedUpdate(std::size_t pending_updates) noexcept {
-    if (!catching_up_) {
-      return true;
-    }
-    if (pending_updates >= recovery_updates_) {
-      return false;
-    }
-    if (pending_updates == 0U) {
-      catching_up_ = false;
-    }
-    return true;
-  }
-
-  void reset() noexcept { catching_up_ = false; }
-  [[nodiscard]] bool catchingUp() const noexcept { return catching_up_; }
-
-private:
-  std::size_t maximum_coherent_updates_{1U};
-  std::size_t recovery_updates_{3U};
-  bool catching_up_{};
-};
-
 // Converts the retail callback cadence into an exact host sample budget.
 // Guest CPU work may advance hardware by a variable number of cycles inside a
 // fixed 20 Hz update. The realtime sink must nevertheless submit exactly one

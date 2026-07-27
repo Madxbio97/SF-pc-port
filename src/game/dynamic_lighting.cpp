@@ -43,6 +43,40 @@ struct LightProfile {
   return {};
 }
 
+[[nodiscard]] std::uint32_t mixBits(std::uint32_t value) noexcept {
+  value ^= value >> 16U;
+  value *= 0x7feb352dU;
+  value ^= value >> 15U;
+  value *= 0x846ca68bU;
+  return value ^ (value >> 16U);
+}
+
+[[nodiscard]] LightProfile animatedProfile(DynamicLightKind kind,
+                                           std::uint32_t source_id,
+                                           std::uint64_t tick) noexcept {
+  auto result = profile(kind);
+  if (kind == DynamicLightKind::police_lightbar) {
+    // Use the same two-update cadence as the retail lightbar texture copies.
+    // Alternate complete red/blue pulses instead of adding a permanent blue
+    // ambient wash around every police vehicle.
+    const auto phase = ((tick / 2U) + source_id) & 3U;
+    const auto red_phase = phase == 1U || phase == 2U;
+    result.color = red_phase ? DynamicLightRgb{1.0, 0.10, 0.06}
+                             : DynamicLightRgb{0.08, 0.22, 1.0};
+    result.intensity = phase == 0U || phase == 2U ? 0.22 : 0.13;
+  } else if (kind == DynamicLightKind::steady_fire) {
+    // A deterministic 20 Hz flicker follows guest time, so rendering the same
+    // simulation frame at 30, 60 or 240 Hz produces the exact same light.
+    const auto phase = static_cast<std::uint32_t>(tick / 2U);
+    const auto noise = mixBits(source_id ^ (phase * 0x9e3779b9U));
+    const auto unit = static_cast<double>(noise & 0xffffU) / 65535.0;
+    const auto pulse = 0.78 + unit * 0.34;
+    result.intensity *= pulse;
+    result.radius *= 0.92 + unit * 0.12;
+  }
+  return result;
+}
+
 [[nodiscard]] bool finite(DynamicLightPoint point) noexcept {
   return std::isfinite(point.x) && std::isfinite(point.y) &&
          std::isfinite(point.z);
@@ -63,13 +97,15 @@ struct LightProfile {
 }
 
 [[nodiscard]] std::optional<DynamicLight>
-makePersistent(const PersistentDynamicLightState &source) noexcept {
+makePersistent(const PersistentDynamicLightState &source,
+               std::uint64_t animation_tick) noexcept {
   if (!source.identity_confirmed || !source.active || !source.resident ||
       source.destroyed || !persistentKind(source.kind) ||
       !finite(source.position)) {
     return std::nullopt;
   }
-  const auto light_profile = profile(source.kind);
+  const auto light_profile =
+      animatedProfile(source.kind, source.source_id, animation_tick);
   return DynamicLight{source.kind,
                       source.position,
                       light_profile.color,
@@ -162,10 +198,22 @@ struct SelectedLight {
   std::size_t source_order{};
 };
 
+[[nodiscard]] int selectionPriority(const DynamicLight &light) noexcept {
+  if (light.transient) {
+    return 3;
+  }
+  if (light.directional) {
+    return 2;
+  }
+  return 1;
+}
+
 [[nodiscard]] bool better(const SelectedLight &candidate,
                           const SelectedLight &resident) noexcept {
-  if (candidate.light.transient != resident.light.transient) {
-    return candidate.light.transient;
+  const auto candidate_priority = selectionPriority(candidate.light);
+  const auto resident_priority = selectionPriority(resident.light);
+  if (candidate_priority != resident_priority) {
+    return candidate_priority > resident_priority;
   }
   if (candidate.observer_distance_squared !=
       resident.observer_distance_squared) {
@@ -530,7 +578,8 @@ DynamicLightFrame buildDynamicLightFrame(
     std::span<const PersistentDynamicLightState> persistent,
     std::span<const TransientDynamicLightState> transient,
     DynamicLightPoint observer,
-    std::span<const DirectionalDynamicLightState> directional) noexcept {
+    std::span<const DirectionalDynamicLightState> directional,
+    std::uint64_t animation_tick) noexcept {
   auto result = DynamicLightFrame{};
   if (!finite(observer)) {
     return result;
@@ -552,7 +601,7 @@ DynamicLightFrame buildDynamicLightFrame(
     ++source_order;
   }
   for (const auto &source : persistent) {
-    if (const auto light = makePersistent(source)) {
+    if (const auto light = makePersistent(source, animation_tick)) {
       consider(selected, count, *light, observer, source_order);
     }
     ++source_order;
@@ -569,11 +618,26 @@ DynamicLightFrame buildDynamicLightFrame(
   return result;
 }
 
-DynamicLightModulation sampleDynamicLighting(const DynamicLightFrame &frame,
-                                             DynamicLightPoint point) noexcept {
+DynamicLightModulation sampleDynamicLightingImpl(
+    const DynamicLightFrame &frame, DynamicLightPoint point,
+    std::optional<DynamicLightPoint> surface_normal) noexcept {
   auto result = DynamicLightModulation{};
   if (!finite(point)) {
     return result;
+  }
+  auto normal = DynamicLightPoint{};
+  if (surface_normal) {
+    if (!finite(*surface_normal)) {
+      return result;
+    }
+    const auto length = std::sqrt(surface_normal->x * surface_normal->x +
+                                  surface_normal->y * surface_normal->y +
+                                  surface_normal->z * surface_normal->z);
+    if (!std::isfinite(length) || length <= 0.000001) {
+      return result;
+    }
+    normal = {surface_normal->x / length, surface_normal->y / length,
+              surface_normal->z / length};
   }
   for (const auto &light : frame.active()) {
     if (!finite(light.position) || !std::isfinite(light.radius) ||
@@ -587,10 +651,10 @@ DynamicLightModulation sampleDynamicLighting(const DynamicLightFrame &frame,
         distance_squared >= radius_squared) {
       continue;
     }
+    const auto distance = std::sqrt(distance_squared);
     const auto radial = 1.0 - distance_squared / radius_squared;
     auto attenuation = radial * radial * light.intensity;
     if (light.directional) {
-      const auto distance = std::sqrt(distance_squared);
       if (distance <= 0.000001 ||
           light.inner_cone_cosine <= light.outer_cone_cosine) {
         continue;
@@ -613,6 +677,20 @@ DynamicLightModulation sampleDynamicLighting(const DynamicLightFrame &frame,
                      0.0, 1.0);
       attenuation *= cone * cone;
     }
+    if (surface_normal && distance > 0.000001) {
+      const auto inverse_distance = 1.0 / distance;
+      const auto to_light = DynamicLightPoint{
+          (light.position.x - point.x) * inverse_distance,
+          (light.position.y - point.y) * inverse_distance,
+          (light.position.z - point.z) * inverse_distance,
+      };
+      const auto cosine =
+          normal.x * to_light.x + normal.y * to_light.y + normal.z * to_light.z;
+      // Wrapped Lambert lighting prevents low-poly characters from acquiring
+      // razor-sharp black facets, but fully rejects lights behind a surface.
+      const auto surface = std::clamp((cosine + 0.12) / 1.12, 0.0, 1.0);
+      attenuation *= surface * surface * (3.0 - 2.0 * surface);
+    }
     result.red += light.color.red * attenuation;
     result.green += light.color.green * attenuation;
     result.blue += light.color.blue * attenuation;
@@ -621,6 +699,229 @@ DynamicLightModulation sampleDynamicLighting(const DynamicLightFrame &frame,
   result.green = std::min(result.green, 0.55);
   result.blue = std::min(result.blue, 0.55);
   return result;
+}
+
+DynamicLightModulation sampleDynamicLighting(const DynamicLightFrame &frame,
+                                             DynamicLightPoint point) noexcept {
+  return sampleDynamicLightingImpl(frame, point, std::nullopt);
+}
+
+DynamicShadowProjection
+selectDynamicShadowProjection(const DynamicLightFrame &frame,
+                              DynamicLightPoint actor_anchor,
+                              DynamicLightPoint ground_normal) noexcept {
+  auto result = DynamicShadowProjection{};
+  if (!finite(actor_anchor) || !finite(ground_normal)) {
+    return result;
+  }
+  const auto normal_length = std::sqrt(ground_normal.x * ground_normal.x +
+                                       ground_normal.y * ground_normal.y +
+                                       ground_normal.z * ground_normal.z);
+  if (!std::isfinite(normal_length) || normal_length <= 0.000001) {
+    return result;
+  }
+  const auto normal = DynamicLightPoint{ground_normal.x / normal_length,
+                                        ground_normal.y / normal_length,
+                                        ground_normal.z / normal_length};
+  // A low-weight key ray keeps the transition continuous as a local source
+  // enters or leaves its radius/cone instead of snapping to a new winner.
+  constexpr auto key_weight = 0.035;
+  auto weighted_ray = DynamicLightPoint{
+      result.ray_direction.x * key_weight,
+      result.ray_direction.y * key_weight,
+      result.ray_direction.z * key_weight,
+  };
+  auto total_weight = key_weight;
+  auto source_weight = 0.0;
+  for (const auto &light : frame.active()) {
+    if (!finite(light.position) || !finite(light.direction) ||
+        !std::isfinite(light.radius) || !std::isfinite(light.intensity) ||
+        light.radius <= 0.0 || light.intensity <= 0.0) {
+      continue;
+    }
+    const auto delta = DynamicLightPoint{actor_anchor.x - light.position.x,
+                                         actor_anchor.y - light.position.y,
+                                         actor_anchor.z - light.position.z};
+    const auto distance_squared =
+        delta.x * delta.x + delta.y * delta.y + delta.z * delta.z;
+    if (!std::isfinite(distance_squared) ||
+        distance_squared >= light.radius * light.radius) {
+      continue;
+    }
+    const auto distance = std::sqrt(distance_squared);
+    if (distance <= 0.000001) {
+      continue;
+    }
+    auto ray = light.directional
+                   ? light.direction
+                   : DynamicLightPoint{delta.x / distance, delta.y / distance,
+                                       delta.z / distance};
+    const auto ray_length =
+        std::sqrt(ray.x * ray.x + ray.y * ray.y + ray.z * ray.z);
+    if (!std::isfinite(ray_length) || ray_length <= 0.000001) {
+      continue;
+    }
+    ray = {ray.x / ray_length, ray.y / ray_length, ray.z / ray_length};
+    auto attenuation = 1.0 - distance_squared / (light.radius * light.radius);
+    attenuation = attenuation * attenuation * light.intensity;
+    if (light.directional) {
+      if (light.inner_cone_cosine <= light.outer_cone_cosine) {
+        continue;
+      }
+      const auto to_point = DynamicLightPoint{
+          delta.x / distance, delta.y / distance, delta.z / distance};
+      const auto cosine = light.direction.x * to_point.x +
+                          light.direction.y * to_point.y +
+                          light.direction.z * to_point.z;
+      if (cosine <= light.outer_cone_cosine) {
+        continue;
+      }
+      const auto cone =
+          std::clamp((cosine - light.outer_cone_cosine) /
+                         (light.inner_cone_cosine - light.outer_cone_cosine),
+                     0.0, 1.0);
+      attenuation *= cone * cone;
+    }
+    const auto ground_alignment =
+        ray.x * normal.x + ray.y * normal.y + ray.z * normal.z;
+    constexpr auto minimum_ground_alignment = 0.16;
+    if (ground_alignment <= minimum_ground_alignment) {
+      continue;
+    }
+    const auto luminance = light.color.red * 0.2126 +
+                           light.color.green * 0.7152 +
+                           light.color.blue * 0.0722;
+    const auto score = attenuation * std::max(luminance, 0.0) *
+                       (0.35 + ground_alignment * 0.65);
+    if (!std::isfinite(score) || score <= 0.0) {
+      continue;
+    }
+    weighted_ray.x += ray.x * score;
+    weighted_ray.y += ray.y * score;
+    weighted_ray.z += ray.z * score;
+    total_weight += score;
+    source_weight += score;
+  }
+  if (!std::isfinite(total_weight) || total_weight <= 0.000001) {
+    return result;
+  }
+  weighted_ray = {weighted_ray.x / total_weight, weighted_ray.y / total_weight,
+                  weighted_ray.z / total_weight};
+  auto normal_component = weighted_ray.x * normal.x +
+                          weighted_ray.y * normal.y + weighted_ray.z * normal.z;
+  if (!std::isfinite(normal_component) || normal_component <= 0.000001) {
+    return result;
+  }
+  auto tangent = DynamicLightPoint{
+      weighted_ray.x - normal.x * normal_component,
+      weighted_ray.y - normal.y * normal_component,
+      weighted_ray.z - normal.z * normal_component,
+  };
+  const auto tangent_length = std::sqrt(
+      tangent.x * tangent.x + tangent.y * tangent.y + tangent.z * tangent.z);
+  // A shadow may lean, but never become several character-heights long.
+  constexpr auto maximum_tangent_ratio = 0.85;
+  const auto maximum_tangent = normal_component * maximum_tangent_ratio;
+  if (std::isfinite(tangent_length) && tangent_length > maximum_tangent &&
+      tangent_length > 0.000001) {
+    const auto scale = maximum_tangent / tangent_length;
+    tangent = {tangent.x * scale, tangent.y * scale, tangent.z * scale};
+  }
+  auto bounded_ray = DynamicLightPoint{
+      normal.x * normal_component + tangent.x,
+      normal.y * normal_component + tangent.y,
+      normal.z * normal_component + tangent.z,
+  };
+  const auto bounded_length =
+      std::sqrt(bounded_ray.x * bounded_ray.x + bounded_ray.y * bounded_ray.y +
+                bounded_ray.z * bounded_ray.z);
+  if (!std::isfinite(bounded_length) || bounded_length <= 0.000001) {
+    return result;
+  }
+  result.ray_direction = {bounded_ray.x / bounded_length,
+                          bounded_ray.y / bounded_length,
+                          bounded_ray.z / bounded_length};
+  result.darkness = std::clamp(0.18 + source_weight * 0.85, 0.18, 0.42);
+  result.source_driven = source_weight > 0.000001;
+  return result;
+}
+
+std::optional<DynamicLightPoint>
+projectDynamicShadowPoint(DynamicLightPoint vertex,
+                          DynamicLightPoint ground_point,
+                          DynamicLightPoint ground_normal,
+                          const DynamicShadowProjection &projection) noexcept {
+  if (!finite(vertex) || !finite(ground_point) || !finite(ground_normal) ||
+      !finite(projection.ray_direction)) {
+    return std::nullopt;
+  }
+  const auto normal_length = std::sqrt(ground_normal.x * ground_normal.x +
+                                       ground_normal.y * ground_normal.y +
+                                       ground_normal.z * ground_normal.z);
+  const auto ray_length =
+      std::sqrt(projection.ray_direction.x * projection.ray_direction.x +
+                projection.ray_direction.y * projection.ray_direction.y +
+                projection.ray_direction.z * projection.ray_direction.z);
+  if (!std::isfinite(normal_length) || !std::isfinite(ray_length) ||
+      normal_length <= 0.000001 || ray_length <= 0.000001) {
+    return std::nullopt;
+  }
+  const auto normal = DynamicLightPoint{ground_normal.x / normal_length,
+                                        ground_normal.y / normal_length,
+                                        ground_normal.z / normal_length};
+  const auto ray = DynamicLightPoint{
+      projection.ray_direction.x / ray_length,
+      projection.ray_direction.y / ray_length,
+      projection.ray_direction.z / ray_length,
+  };
+  const auto denominator =
+      ray.x * normal.x + ray.y * normal.y + ray.z * normal.z;
+  if (!std::isfinite(denominator) || denominator <= 0.08) {
+    return std::nullopt;
+  }
+  const auto plane_distance = (ground_point.x - vertex.x) * normal.x +
+                              (ground_point.y - vertex.y) * normal.y +
+                              (ground_point.z - vertex.z) * normal.z;
+  auto distance = plane_distance / denominator;
+  if (!std::isfinite(distance)) {
+    return std::nullopt;
+  }
+  // Malformed poses and low grazing lights cannot produce an unbounded quad.
+  distance = std::clamp(distance, 0.0, 960.0);
+  auto tangent = DynamicLightPoint{ray.x - normal.x * denominator,
+                                   ray.y - normal.y * denominator,
+                                   ray.z - normal.z * denominator};
+  auto tangent_offset = DynamicLightPoint{
+      tangent.x * distance, tangent.y * distance, tangent.z * distance};
+  const auto tangent_offset_length =
+      std::sqrt(tangent_offset.x * tangent_offset.x +
+                tangent_offset.y * tangent_offset.y +
+                tangent_offset.z * tangent_offset.z);
+  constexpr auto maximum_stretch_ratio = 0.85;
+  const auto maximum_tangent_offset =
+      std::abs(plane_distance) * maximum_stretch_ratio;
+  if (std::isfinite(tangent_offset_length) &&
+      tangent_offset_length > maximum_tangent_offset &&
+      tangent_offset_length > 0.000001) {
+    const auto scale = maximum_tangent_offset / tangent_offset_length;
+    tangent_offset = {tangent_offset.x * scale, tangent_offset.y * scale,
+                      tangent_offset.z * scale};
+  }
+  constexpr auto surface_bias = 3.0;
+  return DynamicLightPoint{
+      vertex.x + normal.x * plane_distance + tangent_offset.x -
+          normal.x * surface_bias,
+      vertex.y + normal.y * plane_distance + tangent_offset.y -
+          normal.y * surface_bias,
+      vertex.z + normal.z * plane_distance + tangent_offset.z -
+          normal.z * surface_bias,
+  };
+}
+
+DynamicLightModulation
+sampleDynamicLighting(const DynamicLightFrame &frame, DynamicLightPoint point,
+                      DynamicLightPoint surface_normal) noexcept {
+  return sampleDynamicLightingImpl(frame, point, surface_normal);
 }
 
 DynamicLightVertexColor

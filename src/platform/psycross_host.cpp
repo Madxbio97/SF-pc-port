@@ -16,6 +16,7 @@
 
 #include <PsyX/PsyX_globals.h>
 #include <PsyX/PsyX_public.h>
+#include <SDL.h>
 #include <psx/libetc.h>
 #include <psx/libgpu.h>
 #include <psx/libgte.h>
@@ -159,10 +160,34 @@ std::uint16_t readHostButtons(const PADRAW &pad) noexcept {
          (static_cast<std::uint16_t>(pad.buttons[1]) << 8U);
 }
 
+KeyboardMouseActionSnapshot
+sampleHostKeyboardMouseActions(const KeyboardMouseBindings &bindings) {
+  int keyboard_count{};
+  const auto *keyboard = SDL_GetKeyboardState(&keyboard_count);
+  const auto keyboard_state =
+      keyboard != nullptr && keyboard_count > 0
+          ? std::span<const std::uint8_t>{
+                keyboard, static_cast<std::size_t>(keyboard_count)}
+          : std::span<const std::uint8_t>{};
+  const auto mouse_buttons = SDL_GetMouseState(nullptr, nullptr);
+  return sampleKeyboardMouseActions(
+      bindings,
+      KeyboardMouseDeviceState{
+          .keyboard = keyboard_state,
+          .mouse_left = (mouse_buttons & SDL_BUTTON_LMASK) != 0U,
+          .mouse_right = (mouse_buttons & SDL_BUTTON_RMASK) != 0U,
+          .mouse_middle = (mouse_buttons & SDL_BUTTON_MMASK) != 0U,
+          .mouse_x1 = (mouse_buttons & SDL_BUTTON_X1MASK) != 0U,
+          .mouse_x2 = (mouse_buttons & SDL_BUTTON_X2MASK) != 0U,
+          .mouse_wheel_delta = detail::consumePsyCrossMouseWheel(),
+      });
+}
+
 SaveStoreDecision
 storeTitleSaveSlotsWithRecovery(const std::filesystem::path &path,
                                 const game::TitleSaveSlots &slots, PADRAW &pad,
-                                std::uint16_t &previous_buttons) {
+                                std::uint16_t &previous_buttons,
+                                const KeyboardMouseBindings &bindings) {
   if (storeTitleSaveSlots(path, slots)) {
     return SaveStoreDecision::stored;
   }
@@ -171,32 +196,56 @@ storeTitleSaveSlotsWithRecovery(const std::filesystem::path &path,
   constexpr std::uint16_t retry_buttons = 0x4000U | 0x08U;
   constexpr std::uint16_t continue_buttons = 0x8000U;
   constexpr std::uint16_t title_buttons = 0x2000U | 0x01U;
-  constexpr const char *notice = "       SAVE FAILED\n\n"
-                                 "  CROSS / ENTER  Retry\n"
-                                 "  SQUARE         Continue without saving\n"
-                                 "  CIRCLE / ESC   Return to title\n\n"
-                                 "Campaign progress remains active.";
+  const auto input_name = [&](KeyboardMouseAction action) {
+    return std::string{keyboardMouseInputName(bindings[action])};
+  };
+  const auto notice = "       SAVE FAILED\n\n  " +
+                      input_name(KeyboardMouseAction::interact) +
+                      "  Retry\n  " + input_name(KeyboardMouseAction::fire) +
+                      "  Continue without saving\n  " +
+                      input_name(KeyboardMouseAction::pause) +
+                      "  Return to title\n\n"
+                      "Campaign progress remains active.";
+  auto keyboard_initialized = false;
+  auto interact_was_down = false;
+  auto fire_was_down = false;
+  auto pause_was_down = false;
   for (;;) {
     PsyX_UpdateInput();
     const auto buttons = readHostButtons(pad);
     const auto pressed =
         static_cast<std::uint16_t>(~buttons & previous_buttons);
     previous_buttons = buttons;
+    const auto actions = sampleHostKeyboardMouseActions(bindings);
+    const auto interact_down = actions[KeyboardMouseAction::interact];
+    const auto fire_down = actions[KeyboardMouseAction::fire];
+    const auto pause_down = actions[KeyboardMouseAction::pause];
+    const auto interact_pressed =
+        keyboard_initialized && interact_down && !interact_was_down;
+    const auto fire_pressed =
+        keyboard_initialized && fire_down && !fire_was_down;
+    const auto pause_pressed =
+        keyboard_initialized && pause_down && !pause_was_down;
+    keyboard_initialized = true;
+    interact_was_down = interact_down;
+    fire_was_down = fire_down;
+    pause_was_down = pause_down;
 
-    if ((pressed & title_buttons) != 0U) {
+    if ((pressed & title_buttons) != 0U || pause_pressed) {
       return SaveStoreDecision::return_to_title;
     }
-    if ((pressed & continue_buttons) != 0U) {
+    if ((pressed & continue_buttons) != 0U || fire_pressed) {
       PsyX_Log_Info("Continuing campaign without durable save progress\n");
       return SaveStoreDecision::continue_without_saving;
     }
-    if ((pressed & retry_buttons) != 0U && storeTitleSaveSlots(path, slots)) {
+    if (((pressed & retry_buttons) != 0U || interact_pressed) &&
+        storeTitleSaveSlots(path, slots)) {
       return SaveStoreDecision::stored;
     }
 
     if (PsyX_BeginScene() != 0) {
       char format[] = "%s";
-      static_cast<void>(FntPrint(format, notice));
+      static_cast<void>(FntPrint(format, notice.c_str()));
       static_cast<void>(FntFlush());
       PsyX_EndScene();
     }
@@ -209,11 +258,12 @@ game::CampaignSaveResult
 runCampaignSaveMenu(const game::MissionPackage &mission,
                     const game::TitleSaveSlots &slots, PADRAW &pad,
                     std::uint16_t &previous_buttons,
-                    detail::PsyCrossUiAudio &ui_audio) {
+                    detail::PsyCrossUiAudio &ui_audio,
+                    const KeyboardMouseBindings &bindings) {
   // Gameplay already owns the correct 384x240 presentation target. Reuse its
   // original font/ACD renderer instead of switching to the debug-font movie
   // target whose VRAM page has been overwritten by the mission renderer.
-  detail::PsyCrossCampaignSaveRenderer renderer{mission};
+  detail::PsyCrossCampaignSaveRenderer renderer{mission, bindings};
   PsyX_Log_Info("Campaign save UI entered\n");
   game::CampaignSaveMenu menu;
   auto analog_direction = 0;
@@ -222,6 +272,9 @@ runCampaignSaveMenu(const game::MissionPackage &mission,
   constexpr std::uint16_t next_buttons_mask = 0x20U | 0x40U;
   constexpr std::uint16_t confirm_buttons_mask = 0x4000U | 0x8000U | 0x08U;
   constexpr std::uint16_t cancel_buttons_mask = 0x2000U | 0x01U;
+  auto keyboard_initialized = false;
+  auto interact_was_down = false;
+  auto pause_was_down = false;
   for (;;) {
     PsyX_UpdateInput();
     ui_audio.update();
@@ -229,6 +282,16 @@ runCampaignSaveMenu(const game::MissionPackage &mission,
     const auto pressed =
         static_cast<std::uint16_t>(~buttons & previous_buttons);
     previous_buttons = buttons;
+    const auto actions = sampleHostKeyboardMouseActions(bindings);
+    const auto interact_down = actions[KeyboardMouseAction::interact];
+    const auto pause_down = actions[KeyboardMouseAction::pause];
+    const auto interact_pressed =
+        keyboard_initialized && interact_down && !interact_was_down;
+    const auto pause_pressed =
+        keyboard_initialized && pause_down && !pause_was_down;
+    keyboard_initialized = true;
+    interact_was_down = interact_down;
+    pause_was_down = pause_down;
     const auto current_analog = titleAnalogDirection(pad);
     const auto analog_previous = current_analog < 0 && analog_direction == 0;
     const auto analog_next = current_analog > 0 && analog_direction == 0;
@@ -236,8 +299,8 @@ runCampaignSaveMenu(const game::MissionPackage &mission,
     const game::CampaignSaveInput input{
         (pressed & previous_buttons_mask) != 0U || analog_previous,
         (pressed & next_buttons_mask) != 0U || analog_next,
-        (pressed & confirm_buttons_mask) != 0U,
-        (pressed & cancel_buttons_mask) != 0U,
+        (pressed & confirm_buttons_mask) != 0U || interact_pressed,
+        (pressed & cancel_buttons_mask) != 0U || pause_pressed,
     };
     const auto previous_phase = menu.phase();
     const auto previous_save_selection = menu.saveSelected();
@@ -452,14 +515,31 @@ public:
 
     std::uint16_t previous_buttons = 0xffffU;
     bool title_cheat_latched{};
+    bool title_keyboard_initialized{};
+    bool title_interact_was_down{};
+    bool title_pause_was_down{};
     detail::PsyCrossUiAudio ui_audio{cue_path_};
     detail::PsyCrossMoviePlayer movie_player;
-    detail::PsyCrossCampaignSaveRenderer title_load_renderer{initial_mission_};
+    detail::PsyCrossCampaignSaveRenderer title_load_renderer{initial_mission_,
+                                                              input_};
     const detail::MovieOverlayCallbacks overlay{
-        [this, &pad, &ui_audio,
-         &title_cheat_latched](std::uint16_t pressed,
-                               std::uint32_t movie_frame) {
+        [this, &pad, &ui_audio, &title_cheat_latched,
+         &title_keyboard_initialized, &title_interact_was_down,
+         &title_pause_was_down](std::uint16_t pressed,
+                                std::uint32_t movie_frame) {
           ui_audio.update();
+          const auto actions = sampleHostKeyboardMouseActions(input_);
+          const auto interact_down =
+              actions[KeyboardMouseAction::interact];
+          const auto pause_down = actions[KeyboardMouseAction::pause];
+          const auto interact_pressed = title_keyboard_initialized &&
+                                        interact_down &&
+                                        !title_interact_was_down;
+          const auto pause_pressed = title_keyboard_initialized && pause_down &&
+                                     !title_pause_was_down;
+          title_keyboard_initialized = true;
+          title_interact_was_down = interact_down;
+          title_pause_was_down = pause_down;
           const auto held =
               static_cast<std::uint16_t>(~readHostButtons(pad));
           const auto title_cheat = game::detectRetailTitleCheat(
@@ -484,10 +564,13 @@ public:
           const game::TitleInput input{
               .previous = (pressed & (0x80U | 0x10U)) != 0 || analog_previous,
               .next = (pressed & (0x20U | 0x40U)) != 0 || analog_next,
-              .confirm = (pressed & (0x4000U | 0x8000U | 0x08U)) != 0,
-              .cancel = (pressed & (0x2000U | 0x01U)) != 0,
+              .confirm = (pressed & (0x4000U | 0x8000U | 0x08U)) != 0 ||
+                         interact_pressed,
+              .cancel = (pressed & (0x2000U | 0x01U)) != 0 || pause_pressed,
               .confirm_down =
-                  ((~readHostButtons(pad)) & (0x4000U | 0x8000U | 0x08U)) != 0U,
+                  ((~readHostButtons(pad)) &
+                   (0x4000U | 0x8000U | 0x08U)) != 0U ||
+                  interact_down,
           };
           const auto previous_selection = menu_.selection();
           const auto previous_phase = menu_.phase();
@@ -627,7 +710,7 @@ public:
             break;
           }
           const auto store_decision = storeTitleSaveSlotsWithRecovery(
-              save_path, candidate_slots, pad, previous_buttons);
+              save_path, candidate_slots, pad, previous_buttons, input_);
           if (store_decision == SaveStoreDecision::return_to_title) {
             break;
           }
@@ -651,7 +734,8 @@ public:
         // with authored directive text use it verbatim; continuation maps use
         // their catalog title instead of silently skipping the briefing UI.
         previous_buttons =
-            mission_start.run(*mission, pad, previous_buttons, campaign_carry);
+            mission_start.run(*mission, pad, previous_buttons, input_,
+                              campaign_carry);
 
         const auto &definition = mission->definition();
         std::cout << "Starting mission " << (definition.index + 1U) << ": "
@@ -710,7 +794,7 @@ public:
               replaying_unlocked_mission
                   ? game::CampaignSaveResult{}
                   : runCampaignSaveMenu(*mission, save_slots, pad,
-                                        previous_buttons, ui_audio);
+                                        previous_buttons, ui_audio, input_);
           auto completion_is_saved = false;
           if (save_result.decision == game::CampaignSaveDecision::save &&
               save_result.slot) {
@@ -725,7 +809,7 @@ public:
             // A shutdown during the following movie therefore resumes the
             // exact retail handoff instead of skipping it.
             const auto store_decision = storeTitleSaveSlotsWithRecovery(
-                save_path, staged_slots, pad, previous_buttons);
+                save_path, staged_slots, pad, previous_buttons, input_);
             if (store_decision == SaveStoreDecision::return_to_title) {
               break;
             }
@@ -753,7 +837,7 @@ public:
           }
           if (completion_is_saved) {
             const auto store_decision = storeTitleSaveSlotsWithRecovery(
-                save_path, candidate_slots, pad, previous_buttons);
+                save_path, candidate_slots, pad, previous_buttons, input_);
             if (store_decision == SaveStoreDecision::return_to_title) {
               break;
             }
@@ -829,7 +913,8 @@ public:
                                                      pad, previous_buttons);
     }
     detail::PsyCrossMissionStart mission_start;
-    previous_buttons = mission_start.run(mission_, pad, previous_buttons);
+    previous_buttons =
+        mission_start.run(mission_, pad, previous_buttons, input_);
     detail::PsyCrossSceneViewer scene_viewer{input_, cheats_};
     const auto result = scene_viewer.run(mission_, pad, previous_buttons,
                                          cue_path_, mission_.definition().index,

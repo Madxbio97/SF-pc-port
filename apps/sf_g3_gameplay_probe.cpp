@@ -849,6 +849,10 @@ runProductionActorScenario(const sf::game::MissionPackage &mission) {
   while (stable_control < stable_control_updates &&
          result.control_wait < maximum_control_wait_updates) {
     gameplay->update({});
+    if (!gameplay->advanceAudioFrameClock()) {
+      std::cerr << "production audio/hardware clock stopped\n";
+      return result;
+    }
     ++result.control_wait;
     if (gameplay->runtimeFaulted()) {
       std::cerr << "production runtime fault: "
@@ -864,6 +868,10 @@ runProductionActorScenario(const sf::game::MissionPackage &mission) {
   constexpr std::uint32_t factual_frames = 8U;
   for (std::uint32_t frame = 0U; frame < factual_frames; ++frame) {
     gameplay->update({});
+    if (!gameplay->advanceAudioFrameClock()) {
+      std::cerr << "production factual-frame audio/hardware clock stopped\n";
+      return result;
+    }
     if (!observeProductionActors(mission, *gameplay, result)) {
       return result;
     }
@@ -877,6 +885,11 @@ bool runProductionRendererStress(const sf::game::MissionPackage &mission,
   auto gameplay = std::make_unique<sf::game::GameplaySession>(mission);
   for (std::uint32_t update = 0U; update < updates; ++update) {
     gameplay->update({});
+    if (!gameplay->advanceAudioFrameClock()) {
+      std::cerr << "production renderer stress audio/hardware clock stopped: "
+                << "update=" << update + 1U << '\n';
+      return false;
+    }
     if (gameplay->runtimeFaulted()) {
       const auto frame = gameplay->legacyPresentationFrame();
       std::cerr << "production renderer stress fault: update=" << update + 1U

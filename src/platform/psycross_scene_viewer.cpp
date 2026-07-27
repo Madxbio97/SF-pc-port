@@ -4,6 +4,7 @@
 #include "psycross_font_texture.hpp"
 #include "psycross_movie_player.hpp"
 #include "psycross_runtime_guards.hpp"
+#include "psycross_surface_picker.hpp"
 #include "psycross_vram.hpp"
 #include "psycross_window_mode.hpp"
 
@@ -20,6 +21,7 @@
 #include "sf/game/pause_menu_data.hpp"
 #include "sf/game/retail_cheats.hpp"
 #include "sf/platform/player_input.hpp"
+#include "sf/platform/retail_scope_text_policy.hpp"
 #include "sf/platform/stable_frame_vector.hpp"
 
 #include <PsyX/PsyX_globals.h>
@@ -73,14 +75,14 @@ double active_near_clip_depth = near_clip_depth;
 constexpr std::uint32_t retail_flashlight_source = 0x8012f9b8U;
 constexpr std::uint16_t mission_clut_source_x = 768U;
 constexpr std::uint16_t mission_clut_source_y = 480U;
-// Mission residency can use every physical page 6..31. Keep the PC HUD
-// copy in framebuffer pages 0..3 instead of restoring its retail page-12
-// atlas over streamed wall textures.
+// Mission residency starts with physical pages 6..31 and spills into the
+// host-only extension. Keep the PC HUD copy in framebuffer pages 0..3 instead
+// of restoring its retail page-12 atlas over streamed wall textures.
 constexpr std::uint16_t hud_resident_clut_x = 0U;
 constexpr std::uint16_t hud_resident_clut_y = 254U;
 // Combat sprites occupy the unused bottom 64 rows of native CFIRE page 5.
 // CFIRE uses rows 0..191, so this keeps every authored combat texel persistent
-// while leaving page 18 available to missions that need all 26 streamed pages.
+// while leaving every complete mission page available to the streamer.
 constexpr unsigned int effect_resident_page = 5U;
 constexpr std::uint16_t effect_resident_page_x = 320U;
 constexpr std::uint16_t effect_resident_page_y = 0U;
@@ -97,6 +99,15 @@ constexpr std::uint16_t pickup_resident_x = 336U;
 constexpr std::uint16_t pickup_resident_y = 224U;
 constexpr std::string_view armor_pickup_texture = "VEST2.TIM";
 constexpr std::uint16_t environment_resident_clut_y = 251U;
+
+[[nodiscard]] bool textureDiagnosticsEnabled() noexcept {
+  static const auto enabled = [] {
+    const auto *value = SDL_getenv("SF_TEXTURE_DIAGNOSTICS");
+    return value != nullptr && value[0] != '\0' &&
+           std::strcmp(value, "0") != 0;
+  }();
+  return enabled;
+}
 // Dynamic CFIRE/SPFX frames used to be uploaded into their retail pages
 // 28/29/31 every frame, temporarily replacing live world/actor textures and
 // ZCLUT row 511. Native presentation owns framebuffer pages 4-5, so keep one
@@ -194,21 +205,16 @@ public:
 private:
   static void uploadAt(const assets::TimImage &image,
                        unsigned int physical_page) {
-    if (physical_page >= 32U) {
+    if (physical_page >= resident_texture_page_count) {
       throw core::Error{core::ErrorCode::invalid_argument,
                         "Weapon-crate texture page is invalid"};
     }
     const auto source_page = timTexturePage(image);
     const auto source_page_x = (source_page & 15U) * 64U;
     const auto source_page_y = source_page > 15U ? 256U : 0U;
-    const auto destination_page_x = (physical_page & 15U) * 64U;
-    const auto destination_page_y = physical_page > 15U ? 256U : 0U;
-    uploadTimBlockAt(
-        image.pixels(),
-        static_cast<std::uint16_t>(destination_page_x + image.pixels().x -
-                                   source_page_x),
-        static_cast<std::uint16_t>(destination_page_y + image.pixels().y -
-                                   source_page_y));
+    uploadTexturePageBlockAt(
+        physical_page, image.pixels(), image.pixels().x - source_page_x,
+        image.pixels().y - source_page_y);
   }
 
   assets::TimImage trim_;
@@ -507,17 +513,15 @@ public:
   relocate(const game::LegacyGuestSpriteBridgeState &sprite,
            unsigned int physical_page) const noexcept {
     const auto *entry = find(sprite);
-    if (entry == nullptr || physical_page >= 32U) {
+    if (entry == nullptr || physical_page >= resident_texture_page_count) {
       return std::nullopt;
     }
     const auto source = sourcePlacement(entry->image);
     const auto local_u = static_cast<unsigned int>(sprite.u) - source.u;
     const auto local_v = static_cast<unsigned int>(sprite.v) - source.v;
-    const auto page_x = static_cast<std::uint16_t>((physical_page & 15U) * 64U);
-    const auto page_y =
-        static_cast<std::uint16_t>(physical_page > 15U ? 256U : 0U);
     return GuestSpriteTexturePlacement{
-        static_cast<std::uint16_t>(GetTPage(1, 0, page_x, page_y)),
+        encodeResidentTexturePage(
+            static_cast<std::uint16_t>(GetTPage(1, 0, 0, 0)), physical_page),
         static_cast<std::uint16_t>(
             GetClut(effect_resident_clut_x, environment_resident_clut_y)),
         static_cast<std::uint8_t>(entry->destination_u + local_u),
@@ -526,18 +530,14 @@ public:
   }
 
   void upload(unsigned int physical_page) const {
-    if (physical_page >= 32U) {
+    if (physical_page >= resident_texture_page_count) {
       throw core::Error{core::ErrorCode::invalid_argument,
                         "Environment atlas page is invalid"};
     }
-    const auto page_x = static_cast<std::uint16_t>((physical_page & 15U) * 64U);
-    const auto page_y =
-        static_cast<std::uint16_t>(physical_page > 15U ? 256U : 0U);
     for (const auto &entry : entries_) {
-      uploadTimBlockAt(
-          entry.image.pixels(),
-          static_cast<std::uint16_t>(page_x + entry.destination_u / 2U),
-          static_cast<std::uint16_t>(page_y + entry.destination_v));
+      uploadTexturePageBlockAt(physical_page, entry.image.pixels(),
+                               entry.destination_u / 2U,
+                               entry.destination_v);
     }
     uploadTimBlockAt(*entries_.front().image.clut(), effect_resident_clut_x,
                      environment_resident_clut_y);
@@ -730,12 +730,40 @@ public:
     const auto vlf = mission_.archive().file("VLF.RFF");
     const auto initial_clut = vlfClut(vlf, page_mask_);
     loaded_clut_.assign(initial_clut.begin(), initial_clut.end());
+    const auto texture_bank_count = mission_.textureBankCount();
+    if (texture_bank_count == 0U) {
+      throw core::Error{core::ErrorCode::invalid_format,
+                        "Mission has no texture bank"};
+    }
+    for (auto page = 0U; page < 32U; ++page) {
+      const auto name = texturePageName(page);
+      const auto bank_zero = mission_.textureBank(0U).file(name);
+      texture_banks_equivalent_[page] = texture_bank_count == 1U;
+      if (texture_bank_count > 1U) {
+        const auto bank_one = mission_.textureBank(1U).file(name);
+        texture_banks_equivalent_[page] =
+            std::ranges::equal(bank_zero, bank_one);
+      }
+      if ((page_mask_ & (1U << page)) == 0U) {
+        continue;
+      }
+      for (auto bank = std::size_t{}; bank < vlf_compatible_pages_.size();
+           ++bank) {
+        const auto source_bank = canonicalMissionTextureBank(
+            static_cast<int>(bank), texture_bank_count);
+        vlf_compatible_pages_[bank][page] = texturePageMatchesVlf(
+            vlf, page_mask_, page,
+            mission_.textureBank(static_cast<std::size_t>(source_bank))
+                .file(texturePageName(page)));
+      }
+    }
     for (unsigned int page = 0; page < 32U; ++page) {
       if ((page_mask_ & (1U << page)) != 0) {
         const auto physical_page = physicalTexturePage(page);
         loaded_pages_[physical_page] =
             PageState{static_cast<int>(page), shared_bank};
         ++page_generations_[physical_page];
+        page_upload_write_sequences_[physical_page] = GR_GetVRAMWriteSequence();
       }
     }
   }
@@ -751,8 +779,10 @@ public:
     const auto camera = gameplay.camera();
     const auto guest_sprite_bank =
         static_cast<int>(gameplay.textureBankAt(camera.x, camera.z));
-    if (requirementsChanged(gameplay, object_bank, guest_sprite_bank,
-                            retained_sprites, glass_shards)) {
+    const auto requirements_rebuilt = requirementsChanged(
+        gameplay, object_bank, guest_sprite_bank, retained_sprites,
+        glass_shards);
+    if (requirements_rebuilt) {
       required_pages_.fill(unused_bank);
       required_banks_.fill(-1);
       for (auto &sources : required_clut_sources_) {
@@ -761,6 +791,11 @@ public:
       required_active_fire_ = nullptr;
       required_environment_page_.reset();
       required_crate_banks_.fill(false);
+      required_crate_overlay_pages_.fill(false);
+      required_scrim_destination_pages_.fill(false);
+      for (auto &owners : required_page_owners_) {
+        owners.clear();
+      }
       auto requires_environment_atlas = false;
       for (auto &bank_remap : required_page_remap_) {
         for (unsigned int page = 0; page < bank_remap.size(); ++page) {
@@ -773,13 +808,67 @@ public:
         }
       }
       auto requirement_context = std::string{"unclassified"};
+      const auto alias_pages = [] {
+        std::array<unsigned int, resident_texture_page_count - 6U> result{};
+        constexpr std::array native_order{
+            16U, 17U, 18U, 19U, 20U, 21U, 6U,  7U,  8U,
+            9U,  10U, 11U, 12U, 13U, 14U, 15U, 22U, 23U,
+            24U, 25U, 26U, 27U, 28U, 29U, 30U, 31U,
+        };
+        std::ranges::copy(native_order, result.begin());
+        for (auto extension = 0U; extension < extended_texture_page_count;
+             ++extension) {
+          result[native_order.size() + extension] =
+              psx_texture_page_count + extension;
+        }
+        return result;
+      }();
+      const auto allocate_free_page = [&](int logical_page, int bank) {
+        // Prefer the previous physical home. Stable residency avoids both a
+        // redundant extension upload and texture-page identity changing only
+        // because object enumeration order changed at a room boundary.
+        const auto reusable =
+            std::ranges::find_if(alias_pages, [&](unsigned int candidate) {
+              return required_pages_[candidate] < 0 &&
+                     loaded_pages_[candidate].logical_page == logical_page &&
+                     loaded_pages_[candidate].bank == bank;
+            });
+        if (reusable != alias_pages.end()) {
+          return *reusable;
+        }
+        const auto available =
+            std::ranges::find_if(alias_pages, [&](unsigned int candidate) {
+              return required_pages_[candidate] < 0;
+            });
+        if (available == alias_pages.end()) {
+          auto detail = std::string{"Active scene exhausts the VRAM "
+                                    "texture alias pool: owner="} +
+                        requirement_context + " resident=";
+          for (std::size_t resident = 0; resident < required_pages_.size();
+               ++resident) {
+            if (required_pages_[resident] < 0) {
+              continue;
+            }
+            detail += std::to_string(resident) + ":" +
+                      std::to_string(required_pages_[resident]) + "/" +
+                      std::to_string(required_banks_[resident]) + ",";
+          }
+          throw core::Error{core::ErrorCode::unsupported, std::move(detail)};
+        }
+        return *available;
+      };
+      const auto append_owner = [&](unsigned int slot) {
+        auto &owners = required_page_owners_[slot];
+        if (std::ranges::find(owners, requirement_context) == owners.end()) {
+          owners.push_back(requirement_context);
+        }
+      };
       const auto require_page = [&](unsigned int source_page, int bank) {
         if (bank < 0 || bank >= 2) {
-          return;
+          return 0U;
         }
         source_page &= 0x1fU;
-        const auto source_bank =
-            (page_mask_ & (1U << source_page)) != 0 ? shared_bank : bank;
+        const auto source_bank = texturePageSourceBank(source_page, bank);
         auto slot = physicalTexturePage(source_page);
         const auto canonical_slot_reserved = slot == effect_resident_page;
         if (canonical_slot_reserved ||
@@ -798,40 +887,10 @@ public:
           if (existing != required_pages_.size()) {
             slot = static_cast<unsigned int>(existing);
           } else {
-            // A bank conflict may use any currently free mission-safe page,
-            // not only the five framebuffer-tail slots. MUSEUM legitimately
-            // keeps enough dual-bank scenery and actors resident to need more
-            // than five aliases. Pages 0..5 belong to native presentation;
-            // combat effects share unused rows of page 5. Native ZCLUT is
-            // relocated out of pages 28..31, making every page 6..31 a safe
-            // full-page mission target.
-            constexpr std::array alias_pages{
-                16U, 17U, 18U, 19U, 20U, 21U, 6U,  7U,  8U,  9U,  10U, 11U, 12U,
-                13U, 14U, 15U, 22U, 23U, 24U, 25U, 26U, 27U, 28U, 29U, 30U, 31U,
-            };
-            const auto available =
-                std::ranges::find_if(alias_pages, [&](unsigned int candidate) {
-                  return required_pages_[candidate] < 0;
-                });
-            if (available == alias_pages.end()) {
-              auto detail = std::string{"Active scene exhausts the VRAM "
-                                        "texture alias pool: source="} +
-                            std::to_string(source_page) + "/" +
-                            std::to_string(source_bank) +
-                            " owner=" + requirement_context + " resident=";
-              for (std::size_t resident = 0; resident < required_pages_.size();
-                   ++resident) {
-                if (required_pages_[resident] < 0) {
-                  continue;
-                }
-                detail += std::to_string(resident) + ":" +
-                          std::to_string(required_pages_[resident]) + "/" +
-                          std::to_string(required_banks_[resident]) + ",";
-              }
-              throw core::Error{core::ErrorCode::unsupported,
-                                std::move(detail)};
-            }
-            slot = *available;
+            // A bank conflict may use any currently free mission-safe page.
+            // Pages 0..5 remain exact PS1 presentation/effect storage.
+            slot = allocate_free_page(static_cast<int>(source_page),
+                                      source_bank);
           }
         }
         required_page_remap_[static_cast<std::size_t>(bank)][source_page] =
@@ -845,6 +904,8 @@ public:
               core::ErrorCode::unsupported,
               "Texture alias allocation produced an ownership conflict"};
         }
+        append_owner(slot);
+        return slot;
       };
       const auto require_mask = [&](std::uint32_t mask, int bank) {
         for (unsigned int page = 0; page < 32U; ++page) {
@@ -854,6 +915,7 @@ public:
         }
       };
       const auto clut_for_bank = [&](int bank) -> std::span<const std::byte> {
+        bank = canonicalMissionTextureBank(bank, mission_.textureBankCount());
         if (bank == 0) {
           // VLF carries the complete bank-zero palette and is byte-identical
           // to VRAM.HOG/ZCLUT.BIN for this mission.
@@ -871,8 +933,12 @@ public:
         if (y < mission_clut_source_y || y >= mission_clut_source_y + 32U) {
           return;
         }
+        static_cast<void>(source_page);
+        // VLF is an initial page preload, not a promise that the other
+        // texture bank uses the same palette row. Track palette ownership
+        // independently; identical rows are merged by the allocator below.
         const auto palette_bank =
-            (page_mask_ & (1U << (source_page & 0x1fU))) != 0U ? 0 : bank;
+            canonicalMissionTextureBank(bank, mission_.textureBankCount());
         const auto row = y - mission_clut_source_y;
         required_clut_sources_[static_cast<std::size_t>(palette_bank)][row] =
             true;
@@ -970,9 +1036,10 @@ public:
       for (const auto object_index : gameplay.activeObjects()) {
         requirement_context =
             "object-" + std::to_string(object_index) + "-geometry";
-        const auto bank = gameplay.objectTextureBank(object_index);
         const auto *object_model = gameplay.displayedObjectModel(object_index);
         if (object_model != nullptr) {
+          const auto bank =
+              gameplay.displayedObjectTextureBank(object_index);
           if (object_index < gameplay.objects().size()) {
             const auto class_id = gameplay.objects()[object_index].class_id;
             const auto weapon_crate = object_model->name == "WEPCRATE.GMD" ||
@@ -1008,15 +1075,15 @@ public:
               requirement_context =
                   "object-" + std::to_string(object_index) + "-weapon-" +
                   std::to_string(static_cast<unsigned int>(*actor_weapon));
-              require_object_geometry(weapon->geometry, bank);
+              require_object_geometry(weapon->geometry,
+                                      game::resident_weapon_texture_bank);
             }
           }
         }
       }
-      const auto player_bank =
-          gameplay.textureBankAt(gameplay.player().x, gameplay.player().z);
       requirement_context = "player-model";
-      require_object_geometry(gameplay.playerModel().geometry, player_bank);
+      require_object_geometry(gameplay.playerModel().geometry,
+                              game::resident_hmd_texture_bank);
       const auto require_player_weapon = [&](game::WeaponId weapon_id) {
         const auto *weapon = gameplay.weaponModel(weapon_id);
         if (weapon == nullptr) {
@@ -1025,7 +1092,8 @@ public:
         requirement_context =
             "player-weapon-" +
             std::to_string(static_cast<unsigned int>(weapon_id));
-        require_object_geometry(weapon->geometry, player_bank);
+        require_object_geometry(weapon->geometry,
+                                game::resident_weapon_texture_bank);
       };
       require_player_weapon(gameplay.hud().inventory().current());
       if (const auto frame = gameplay.legacyPresentationFrame();
@@ -1059,17 +1127,30 @@ public:
                               "Resident retail SCRIM.EMD is missing"};
           }
           requirement_context = "retail-scrim";
-          require_emd_scene(*scrim, static_cast<int>(scrim->textureBank()));
-          const auto require_move_page = [&](int x, int y) {
-            const auto page = static_cast<unsigned int>(x / 64) +
-                              static_cast<unsigned int>(y / 256) * 16U;
-            require_page(page, static_cast<int>(scrim->textureBank()));
-          };
+          const auto scrim_model_bank = static_cast<int>(scrim->textureBank());
+          require_emd_scene(*scrim, scrim_model_bank);
+          // The thirteen retail MoveImage packets form a CPU-side texture
+          // ring below. Copy-only source pages therefore consume no native
+          // VRAM alias; only pages sampled by renderable geometry are kept
+          // resident. Animated destinations are uploaded into their ordinary
+          // scene mapping so world geometry sees the authored result.
+          requirement_context = "retail-scrim-copy-destination";
           for (const auto &move : scrim_state.vram_moves) {
-            requirement_context = "retail-scrim-copy-source";
-            require_move_page(move.source_x, move.source_y);
-            requirement_context = "retail-scrim-copy-destination";
-            require_move_page(move.destination_x, move.destination_y);
+            const auto page =
+                static_cast<unsigned int>(move.destination_x / 64) +
+                static_cast<unsigned int>(move.destination_y / 256) * 16U;
+            // DR_MOVE addresses the live room texture bank. SCRIM.EMD itself
+            // can keep its original bank flag after the subway streamer has
+            // switched banks, so its model flag is not the copy owner.
+            const auto scrim_copy_bank = static_cast<std::size_t>(object_bank);
+            const auto slot = required_page_remap_[scrim_copy_bank][page];
+            const auto expected_bank = texturePageSourceBank(page, object_bank);
+            if (slot < required_pages_.size() &&
+                required_pages_[slot] == static_cast<int>(page) &&
+                required_banks_[slot] == expected_bank) {
+              append_owner(slot);
+              required_scrim_destination_pages_[slot] = true;
+            }
           }
         }
         const auto fire_model = std::ranges::find_if(
@@ -1135,22 +1216,13 @@ public:
         }
       }
       if (requires_environment_atlas) {
-        constexpr std::array alias_pages{
-            16U, 17U, 18U, 19U, 20U, 21U, 6U,  7U,  8U,  9U,  10U, 11U, 12U,
-            13U, 14U, 15U, 22U, 23U, 24U, 25U, 26U, 27U, 28U, 29U, 30U, 31U,
-        };
+        requirement_context = "retail-weather";
         const auto available =
-            std::ranges::find_if(alias_pages, [&](unsigned int candidate) {
-              return required_pages_[candidate] < 0;
-            });
-        if (available == alias_pages.end()) {
-          throw core::Error{
-              core::ErrorCode::unsupported,
-              "Active scene exhausts VRAM while reserving retail weather"};
-        }
-        required_environment_page_ = *available;
-        required_pages_[*available] = environment_page_marker;
-        required_banks_[*available] = environment_bank;
+            allocate_free_page(environment_page_marker, environment_bank);
+        required_environment_page_ = available;
+        required_pages_[available] = environment_page_marker;
+        required_banks_[available] = environment_bank;
+        append_owner(available);
       }
       const auto base_clut = vlfClut(vlf, page_mask_);
       required_clut_.assign(base_clut.begin(), base_clut.end());
@@ -1222,6 +1294,8 @@ public:
         crate_texture_overlay_.copyClut(
             std::span<std::byte>{required_clut_}.subspan(
                 physical_row * row_bytes, row_bytes));
+        required_crate_overlay_pages_[required_page_remap_[bank][12U]] = true;
+        required_crate_overlay_pages_[required_page_remap_[bank][13U]] = true;
       }
       // A slot which leaves the active requirement set no longer has a
       // trustworthy resident owner. Native effect/framebuffer scratch may use
@@ -1230,7 +1304,96 @@ public:
       for (std::size_t slot = 0; slot < required_pages_.size(); ++slot) {
         if (required_pages_[slot] < 0) {
           loaded_pages_[slot] = PageState{};
+          scrim_dirty_pages_[slot] = false;
+          crate_overlay_pages_[slot] = false;
+          runtime_expected_hash_valid_[slot] = false;
+        } else if (scrim_dirty_pages_[slot] &&
+                   !required_scrim_destination_pages_[slot]) {
+          // The live MoveImage ring owns these bytes only while its retail
+          // controller still targets this exact physical residency. Once the
+          // controller disappears (or the remap changes), the next segment
+          // must see the authored page rather than the last animated frame.
+          loaded_pages_[slot] = PageState{};
+          scrim_dirty_pages_[slot] = false;
+          runtime_expected_hash_valid_[slot] = false;
+        } else if (crate_overlay_pages_[slot] &&
+                   !required_crate_overlay_pages_[slot]) {
+          // WEPTRIM/WEPINNER/WEPTOP are native overlays, not authored TP12/13
+          // contents.  Do not let an overlay survive after the last weapon
+          // crate using it leaves the active object set.
+          loaded_pages_[slot] = PageState{};
+          crate_overlay_pages_[slot] = false;
+          runtime_expected_hash_valid_[slot] = false;
         }
+      }
+
+      // LoadImage/MoveImage calls made by unrelated effects can change VRAM
+      // without changing this streamer's ownership records. Validate only
+      // immutable shared VLF pages required by the new scene. A SCRIM
+      // destination is intentionally mutable: it is a persistent PS1 texture
+      // ring shared by the train/sign geometry and must survive ordinary room
+      // and object-list changes. Comparing it with the authored source here
+      // used to reload it on nearly every guest frame, discard its accumulated
+      // phase and splice pieces of successive segment states together.
+      for (std::size_t slot = 0; slot < required_pages_.size(); ++slot) {
+        const auto logical_page = required_pages_[slot];
+        if (logical_page < 0 || required_banks_[slot] != shared_bank ||
+            loaded_pages_[slot].logical_page != logical_page ||
+            loaded_pages_[slot].bank != shared_bank) {
+          continue;
+        }
+        readTexturePageAt(static_cast<unsigned int>(slot),
+                          shared_page_readback_);
+        const auto resident = std::as_bytes(std::span{shared_page_readback_});
+        const auto authored =
+            vlfPage(vlf, page_mask_, static_cast<unsigned int>(logical_page));
+        if (texturePageNeedsAuthoredReload(resident, authored,
+                                           scrim_dirty_pages_[slot])) {
+          loaded_pages_[slot] = PageState{};
+        }
+      }
+      const auto room = gameplay.currentRoom();
+      if (textureDiagnosticsEnabled() &&
+          (required_pages_ != logged_required_pages_ ||
+          required_banks_ != logged_required_banks_ || room != logged_room_ ||
+          object_bank != logged_object_bank_ ||
+          guest_sprite_bank != logged_guest_sprite_bank_)) {
+        ++texture_diagnostic_sequence_;
+        const auto frame = gameplay.legacyPresentationFrame();
+        PsyX_Log_Info(
+            "[TextureDiag][residency] sequence=%llu guest_frame=%llu room=%zu "
+            "object_bank=%d camera_bank=%d active_models=%zu "
+            "active_objects=%zu revision=%llu\n",
+            static_cast<unsigned long long>(texture_diagnostic_sequence_),
+            static_cast<unsigned long long>(frame ? frame->guest_frame : 0U),
+            room, object_bank, guest_sprite_bank,
+            gameplay.activeModels().size(), gameplay.activeObjects().size(),
+            static_cast<unsigned long long>(residency_revision_));
+        for (std::size_t slot = 0; slot < required_pages_.size(); ++slot) {
+          if (required_pages_[slot] < 0) {
+            continue;
+          }
+          auto owners = std::string{};
+          for (const auto &owner : required_page_owners_[slot]) {
+            if (!owners.empty()) {
+              owners += '|';
+            }
+            owners += owner;
+          }
+          PsyX_Log_Info(
+              "[TextureDiag][resident-slot] sequence=%llu physical=%zu "
+              "logical=%d bank=%d loaded=%d/%d generation=%llu owners=%s\n",
+              static_cast<unsigned long long>(texture_diagnostic_sequence_),
+              slot, required_pages_[slot], required_banks_[slot],
+              loaded_pages_[slot].logical_page, loaded_pages_[slot].bank,
+              static_cast<unsigned long long>(page_generations_[slot]),
+              owners.empty() ? "unclassified" : owners.c_str());
+        }
+        logged_required_pages_ = required_pages_;
+        logged_required_banks_ = required_banks_;
+        logged_room_ = room;
+        logged_object_bank_ = object_bank;
+        logged_guest_sprite_bank_ = guest_sprite_bank;
       }
       requirements_valid_ = true;
     }
@@ -1241,8 +1404,9 @@ public:
     streamed_texture_page_remap = required_page_remap_;
     streamed_clut_row_remap = required_clut_row_remap_;
 
+    std::array<bool, resident_texture_page_count> capture_expected_pages{};
     auto changed = false;
-    for (unsigned int slot = 0; slot < 32U; ++slot) {
+    for (unsigned int slot = 0; slot < required_pages_.size(); ++slot) {
       const auto page = required_pages_[slot];
       const auto bank = required_banks_[slot];
       if (page < 0 || (loaded_pages_[slot].logical_page == page &&
@@ -1260,7 +1424,13 @@ public:
                       .file(texturePageName(static_cast<unsigned int>(page))));
       }
       loaded_pages_[slot] = PageState{page, bank};
+      scrim_dirty_pages_[slot] = false;
+      crate_overlay_pages_[slot] = false;
+      runtime_expected_hash_valid_[slot] = false;
       ++page_generations_[slot];
+      page_upload_write_sequences_[slot] = GR_GetVRAMWriteSequence();
+      reported_mismatch_hashes_[slot] = 0U;
+      ++residency_revision_;
       changed = true;
     }
 
@@ -1286,6 +1456,10 @@ public:
       };
       if (crate_overlay_tokens_[bank] != tokens) {
         crate_texture_overlay_.upload(*trim_page, *top_page);
+        crate_overlay_pages_[*trim_page] = true;
+        crate_overlay_pages_[*top_page] = true;
+        capture_expected_pages[*trim_page] = true;
+        capture_expected_pages[*top_page] = true;
         crate_overlay_tokens_[bank] = tokens;
         changed = true;
       }
@@ -1300,12 +1474,23 @@ public:
     if (changed) {
       DrawSync(0);
     }
+    for (std::size_t slot = 0; slot < crate_overlay_pages_.size(); ++slot) {
+      if (capture_expected_pages[slot]) {
+        captureExpectedPhysicalPage(static_cast<unsigned int>(slot));
+      }
+    }
+    if (textureDiagnosticsEnabled()) {
+      diagnoseResidentPage(gameplay, vlf);
+    }
   }
 
   void invalidate() noexcept {
     // Only resident VRAM ownership is lost here. Source requirements remain
     // valid until requirementsChanged observes an exact gameplay input change.
     loaded_pages_.fill(PageState{});
+    scrim_dirty_pages_.fill(false);
+    crate_overlay_pages_.fill(false);
+    runtime_expected_hash_valid_.fill(false);
     loaded_clut_.clear();
     fire_placement_ = {};
     active_fire_ = nullptr;
@@ -1315,6 +1500,9 @@ public:
   void invalidatePhysicalPage(unsigned int physical_page) noexcept {
     if (physical_page < loaded_pages_.size()) {
       loaded_pages_[physical_page] = PageState{};
+      scrim_dirty_pages_[physical_page] = false;
+      crate_overlay_pages_[physical_page] = false;
+      runtime_expected_hash_valid_[physical_page] = false;
     }
   }
 
@@ -1331,8 +1519,7 @@ public:
       return std::nullopt;
     }
     const auto expected_bank =
-        (page_mask_ & (std::uint32_t{1U} << logical_page)) != 0U ? shared_bank
-                                                                 : texture_bank;
+        texturePageSourceBank(logical_page, texture_bank);
     if (required_pages_[physical_page] != static_cast<int>(logical_page) ||
         required_banks_[physical_page] != expected_bank ||
         loaded_pages_[physical_page].logical_page !=
@@ -1350,7 +1537,104 @@ public:
     if (!physical_page) {
       return std::nullopt;
     }
-    return (page_generations_[*physical_page] << 5U) | *physical_page;
+    return residentTexturePageToken(page_generations_[*physical_page],
+                                    *physical_page);
+  }
+
+  [[nodiscard]] std::uint64_t residencyRevision() const noexcept {
+    return residency_revision_;
+  }
+
+  [[nodiscard]] SurfacePickerResidency
+  surfacePickerResidency(unsigned int logical_page,
+                         unsigned int texture_bank) const {
+    auto result = SurfacePickerResidency{};
+    result.residency_revision = residency_revision_;
+    if (logical_page >= 32U || texture_bank >= 2U) {
+      return result;
+    }
+    const auto bank = static_cast<std::size_t>(texture_bank);
+    if (!authored_page_hash_valid_[bank][logical_page]) {
+      authored_page_hash_[bank][logical_page] = fingerprint(
+          authoredTexturePage(logical_page, static_cast<int>(texture_bank)));
+      authored_page_hash_valid_[bank][logical_page] = true;
+    }
+    result.authored_hash = authored_page_hash_[bank][logical_page];
+    result.physical_page =
+        residentPhysicalPage(logical_page, static_cast<int>(texture_bank));
+    if (!result.physical_page) {
+      return result;
+    }
+    const auto physical = *result.physical_page;
+    result.required_logical_page = required_pages_[physical];
+    result.required_bank = required_banks_[physical];
+    result.loaded_logical_page = loaded_pages_[physical].logical_page;
+    result.loaded_bank = loaded_pages_[physical].bank;
+    result.generation = page_generations_[physical];
+    result.upload_write_sequence = page_upload_write_sequences_[physical];
+    if (runtime_expected_hash_valid_[physical]) {
+      result.runtime_expected_hash = runtime_expected_hash_[physical];
+    }
+    result.scrim_dirty = scrim_dirty_pages_[physical];
+    result.crate_overlay = crate_overlay_pages_[physical];
+    for (const auto &owner : required_page_owners_[physical]) {
+      if (!result.owners.empty()) {
+        result.owners += '|';
+      }
+      result.owners += owner;
+    }
+    return result;
+  }
+
+  [[nodiscard]] std::uint8_t
+  residentTextureBankMask(unsigned int logical_page) const noexcept {
+    if (logical_page >= 32U) {
+      return 0U;
+    }
+    auto mask = std::uint8_t{};
+    for (auto bank = 0; bank < 2; ++bank) {
+      if (residentPhysicalPage(logical_page, bank)) {
+        mask = static_cast<std::uint8_t>(mask | (1U << bank));
+      }
+    }
+    return mask;
+  }
+
+  [[nodiscard]] std::span<const std::byte>
+  authoredTexturePage(unsigned int logical_page, int texture_bank) const {
+    if (logical_page >= 32U || texture_bank < 0 || texture_bank >= 2) {
+      throw core::Error{core::ErrorCode::invalid_argument,
+                        "Authored texture-page request is invalid"};
+    }
+    const auto source_bank =
+        texturePageSourceBank(logical_page, texture_bank);
+    if (source_bank == shared_bank) {
+      const auto vlf = mission_.archive().file("VLF.RFF");
+      return vlfPage(vlf, page_mask_, logical_page);
+    }
+    return mission_.textureBank(static_cast<std::size_t>(source_bank))
+        .file(texturePageName(logical_page));
+  }
+
+  [[nodiscard]] bool
+  uploadRuntimeTexturePage(unsigned int logical_page, int texture_bank,
+                           std::span<const std::byte> bytes) {
+    if (bytes.size() != texture_page_bytes) {
+      throw core::Error{core::ErrorCode::invalid_format,
+                        "Runtime texture page has an invalid size"};
+    }
+    const auto physical_page = residentPhysicalPage(logical_page, texture_bank);
+    if (!physical_page) {
+      return false;
+    }
+    uploadTexturePageAt(*physical_page, bytes);
+    scrim_dirty_pages_[*physical_page] = true;
+    crate_overlay_pages_[*physical_page] = false;
+    runtime_expected_hash_[*physical_page] = fingerprint(bytes);
+    runtime_expected_hash_valid_[*physical_page] = true;
+    page_upload_write_sequences_[*physical_page] = GR_GetVRAMWriteSequence();
+    reported_mismatch_hashes_[*physical_page] = 0U;
+    return true;
   }
 
   [[nodiscard]] bool reloadResidentPage(unsigned int logical_page,
@@ -1359,18 +1643,26 @@ public:
     if (!physical_page) {
       return false;
     }
-    if ((page_mask_ & (std::uint32_t{1U} << logical_page)) != 0U) {
-      const auto vlf = mission_.archive().file("VLF.RFF");
-      uploadTexturePageAt(*physical_page,
-                          vlfPage(vlf, page_mask_, logical_page));
-    } else {
-      uploadTexturePageAt(
-          *physical_page,
-          mission_.textureBank(static_cast<std::size_t>(texture_bank))
-              .file(texturePageName(logical_page)));
-    }
+    uploadTexturePageAt(*physical_page,
+                        authoredTexturePage(logical_page, texture_bank));
     ++page_generations_[*physical_page];
+    scrim_dirty_pages_[*physical_page] = false;
+    crate_overlay_pages_[*physical_page] = false;
+    runtime_expected_hash_valid_[*physical_page] = false;
+    page_upload_write_sequences_[*physical_page] = GR_GetVRAMWriteSequence();
+    reported_mismatch_hashes_[*physical_page] = 0U;
+    ++residency_revision_;
     return true;
+  }
+
+  void captureExpectedPhysicalPage(unsigned int physical_page) {
+    if (physical_page >= runtime_expected_hash_valid_.size()) {
+      return;
+    }
+    readTexturePageAt(physical_page, shared_page_readback_);
+    runtime_expected_hash_[physical_page] =
+        fingerprint(std::as_bytes(std::span{shared_page_readback_}));
+    runtime_expected_hash_valid_[physical_page] = true;
   }
 
   [[nodiscard]] std::optional<game::EffectTextureCopy>
@@ -1395,7 +1687,7 @@ public:
       }
       const auto physical_page =
           residentPhysicalPage(logical_page, texture_bank);
-      if (!physical_page) {
+      if (!physical_page || *physical_page >= psx_texture_page_count) {
         return std::nullopt;
       }
       return game::EffectVramRect{
@@ -1465,6 +1757,28 @@ private:
   static constexpr int environment_bank = -4;
   static constexpr int environment_page_marker = 32;
 
+  [[nodiscard]] int texturePageSourceBank(unsigned int logical_page,
+                                          int texture_bank) const noexcept {
+    texture_bank = canonicalMissionTextureBank(
+        texture_bank, mission_.textureBankCount());
+    if (logical_page < 32U && texture_bank >= 0 && texture_bank < 2 &&
+        vlf_compatible_pages_[static_cast<std::size_t>(texture_bank)]
+                             [logical_page]) {
+      return shared_bank;
+    }
+    // VLF compatibility and bank compatibility are separate questions.
+    // Two authored banks may both differ from the initial VLF page while
+    // remaining byte-identical to each other. Treating those copies as two
+    // resident resources needlessly exhausts the native 26-page alias pool.
+    // Exact byte equality makes bank zero a safe canonical source; palette
+    // rows remain independently selected and deduplicated by require_clut.
+    if (logical_page < 32U && texture_bank == 1 &&
+        texture_banks_equivalent_[logical_page]) {
+      return 0;
+    }
+    return texture_bank;
+  }
+
   enum class RequirementInputKind : std::uint8_t {
     room,
     object_bank,
@@ -1485,8 +1799,145 @@ private:
     guest_sprite_effect,
     glass_shard_material,
     retail_scrim,
+    retail_scrim_model,
+    retail_scrim_bank,
     retail_scrim_move,
+    retail_scrim_move_source,
+    retail_scrim_move_destination,
+    retail_scrim_move_extent,
   };
+
+  [[nodiscard]] static std::uint64_t
+  fingerprint(std::span<const std::byte> bytes) noexcept {
+    auto value = std::uint64_t{1469598103934665603ULL};
+    for (const auto byte : bytes) {
+      value ^= static_cast<std::uint64_t>(std::to_integer<unsigned char>(byte));
+      value *= 1099511628211ULL;
+    }
+    return value;
+  }
+
+  [[nodiscard]] static const char *vramWriteKindName(int kind) noexcept {
+    switch (kind) {
+    case GR_VRAM_WRITE_UPLOAD:
+      return "upload";
+    case GR_VRAM_WRITE_MOVE:
+      return "move";
+    case GR_VRAM_WRITE_CLEAR:
+      return "clear";
+    case GR_VRAM_WRITE_FRAMEBUFFER:
+      return "framebuffer";
+    default:
+      return "unknown";
+    }
+  }
+
+  void diagnoseResidentPage(const game::GameplaySession &gameplay,
+                            std::span<const std::byte> vlf) {
+    const auto frame = gameplay.legacyPresentationFrame();
+    if (!frame || frame->guest_frame == last_diagnostic_guest_frame_) {
+      return;
+    }
+    last_diagnostic_guest_frame_ = frame->guest_frame;
+
+    for (auto attempt = std::size_t{}; attempt < required_pages_.size();
+         ++attempt) {
+      const auto slot = diagnostic_page_cursor_++ % required_pages_.size();
+      const auto logical_page = required_pages_[slot];
+      const auto bank = required_banks_[slot];
+      if (logical_page < 0 || logical_page >= 32 ||
+          loaded_pages_[slot].logical_page != logical_page ||
+          loaded_pages_[slot].bank != bank || bank == environment_bank) {
+        continue;
+      }
+
+      const auto expected =
+          bank == shared_bank
+              ? vlfPage(vlf, page_mask_,
+                        static_cast<unsigned int>(logical_page))
+              : mission_.textureBank(static_cast<std::size_t>(bank))
+                    .file(texturePageName(
+                        static_cast<unsigned int>(logical_page)));
+      readTexturePageAt(static_cast<unsigned int>(slot),
+                        shared_page_readback_);
+      const auto resident = std::as_bytes(std::span{shared_page_readback_});
+      if (std::equal(resident.begin(), resident.end(), expected.begin(),
+                     expected.end())) {
+        reported_mismatch_hashes_[slot] = 0U;
+        break;
+      }
+
+      const auto actual_hash = fingerprint(resident);
+      if (runtime_expected_hash_valid_[slot] &&
+          runtime_expected_hash_[slot] == actual_hash) {
+        reported_mismatch_hashes_[slot] = 0U;
+        break;
+      }
+      if (reported_mismatch_hashes_[slot] == actual_hash) {
+        break;
+      }
+      reported_mismatch_hashes_[slot] = actual_hash;
+      auto first_difference = std::size_t{};
+      while (first_difference < expected.size() &&
+             resident[first_difference] == expected[first_difference]) {
+        ++first_difference;
+      }
+      auto owners = std::string{};
+      for (const auto &owner : required_page_owners_[slot]) {
+        if (!owners.empty()) {
+          owners += '|';
+        }
+        owners += owner;
+      }
+      const auto baseline = page_upload_write_sequences_[slot];
+      std::array<GrVRAMWriteEvent, 512U> writes{};
+      const auto write_count = GR_ReadVRAMWriteEvents(
+          baseline, writes.data(), static_cast<int>(writes.size()));
+      const auto page_x = static_cast<int>((slot & 15U) * 64U);
+      const auto page_y = slot > 15U ? 256 : 0;
+      const auto intersects_page = [&](const GrVRAMWriteEvent &write) {
+        return slot < psx_texture_page_count &&
+               write.destination_x < page_x + 64 &&
+               write.destination_x + write.width > page_x &&
+               write.destination_y < page_y + 256 &&
+               write.destination_y + write.height > page_y;
+      };
+      auto overlapping_writes = std::size_t{};
+      for (auto index = 0; index < write_count; ++index) {
+        overlapping_writes += intersects_page(writes[index]) ? 1U : 0U;
+      }
+      ++texture_diagnostic_sequence_;
+      PsyX_Log_Warning(
+          "[TextureDiag][mismatch] sequence=%llu guest_frame=%llu room=%zu "
+          "physical=%zu logical=%d bank=%d generation=%llu "
+          "expected_hash=%016llx actual_hash=%016llx first_byte=%zu "
+          "upload_write=%llu current_write=%llu journal_lost=%u "
+          "overlapping_writes=%zu owners=%s\n",
+          static_cast<unsigned long long>(texture_diagnostic_sequence_),
+          static_cast<unsigned long long>(frame->guest_frame),
+          gameplay.currentRoom(), slot, logical_page, bank,
+          static_cast<unsigned long long>(page_generations_[slot]),
+          static_cast<unsigned long long>(fingerprint(expected)),
+          static_cast<unsigned long long>(actual_hash), first_difference,
+          static_cast<unsigned long long>(baseline), GR_GetVRAMWriteSequence(),
+          write_count > 0 && writes[0].sequence > baseline + 1U ? 1U : 0U,
+          overlapping_writes, owners.empty() ? "unclassified" : owners.c_str());
+      for (auto index = 0; index < write_count; ++index) {
+        const auto &write = writes[index];
+        if (!intersects_page(write)) {
+          continue;
+        }
+        PsyX_Log_Warning(
+            "[TextureDiag][write] mismatch_sequence=%llu write=%llu kind=%s "
+            "source=(%d,%d) destination=(%d,%d) size=%dx%d\n",
+            static_cast<unsigned long long>(texture_diagnostic_sequence_),
+            write.sequence, vramWriteKindName(write.kind), write.source_x,
+            write.source_y, write.destination_x, write.destination_y,
+            write.width, write.height);
+      }
+      break;
+    }
+  }
 
   struct RequirementInput {
     RequirementInputKind kind{};
@@ -1515,12 +1966,13 @@ private:
                });
   }
 
-  [[nodiscard]] bool requirementsChanged(
-      const game::GameplaySession &gameplay, int object_bank,
-      int guest_sprite_bank,
-      std::span<const game::LegacyGuestSpritePresentationState>
-          retained_sprites,
-      std::span<const GlassShardPresentationState> glass_shards) {
+  [[nodiscard]] bool
+  requirementsChanged(const game::GameplaySession &gameplay, int object_bank,
+                      int guest_sprite_bank,
+                      std::span<const game::LegacyGuestSpritePresentationState>
+                          retained_sprites,
+                      std::span<const GlassShardPresentationState>
+                          glass_shards) {
     scratch_requirement_inputs_.clear();
     const auto append = [this](RequirementInputKind kind,
                                std::uintptr_t value) {
@@ -1548,7 +2000,7 @@ private:
     for (const auto object : gameplay.activeObjects()) {
       append(RequirementInputKind::active_object, object);
       append(RequirementInputKind::object_texture_bank,
-             gameplay.objectTextureBank(object));
+             gameplay.displayedObjectTextureBank(object));
       append(RequirementInputKind::displayed_model,
              address(gameplay.displayedObjectModel(object)));
       const auto *displayed = gameplay.displayedObjectModel(object);
@@ -1577,7 +2029,7 @@ private:
     append(RequirementInputKind::player_model,
            address(&gameplay.playerModel()));
     append(RequirementInputKind::player_texture_bank,
-           gameplay.textureBankAt(gameplay.player().x, gameplay.player().z));
+           game::resident_hmd_texture_bank);
     append(RequirementInputKind::player_weapon,
            static_cast<std::uintptr_t>(gameplay.hud().inventory().current()));
     append(RequirementInputKind::dynamic_fire,
@@ -1587,6 +2039,10 @@ private:
       const auto &scrim = frame->renderer->state.scrim;
       append(RequirementInputKind::retail_scrim,
              (scrim.resource_present ? 1U : 0U) | (scrim.visible ? 2U : 0U));
+      const auto *scrim_model = gameplay.detachedScrimModel();
+      append(RequirementInputKind::retail_scrim_model, address(scrim_model));
+      append(RequirementInputKind::retail_scrim_bank,
+             scrim_model != nullptr ? scrim_model->textureBank() : 0U);
       for (const auto &move : scrim.vram_moves) {
         const auto source_page =
             static_cast<std::uintptr_t>(move.source_x / 64) +
@@ -1596,6 +2052,15 @@ private:
             static_cast<std::uintptr_t>(move.destination_y / 256) * 16U;
         append(RequirementInputKind::retail_scrim_move,
                source_page | (destination_page << 5U));
+        append(RequirementInputKind::retail_scrim_move_source,
+               static_cast<std::uintptr_t>(move.source_x) |
+                   (static_cast<std::uintptr_t>(move.source_y) << 16U));
+        append(RequirementInputKind::retail_scrim_move_destination,
+               static_cast<std::uintptr_t>(move.destination_x) |
+                   (static_cast<std::uintptr_t>(move.destination_y) << 16U));
+        append(RequirementInputKind::retail_scrim_move_extent,
+               static_cast<std::uintptr_t>(move.width) |
+                   (static_cast<std::uintptr_t>(move.height) << 16U));
       }
       const auto append_guest_sprite = [&](const auto &sprite) {
         append(RequirementInputKind::guest_sprite_material,
@@ -1636,20 +2101,52 @@ private:
   EnvironmentTextureAtlas environment_atlas_;
   RetailCrateTextureOverlay crate_texture_overlay_;
   std::uint32_t page_mask_{};
-  std::array<int, 32> required_pages_{};
-  std::array<int, 32> required_banks_{};
+  std::array<int, resident_texture_page_count> required_pages_{};
+  std::array<std::array<bool, 32U>, 2U> vlf_compatible_pages_{};
+  std::array<bool, 32U> texture_banks_equivalent_{};
+  std::array<int, resident_texture_page_count> required_banks_{};
   std::array<std::array<bool, 32>, 2> required_clut_sources_{};
   std::array<std::array<unsigned int, 32>, 2> required_page_remap_{};
   std::array<std::array<unsigned int, 32>, 2> required_clut_row_remap_{};
+  std::array<std::vector<std::string>, resident_texture_page_count>
+      required_page_owners_{};
   std::vector<std::byte> required_clut_;
   std::vector<RequirementInput> requirement_inputs_;
   std::vector<RequirementInput> scratch_requirement_inputs_;
   const game::ObjectFireEmitter *required_active_fire_{};
   std::optional<unsigned int> required_environment_page_;
   std::array<bool, 2U> required_crate_banks_{};
+  std::array<bool, resident_texture_page_count>
+      required_crate_overlay_pages_{};
+  std::array<bool, resident_texture_page_count>
+      required_scrim_destination_pages_{};
   bool requirements_valid_{};
-  std::array<PageState, 32> loaded_pages_{};
-  std::array<std::uint64_t, 32> page_generations_{};
+  std::array<PageState, resident_texture_page_count> loaded_pages_{};
+  std::array<bool, resident_texture_page_count> scrim_dirty_pages_{};
+  std::array<bool, resident_texture_page_count> crate_overlay_pages_{};
+  std::array<std::uint64_t, resident_texture_page_count>
+      runtime_expected_hash_{};
+  std::array<bool, resident_texture_page_count>
+      runtime_expected_hash_valid_{};
+  std::array<std::uint64_t, resident_texture_page_count> page_generations_{};
+  std::array<std::uint64_t, resident_texture_page_count>
+      page_upload_write_sequences_{};
+  mutable std::array<std::array<std::uint64_t, 32U>, 2U> authored_page_hash_{};
+  mutable std::array<std::array<bool, 32U>, 2U> authored_page_hash_valid_{};
+  std::array<std::uint64_t, resident_texture_page_count>
+      reported_mismatch_hashes_{};
+  std::array<int, resident_texture_page_count> logged_required_pages_{};
+  std::array<int, resident_texture_page_count> logged_required_banks_{};
+  std::size_t logged_room_{std::numeric_limits<std::size_t>::max()};
+  int logged_object_bank_{std::numeric_limits<int>::min()};
+  int logged_guest_sprite_bank_{std::numeric_limits<int>::min()};
+  std::uint64_t last_diagnostic_guest_frame_{
+      std::numeric_limits<std::uint64_t>::max()};
+  std::size_t diagnostic_page_cursor_{};
+  std::uint64_t texture_diagnostic_sequence_{};
+  std::uint64_t residency_revision_{};
+  std::array<unsigned short, texture_page_bytes / sizeof(unsigned short)>
+      shared_page_readback_{};
   std::vector<std::byte> loaded_clut_;
   FireTexturePlacement fire_placement_{};
   const game::ObjectFireEmitter *active_fire_{};
@@ -1685,6 +2182,7 @@ struct HudTextureAsset {
 class HudTextureAtlas final {
 public:
   explicit HudTextureAtlas(const game::MissionPackage &mission) {
+    std::vector<HudTextureAsset> retail_fonts;
     const auto required = [](std::string_view name) {
       // The three font sheets and SYMBOL are shared by the original
       // gameplay and pause interfaces. Keep them in the same restored
@@ -1715,10 +2213,18 @@ public:
       if (!required(entry.name)) {
         continue;
       }
-      auto localized = (entry.name == "FONTA.TIM" ||
-                        entry.name == "FONTB.TIM" || entry.name == "FONTC.TIM")
+      const auto font_asset = entry.name == "FONTA.TIM" ||
+                              entry.name == "FONTB.TIM" ||
+                              entry.name == "FONTC.TIM";
+      auto localized = font_asset
                            ? game::readLocalizedAsset("fonts/" + entry.name)
                            : std::nullopt;
+      if (font_asset && game::russianLanguageActive()) {
+        retail_fonts.push_back(HudTextureAsset{
+            entry.name,
+            assets::TimImage::parse(mission.interfaceAssets().file(entry.name)),
+        });
+      }
       auto image = localized ? assets::TimImage::parse(*localized)
                              : assets::TimImage::parse(
                                    mission.interfaceAssets().file(entry.name));
@@ -1826,11 +2332,33 @@ public:
     if (game::russianLanguageActive()) {
       native_font_ = std::make_unique<PsyCrossFontTexture>(
           image("FONTA.TIM"), image("FONTB.TIM"), image("FONTC.TIM"));
+      const auto retail_font = [&](std::string_view name)
+          -> const assets::TimImage & {
+        const auto match = std::ranges::find_if(
+            retail_fonts, [&](const HudTextureAsset &asset) {
+              return asset.name == name;
+            });
+        if (match == retail_fonts.end()) {
+          throw core::Error{
+              core::ErrorCode::not_found,
+              "Original INTERFACE font is missing from the retail atlas: " +
+                  std::string{name}};
+        }
+        return match->image;
+      };
+      retail_english_font_ = std::make_unique<PsyCrossFontTexture>(
+          retail_font("FONTA.TIM"), retail_font("FONTB.TIM"),
+          retail_font("FONTC.TIM"));
     }
   }
 
   [[nodiscard]] const PsyCrossFontTexture *nativeFont() const noexcept {
     return native_font_.get();
+  }
+
+  [[nodiscard]] const PsyCrossFontTexture *
+  retailEnglishFont() const noexcept {
+    return retail_english_font_.get();
   }
 
   void invalidate() const noexcept {
@@ -2069,6 +2597,7 @@ private:
 
   std::vector<HudTextureAsset> assets_;
   std::unique_ptr<PsyCrossFontTexture> native_font_;
+  std::unique_ptr<PsyCrossFontTexture> retail_english_font_;
   assets::TimBlock armor_pickup_pixels_;
   assets::TimBlock armor_pickup_palette_;
   mutable std::optional<GameplayResidentState> gameplay_state_;
@@ -2126,6 +2655,7 @@ public:
   void invalidate() noexcept {
     resident_copies_.clear();
     touched_pages_.clear();
+    residency_revision_ = 0U;
   }
 
   [[nodiscard]] bool
@@ -2141,7 +2671,7 @@ public:
           model->visual_effect != game::ObjectVisualEffect::police_lightbar) {
         continue;
       }
-      const auto bank = gameplay.objectTextureBank(object_index);
+      const auto bank = gameplay.displayedObjectTextureBank(object_index);
       const auto blue = textures.relocateEffectTextureCopy(frame.blue, bank);
       const auto red = textures.relocateEffectTextureCopy(frame.red, bank);
       // Never fall back to retail physical TP10: that slot may currently be
@@ -2156,7 +2686,8 @@ public:
         }
       }
     }
-    if (required_copies == resident_copies_) {
+    if (required_copies == resident_copies_ &&
+        residency_revision_ == textures.residencyRevision()) {
       return false;
     }
 
@@ -2169,6 +2700,7 @@ public:
     touched_pages_.clear();
     resident_copies_.clear();
     if (required_copies.empty()) {
+      residency_revision_ = textures.residencyRevision();
       return false;
     }
 
@@ -2192,36 +2724,48 @@ public:
       }
     }
     DrawSync(0);
+    for (const auto page : touched_pages_) {
+      textures.captureExpectedPhysicalPage(page);
+    }
     resident_copies_ = std::move(required_copies);
+    residency_revision_ = textures.residencyRevision();
     return true;
   }
 
 private:
   std::vector<game::EffectTextureCopy> resident_copies_;
   std::vector<unsigned int> touched_pages_;
+  std::uint64_t residency_revision_{};
 };
 
 class RetailScrimAnimation final {
 public:
   void reset() noexcept {
     executed_copy_count_ = 0U;
-    residency_.clear();
+    texture_bank_ = -1;
+    scene_room_.reset();
+    authored_restore_pending_ = false;
+    moves_.clear();
+    pages_.clear();
+    copy_scratch_.clear();
   }
 
   void restore(const game::GameplaySession &gameplay,
                const game::LegacyScrimBridgeState &state,
                TextureStreamer &textures) {
-    residency_.clear();
-    if (!state.resource_present || state.vram_moves.empty()) {
+    if (!state.resource_present) {
+      reset();
       return;
     }
-    const auto bank = textureBank(gameplay);
-    residency_ = residency(state.vram_moves, bank, textures);
-    const auto relocated = relocate(state.vram_moves, bank, textures);
-    for (auto phase = std::uint64_t{}; phase < executed_copy_count_; ++phase) {
-      submit(relocated);
+    const auto moves =
+        !state.vram_moves.empty()
+            ? std::span<const game::LegacyVramMoveBridgeState>{state.vram_moves}
+            : std::span<const game::LegacyVramMoveBridgeState>{moves_};
+    if (!moves.empty()) {
+      ensureState(moves, textureBank(gameplay, moves, textures),
+                  gameplay.currentRoom(), textures);
     }
-    if (executed_copy_count_ != 0U) {
+    if (synchronizeResidentPages(textures)) {
       DrawSync(0);
     }
   }
@@ -2285,35 +2829,18 @@ private:
                          : std::span<const game::LegacyVramMoveBridgeState>{
                                phases.back().moves};
     if (moves.empty()) {
-      return false;
-    }
-    const auto bank = textureBank(gameplay);
-    auto current_residency = residency(moves, bank, textures);
-    auto changed = false;
-    if (!residency_.empty() && current_residency != residency_) {
-      // A room/bank/effect transition replaced at least one physical page.
-      // Restore every page in the two-page SCRIM ring to authored content,
-      // then replay the exact accumulated phase. Reloading only the changed
-      // half would splice a fresh strip into the already-scrolled half.
-      for (const auto &page : current_residency) {
-        if (!textures.reloadResidentPage(page.logical_page, bank)) {
-          throw core::Error{core::ErrorCode::invalid_format,
-                            "Cannot restore a resident SCRIM texture page"};
-        }
-      }
-      DrawSync(0);
-      current_residency = residency(moves, bank, textures);
-      const auto relocated = relocate(moves, bank, textures);
-      for (auto phase = std::uint64_t{}; phase < executed_copy_count_;
-           ++phase) {
-        submit(relocated);
-      }
-      if (executed_copy_count_ != 0U) {
+      const auto uploaded = synchronizeResidentPages(textures);
+      if (uploaded) {
         DrawSync(0);
       }
-      changed = true;
+      return uploaded;
     }
-    residency_ = std::move(current_residency);
+    const auto bank = textureBank(gameplay, moves, textures);
+    ensureState(moves, bank, gameplay.currentRoom(), textures);
+    auto changed = synchronizeResidentPages(textures);
+    if (changed) {
+      DrawSync(0);
+    }
 
     const auto selected = [displayed_guest_frame,
                            selection](const auto &phase) {
@@ -2342,38 +2869,91 @@ private:
       if (!selected(phase)) {
         continue;
       }
-      submit(relocate(phase.moves, bank, textures));
+      if (!std::ranges::equal(phase.moves, moves_)) {
+        throw core::Error{
+            core::ErrorCode::invalid_format,
+            "Retail SCRIM copy phase changed its authored packet ring"};
+      }
+      apply(moves_);
       executed_copy_count_ =
           (executed_copy_count_ + 1U) % game::legacy_scrim_copy_cycle;
       changed = true;
     }
     if (has_selected) {
+      static_cast<void>(uploadDestinationPages(textures));
       DrawSync(0);
     }
     return changed;
   }
-  struct PageResidency {
-    unsigned int logical_page{};
-    std::uint64_t token{};
 
-    [[nodiscard]] friend bool operator==(const PageResidency &,
-                                         const PageResidency &) = default;
+  struct CpuPage {
+    unsigned int logical_page{};
+    bool destination{};
+    std::array<std::byte, texture_page_bytes> bytes{};
+    std::optional<std::uint64_t> uploaded_residency;
   };
 
-  [[nodiscard]] static int textureBank(const game::GameplaySession &gameplay) {
-    const auto *model = gameplay.detachedScrimModel();
-    if (model == nullptr) {
+  [[nodiscard]] static int
+  textureBank(const game::GameplaySession &gameplay,
+              std::span<const game::LegacyVramMoveBridgeState> moves,
+              const TextureStreamer &textures) {
+    if (gameplay.currentRoom() >= gameplay.models().size()) {
       throw core::Error{core::ErrorCode::not_found,
-                        "Resident retail SCRIM has no model resource"};
+                        "Retail SCRIM has no active scene texture bank"};
     }
-    return static_cast<int>(model->textureBank());
+    const auto scene_bank = static_cast<int>(
+        gameplay.models()[gameplay.currentRoom()].scene.textureBank());
+    if (scene_bank < 0 || scene_bank >= 2) {
+      throw core::Error{core::ErrorCode::unsupported,
+                        "Retail SCRIM scene texture bank is unsupported"};
+    }
+
+    // DR_MOVE addresses the live PS1 VRAM, not the texture bank encoded by
+    // SCRIM.EMD. Its bank flag can stay at zero after the level streamer has
+    // switched the subway to bank one. Resolve the copy pages from the bank
+    // which is actually resident; a page initially seeded by VLF is shared
+    // only when its bytes also match that bank's authored TPxx.BIN.
+    auto resident_bank_mask = std::uint8_t{};
+    const auto include_page = [&](int x, int y) {
+      const auto page = static_cast<unsigned int>(x / 64) +
+                        static_cast<unsigned int>(y / 256) * 16U;
+      resident_bank_mask = static_cast<std::uint8_t>(
+          resident_bank_mask | textures.residentTextureBankMask(page));
+    };
+    for (const auto &move : moves) {
+      include_page(move.source_x, move.source_y);
+      include_page(move.destination_x, move.destination_y);
+    }
+    if (resident_bank_mask == 1U) {
+      return 0;
+    }
+    if (resident_bank_mask == 2U) {
+      return 1;
+    }
+    return scene_bank;
   }
 
-  [[nodiscard]] static std::vector<PageResidency>
-  residency(std::span<const game::LegacyVramMoveBridgeState> moves, int bank,
-            const TextureStreamer &textures) {
-    std::vector<PageResidency> result;
-    const auto append = [&](int x, int y, int width, int height) {
+  void ensureState(std::span<const game::LegacyVramMoveBridgeState> moves,
+                   int bank, std::size_t scene_room,
+                   const TextureStreamer &textures) {
+    if (!pages_.empty() && texture_bank_ == bank && scene_room_ == scene_room &&
+        std::ranges::equal(moves_, moves)) {
+      return;
+    }
+
+    const auto had_state = !pages_.empty();
+    const auto same_packet_ring = std::ranges::equal(moves_, moves);
+    const auto previous_bank = texture_bank_;
+    const auto previous_room = scene_room_;
+    if (!same_packet_ring) {
+      executed_copy_count_ = 0U;
+    }
+    texture_bank_ = bank;
+    scene_room_ = scene_room;
+    moves_.assign(moves.begin(), moves.end());
+    pages_.clear();
+    const auto append = [&](int x, int y, int width, int height,
+                            bool destination) {
       const auto local_x = x & 63;
       const auto local_y = y & 255;
       if (local_x + width > 64 || local_y + height > 256) {
@@ -2383,60 +2963,183 @@ private:
       }
       const auto page = static_cast<unsigned int>(x / 64) +
                         static_cast<unsigned int>(y / 256) * 16U;
-      if (std::ranges::any_of(result, [page](const auto &entry) {
-            return entry.logical_page == page;
-          })) {
+      auto existing = std::ranges::find_if(pages_, [page](const auto &entry) {
+        return entry.logical_page == page;
+      });
+      if (existing != pages_.end()) {
+        existing->destination = existing->destination || destination;
         return;
       }
-      const auto token = textures.residentPageToken(page, bank);
-      if (!token) {
+      const auto authored = textures.authoredTexturePage(page, bank);
+      if (authored.size() != texture_page_bytes) {
         throw core::Error{core::ErrorCode::invalid_format,
-                          "Retail SCRIM texture page is not resident"};
+                          "Retail SCRIM texture page has invalid source data"};
       }
-      result.push_back(PageResidency{page, *token});
+      pages_.push_back(CpuPage{page, destination});
+      std::ranges::copy(authored, pages_.back().bytes.begin());
     };
     for (const auto &move : moves) {
-      append(move.source_x, move.source_y, move.width, move.height);
-      append(move.destination_x, move.destination_y, move.width, move.height);
+      append(move.source_x, move.source_y, move.width, move.height, false);
+      append(move.destination_x, move.destination_y, move.width, move.height,
+             true);
     }
-    return result;
+    // The retail room streamer can replace texture data without changing the
+    // selected bank. SCRIM's CPU copy ring must start from that room's freshly
+    // authored pages as well. Keeping the previous room's working set is what
+    // left strips of the old subway segment in train and sign textures.
+    authored_restore_pending_ = had_state;
+    if (textureDiagnosticsEnabled()) {
+      PsyX_Log_Info(
+          "[TextureDiag][scrim-state] previous_bank=%d selected_bank=%d "
+          "previous_room=%lld selected_room=%zu phase=%llu moves=%zu\n",
+          previous_bank, texture_bank_,
+          previous_room ? static_cast<long long>(*previous_room) : -1LL,
+          *scene_room_, static_cast<unsigned long long>(executed_copy_count_),
+          moves_.size());
+    }
   }
 
-  [[nodiscard]] static std::vector<game::EffectTextureCopy>
-  relocate(std::span<const game::LegacyVramMoveBridgeState> moves, int bank,
-           const TextureStreamer &textures) {
-    std::vector<game::EffectTextureCopy> relocated;
-    relocated.reserve(moves.size());
+  [[nodiscard]] CpuPage &page(unsigned int logical_page) {
+    const auto found =
+        std::ranges::find_if(pages_, [logical_page](const CpuPage &candidate) {
+          return candidate.logical_page == logical_page;
+        });
+    if (found == pages_.end()) {
+      throw core::Error{core::ErrorCode::invalid_format,
+                        "Retail SCRIM copy references an unknown CPU page"};
+    }
+    return *found;
+  }
+
+  void apply(std::span<const game::LegacyVramMoveBridgeState> moves) {
     for (const auto &move : moves) {
-      const auto copy = textures.relocateEffectTextureCopy(
-          game::EffectTextureCopy{
-              game::EffectVramRect{move.source_x, move.source_y, move.width,
-                                   move.height},
-              move.destination_x,
-              move.destination_y,
-          },
-          bank);
-      if (!copy) {
+      const auto source_page =
+          static_cast<unsigned int>(move.source_x / 64) +
+          static_cast<unsigned int>(move.source_y / 256) * 16U;
+      const auto destination_page =
+          static_cast<unsigned int>(move.destination_x / 64) +
+          static_cast<unsigned int>(move.destination_y / 256) * 16U;
+      const auto source_x = static_cast<unsigned int>(move.source_x & 63);
+      const auto source_y = static_cast<unsigned int>(move.source_y & 255);
+      const auto destination_x =
+          static_cast<unsigned int>(move.destination_x & 63);
+      const auto destination_y =
+          static_cast<unsigned int>(move.destination_y & 255);
+      const auto width = static_cast<unsigned int>(move.width);
+      const auto height = static_cast<unsigned int>(move.height);
+      if (source_x + width > 64U || destination_x + width > 64U ||
+          source_y + height > 256U || destination_y + height > 256U) {
         throw core::Error{
             core::ErrorCode::invalid_format,
-            "Retail SCRIM copy is outside resident texture pages"};
+            "Retail SCRIM copy crosses a logical texture-page boundary"};
       }
-      relocated.push_back(*copy);
+
+      const auto row_bytes = width * sizeof(std::uint16_t);
+      copy_scratch_.resize(row_bytes * height);
+      const auto &source = page(source_page).bytes;
+      auto &destination = page(destination_page).bytes;
+      copyTexturePageRectangle(source, source_x, source_y, destination,
+                               destination_x, destination_y, width, height,
+                               copy_scratch_);
     }
-    return relocated;
   }
 
-  static void submit(std::span<const game::EffectTextureCopy> relocated) {
-    for (const auto &copy : relocated) {
-      auto source = RECT16{copy.source.x, copy.source.y, copy.source.width,
-                           copy.source.height};
-      static_cast<void>(
-          MoveImage(&source, copy.destination_x, copy.destination_y));
+  [[nodiscard]] bool uploadDestinationPages(TextureStreamer &textures) {
+    auto uploaded = false;
+    for (auto &page_state : pages_) {
+      if (!page_state.destination) {
+        continue;
+      }
+      const auto token =
+          textures.residentPageToken(page_state.logical_page, texture_bank_);
+      if (!token) {
+        page_state.uploaded_residency.reset();
+        continue;
+      }
+      if (textures.uploadRuntimeTexturePage(page_state.logical_page,
+                                            texture_bank_, page_state.bytes)) {
+        page_state.uploaded_residency = token;
+        uploaded = true;
+      }
     }
+    return uploaded;
+  }
+
+  [[nodiscard]] bool synchronizeResidentPages(TextureStreamer &textures) {
+    auto reset = false;
+    for (auto &page_state : pages_) {
+      if (!page_state.destination) {
+        continue;
+      }
+      const auto token =
+          textures.residentPageToken(page_state.logical_page, texture_bank_);
+      if (!token) {
+        page_state.uploaded_residency.reset();
+        continue;
+      }
+      if (page_state.uploaded_residency == token) {
+        continue;
+      }
+      // TextureStreamer has just materialized a new physical residency (or
+      // restored a page after a room/overlay transition). Mirror those fresh
+      // authored bytes into the CPU copy ring instead of publishing the stale
+      // contents accumulated while this logical page was not resident.
+      const auto authored =
+          textures.authoredTexturePage(page_state.logical_page, texture_bank_);
+      if (authored.size() != page_state.bytes.size()) {
+        throw core::Error{core::ErrorCode::invalid_format,
+                          "Retail SCRIM resident page has invalid source data"};
+      }
+      std::ranges::copy(authored, page_state.bytes.begin());
+      page_state.uploaded_residency = token;
+      reset = true;
+      if (textureDiagnosticsEnabled()) {
+        PsyX_Log_Info("[TextureDiag][scrim-residency-reset] logical=%u bank=%d "
+                      "token=%llu phase=%llu\n",
+                      page_state.logical_page, texture_bank_,
+                      static_cast<unsigned long long>(*token),
+                      static_cast<unsigned long long>(executed_copy_count_));
+      }
+    }
+    if (authored_restore_pending_) {
+      // A logical page may retain the same physical residency token while the
+      // guest crosses a room boundary. Publish the rebuilt authored bytes
+      // explicitly; token-only synchronization cannot observe that semantic
+      // streaming boundary.
+      for (auto &page_state : pages_) {
+        if (!page_state.destination) {
+          continue;
+        }
+        const auto token =
+            textures.residentPageToken(page_state.logical_page, texture_bank_);
+        if (!token) {
+          continue;
+        }
+        if (textures.uploadRuntimeTexturePage(
+                page_state.logical_page, texture_bank_, page_state.bytes)) {
+          page_state.uploaded_residency = token;
+          reset = true;
+          if (textureDiagnosticsEnabled()) {
+            PsyX_Log_Info("[TextureDiag][scrim-room-restore] logical=%u bank=%d "
+                          "room=%zu token=%llu phase=%llu\n",
+                          page_state.logical_page, texture_bank_, *scene_room_,
+                          static_cast<unsigned long long>(*token),
+                          static_cast<unsigned long long>(executed_copy_count_));
+          }
+        }
+      }
+      authored_restore_pending_ = false;
+    }
+    return reset;
   }
 
   std::uint64_t executed_copy_count_{};
-  std::vector<PageResidency> residency_;
+  int texture_bank_{-1};
+  std::optional<std::size_t> scene_room_;
+  bool authored_restore_pending_{};
+  std::vector<game::LegacyVramMoveBridgeState> moves_;
+  std::vector<CpuPage> pages_;
+  std::vector<std::byte> copy_scratch_;
 };
 
 std::uint16_t readButtons(const PADRAW &pad) {
@@ -2562,6 +3265,7 @@ struct RetailDepthCueState {
 
 RetailDepthCueState active_retail_depth_cue;
 game::DynamicLightFrame active_dynamic_lights;
+game::DynamicLightPoint active_dynamic_light_observer;
 std::vector<game::RetailVertexLightState> active_retail_vertex_lights;
 std::int32_t active_retail_light_projection{320};
 bool active_retail_nightvision{};
@@ -3101,11 +3805,21 @@ void setProjected(VERTTYPE *destination, long packed) {
   std::memcpy(destination, &bits, sizeof(bits));
 }
 
+struct ActorShadowReceiverVertex {
+  game::DynamicLightPoint point{};
+  game::DynamicLightPoint normal{};
+  bool wall{};
+};
+
 struct PrimitiveBuffer {
   StableFrameVector<POLY_GT3> triangles{"Terrain triangles"};
   StableFrameVector<POLY_GT4> quads{"Terrain quads"};
   StableFrameVector<POLY_GT3> objects{"Object triangles"};
   StableFrameVector<POLY_GT4> object_quads{"Object quads"};
+  StableFrameVector<POLY_F3> surface_picker_triangles{
+      "Surface picker triangles"};
+  StableFrameVector<POLY_F4> surface_picker_quads{"Surface picker quads"};
+  StableFrameVector<POLY_F3> actor_shadows{"Dynamic actor shadows"};
   StableFrameVector<POLY_F3> player{"Fallback player triangles"};
   StableFrameVector<LINE_G2> effects{"Effect lines"};
   StableFrameVector<LINE_F2> combat_effect_lines{"Combat effect lines"};
@@ -3129,12 +3843,20 @@ struct PrimitiveBuffer {
   StableFrameVector<POLY_G3> guest_raw_gouraud_triangles{
       "Retail raw Gouraud triangles"};
   StableFrameVector<DR_TPAGE> guest_raw_modes{"Retail raw draw modes"};
+  // Actor geometry is consumed immediately; these reusable vectors never
+  // enter an ordering table and avoid per-actor allocations at high FPS.
+  std::vector<Vector3> hmd_world_vertex_scratch;
+  std::vector<std::optional<ActorShadowReceiverVertex>>
+      actor_shadow_receiver_scratch;
 
   void reset() noexcept {
     triangles.reset();
     quads.reset();
     objects.reset();
     object_quads.reset();
+    surface_picker_triangles.reset();
+    surface_picker_quads.reset();
+    actor_shadows.reset();
     player.reset();
     effects.reset();
     combat_effect_lines.reset();
@@ -3154,6 +3876,8 @@ struct PrimitiveBuffer {
     guest_raw_gouraud_lines.reset();
     guest_raw_gouraud_triangles.reset();
     guest_raw_modes.reset();
+    hmd_world_vertex_scratch.clear();
+    actor_shadow_receiver_scratch.clear();
   }
 
   void lockStorage() noexcept {
@@ -3161,6 +3885,9 @@ struct PrimitiveBuffer {
     quads.lockStorage();
     objects.lockStorage();
     object_quads.lockStorage();
+    surface_picker_triangles.lockStorage();
+    surface_picker_quads.lockStorage();
+    actor_shadows.lockStorage();
     player.lockStorage();
     effects.lockStorage();
     combat_effect_lines.lockStorage();
@@ -3185,8 +3912,10 @@ struct PrimitiveBuffer {
   [[nodiscard]] bool storageStable() const noexcept {
     return triangles.storageStable() && quads.storageStable() &&
            objects.storageStable() && object_quads.storageStable() &&
-           player.storageStable() && effects.storageStable() &&
-           combat_effect_lines.storageStable() &&
+           surface_picker_triangles.storageStable() &&
+           surface_picker_quads.storageStable() &&
+           actor_shadows.storageStable() && player.storageStable() &&
+           effects.storageStable() && combat_effect_lines.storageStable() &&
            combat_effect_triangles.storageStable() &&
            flashlight_cone_quads.storageStable() &&
            effect_sprite_quads.storageStable() &&
@@ -3239,6 +3968,73 @@ SVECTOR makeVertex(double x, double y, double z) {
   const std::array exact{x, y, z};
   PGXP_VectorRegister(&result, exact.data());
   return result;
+}
+
+template <std::size_t VertexCount>
+SurfacePickerSurface makeSurfacePickerSurface(
+    SurfacePickerId id, std::string label, std::uint16_t room,
+    std::uint64_t guest_frame, const std::array<SVECTOR, VertexCount> &world,
+    const std::array<long, VertexCount> &projected,
+    const std::array<assets::EmdUv, VertexCount> &uv, int depth,
+    std::uint16_t raw_tpage, std::uint16_t relocated_tpage,
+    std::uint16_t raw_clut, std::uint16_t relocated_clut,
+    unsigned int logical_page, unsigned int texture_bank,
+    const TextureStreamer &textures) {
+  auto result = SurfacePickerSurface{
+      .id = id,
+      .label = std::move(label),
+      .guest_frame = guest_frame,
+      .room = room,
+      .vertex_count = static_cast<std::uint8_t>(VertexCount),
+      .depth = depth,
+      .raw_tpage = raw_tpage,
+      .relocated_tpage = relocated_tpage,
+      .raw_clut = raw_clut,
+      .relocated_clut = relocated_clut,
+      .logical_page = logical_page,
+      .texture_bank = texture_bank,
+      .residency = textures.surfacePickerResidency(logical_page, texture_bank),
+  };
+  for (auto index = std::size_t{}; index < VertexCount; ++index) {
+    result.world[index] = SurfacePickerPoint3{
+        static_cast<double>(world[index].vx),
+        static_cast<double>(world[index].vy),
+        static_cast<double>(world[index].vz),
+    };
+    result.screen[index] = SurfacePickerPoint2{
+        static_cast<std::int32_t>(std::lround(screenX(projected[index]))),
+        static_cast<std::int32_t>(std::lround(screenY(projected[index]))),
+    };
+    result.uv[index] = SurfacePickerUv{uv[index].u, uv[index].v};
+  }
+  return result;
+}
+
+template <std::size_t VertexCount>
+void submitSurfacePickerHighlight(
+    const std::array<long, VertexCount> &projected, int depth,
+    std::vector<OT_TAG> &ordering_table, PrimitiveBuffer &primitives) {
+  if constexpr (VertexCount == 3U) {
+    auto &primitive = primitives.surface_picker_triangles.emplace_back();
+    setPolyF3(&primitive);
+    setRGB0(&primitive, 255U, 0U, 255U);
+    setProjected(&primitive.x0, projected[0]);
+    setProjected(&primitive.x1, projected[1]);
+    setProjected(&primitive.x2, projected[2]);
+    addPrim(&ordering_table[std::clamp(depth, 1, ordering_table_size - 1)],
+            &primitive);
+  } else {
+    static_assert(VertexCount == 4U);
+    auto &primitive = primitives.surface_picker_quads.emplace_back();
+    setPolyF4(&primitive);
+    setRGB0(&primitive, 255U, 0U, 255U);
+    setProjected(&primitive.x0, projected[0]);
+    setProjected(&primitive.x1, projected[1]);
+    setProjected(&primitive.x2, projected[2]);
+    setProjected(&primitive.x3, projected[3]);
+    addPrim(&ordering_table[std::clamp(depth, 1, ordering_table_size - 1)],
+            &primitive);
+  }
 }
 
 int cameraDepth(const MATRIX &view, const SVECTOR &vertex) {
@@ -3330,8 +4126,8 @@ VertexColor decodeColor(std::uint16_t color) {
 }
 
 TexturedVertex makeTexturedVertex(const SVECTOR &position, assets::EmdUv uv,
-                                  VertexColor color,
-                                  bool apply_lighting = true) {
+                                  VertexColor color, bool apply_lighting = true,
+                                  game::DynamicLightPoint normal = {}) {
   auto lit = game::DynamicLightVertexColor{color.red, color.green, color.blue};
   if (apply_lighting) {
     lit = applyRetailBlackoutBase(lit);
@@ -3340,12 +4136,16 @@ TexturedVertex makeTexturedVertex(const SVECTOR &position, assets::EmdUv uv,
         {static_cast<double>(position.vx), static_cast<double>(position.vy),
          static_cast<double>(position.vz)},
         active_retail_light_projection);
-    lit = game::applyDynamicLighting(
-        retail_lit,
-        game::sampleDynamicLighting(active_dynamic_lights,
-                                    {static_cast<double>(position.vx),
-                                     static_cast<double>(position.vy),
-                                     static_cast<double>(position.vz)}));
+    const auto point = game::DynamicLightPoint{
+        static_cast<double>(position.vx), static_cast<double>(position.vy),
+        static_cast<double>(position.vz)};
+    const auto normal_length_squared =
+        normal.x * normal.x + normal.y * normal.y + normal.z * normal.z;
+    const auto modulation =
+        normal_length_squared > 0.000001
+            ? game::sampleDynamicLighting(active_dynamic_lights, point, normal)
+            : game::sampleDynamicLighting(active_dynamic_lights, point);
+    lit = game::applyDynamicLighting(retail_lit, modulation);
   }
   lit = applyRetailNightvision(lit);
   return TexturedVertex{
@@ -3369,17 +4169,77 @@ VertexColor dynamicallyLit(VertexColor base, double x, double y,
   return VertexColor{lit.red, lit.green, lit.blue};
 }
 
+VertexColor dynamicallyLit(VertexColor base, double x, double y, double z,
+                           game::DynamicLightPoint normal) noexcept {
+  const auto dark_base =
+      applyRetailBlackoutBase({base.red, base.green, base.blue});
+  const auto retail_lit = game::applyRetailVertexLighting(
+      dark_base, active_retail_vertex_lights, {x, y, z},
+      active_retail_light_projection);
+  const auto lit = applyRetailNightvision(game::applyDynamicLighting(
+      retail_lit,
+      game::sampleDynamicLighting(active_dynamic_lights, {x, y, z}, normal)));
+  return VertexColor{lit.red, lit.green, lit.blue};
+}
+
+template <std::size_t Count>
+game::DynamicLightPoint
+visibleSurfaceNormal(const std::array<SVECTOR, Count> &vertices) noexcept {
+  static_assert(Count >= 3U);
+  const auto first = game::DynamicLightPoint{
+      static_cast<double>(vertices[0].vx), static_cast<double>(vertices[0].vy),
+      static_cast<double>(vertices[0].vz)};
+  const auto edge_a =
+      game::DynamicLightPoint{static_cast<double>(vertices[1].vx) - first.x,
+                              static_cast<double>(vertices[1].vy) - first.y,
+                              static_cast<double>(vertices[1].vz) - first.z};
+  const auto edge_b =
+      game::DynamicLightPoint{static_cast<double>(vertices[2].vx) - first.x,
+                              static_cast<double>(vertices[2].vy) - first.y,
+                              static_cast<double>(vertices[2].vz) - first.z};
+  auto normal =
+      game::DynamicLightPoint{edge_a.y * edge_b.z - edge_a.z * edge_b.y,
+                              edge_a.z * edge_b.x - edge_a.x * edge_b.z,
+                              edge_a.x * edge_b.y - edge_a.y * edge_b.x};
+  const auto length = std::sqrt(normal.x * normal.x + normal.y * normal.y +
+                                normal.z * normal.z);
+  if (!std::isfinite(length) || length <= 0.000001) {
+    return {};
+  }
+  normal = {normal.x / length, normal.y / length, normal.z / length};
+  auto centre = game::DynamicLightPoint{};
+  for (const auto &vertex : vertices) {
+    centre.x += static_cast<double>(vertex.vx);
+    centre.y += static_cast<double>(vertex.vy);
+    centre.z += static_cast<double>(vertex.vz);
+  }
+  const auto inverse_count = 1.0 / static_cast<double>(Count);
+  centre = {centre.x * inverse_count, centre.y * inverse_count,
+            centre.z * inverse_count};
+  const auto to_observer =
+      game::DynamicLightPoint{active_dynamic_light_observer.x - centre.x,
+                              active_dynamic_light_observer.y - centre.y,
+                              active_dynamic_light_observer.z - centre.z};
+  if (normal.x * to_observer.x + normal.y * to_observer.y +
+          normal.z * to_observer.z <
+      0.0) {
+    normal = {-normal.x, -normal.y, -normal.z};
+  }
+  return normal;
+}
+
 void dynamicallyLight(POLY_GT3 &primitive,
                       const std::array<SVECTOR, 3U> &vertices) noexcept {
+  const auto normal = visibleSurfaceNormal(vertices);
   const auto first =
       dynamicallyLit({primitive.r0, primitive.g0, primitive.b0}, vertices[0].vx,
-                     vertices[0].vy, vertices[0].vz);
+                     vertices[0].vy, vertices[0].vz, normal);
   const auto second =
       dynamicallyLit({primitive.r1, primitive.g1, primitive.b1}, vertices[1].vx,
-                     vertices[1].vy, vertices[1].vz);
+                     vertices[1].vy, vertices[1].vz, normal);
   const auto third =
       dynamicallyLit({primitive.r2, primitive.g2, primitive.b2}, vertices[2].vx,
-                     vertices[2].vy, vertices[2].vz);
+                     vertices[2].vy, vertices[2].vz, normal);
   setRGB0(&primitive, first.red, first.green, first.blue);
   setRGB1(&primitive, second.red, second.green, second.blue);
   setRGB2(&primitive, third.red, third.green, third.blue);
@@ -3387,18 +4247,19 @@ void dynamicallyLight(POLY_GT3 &primitive,
 
 void dynamicallyLight(POLY_GT4 &primitive,
                       const std::array<SVECTOR, 4U> &vertices) noexcept {
+  const auto normal = visibleSurfaceNormal(vertices);
   const auto first =
       dynamicallyLit({primitive.r0, primitive.g0, primitive.b0}, vertices[0].vx,
-                     vertices[0].vy, vertices[0].vz);
+                     vertices[0].vy, vertices[0].vz, normal);
   const auto second =
       dynamicallyLit({primitive.r1, primitive.g1, primitive.b1}, vertices[1].vx,
-                     vertices[1].vy, vertices[1].vz);
+                     vertices[1].vy, vertices[1].vz, normal);
   const auto third =
       dynamicallyLit({primitive.r2, primitive.g2, primitive.b2}, vertices[2].vx,
-                     vertices[2].vy, vertices[2].vz);
+                     vertices[2].vy, vertices[2].vz, normal);
   const auto fourth =
       dynamicallyLit({primitive.r3, primitive.g3, primitive.b3}, vertices[3].vx,
-                     vertices[3].vy, vertices[3].vz);
+                     vertices[3].vy, vertices[3].vz, normal);
   setRGB0(&primitive, first.red, first.green, first.blue);
   setRGB1(&primitive, second.red, second.green, second.blue);
   setRGB2(&primitive, third.red, third.green, third.blue);
@@ -3465,9 +4326,8 @@ std::uint16_t relocateTexturePage(std::uint16_t texture_page,
   const auto logical_page =
       source_page < 32U ? source_page : texture_page & 0x1fU;
   const auto bank = std::min<std::size_t>(texture_bank, 1U);
-  return static_cast<std::uint16_t>(
-      (texture_page & static_cast<std::uint16_t>(~0x1fU)) |
-      streamed_texture_page_remap[bank][logical_page]);
+  return encodeResidentTexturePage(
+      texture_page, streamed_texture_page_remap[bank][logical_page]);
 }
 
 std::uint16_t relocateClut(std::uint16_t clut, std::uint16_t texture_page,
@@ -3484,11 +4344,13 @@ std::uint16_t relocateClut(std::uint16_t clut, std::uint16_t texture_page,
       source_x_block >= first_source_x_block + 16U) {
     return clut;
   }
-  const auto logical_page =
-      source_page < 32U ? source_page : texture_page & 0x1fU;
-  const auto bank = (streamed_vlf_page_mask & (1U << logical_page)) != 0U
-                        ? std::size_t{0U}
-                        : std::min<std::size_t>(texture_bank, 1U);
+  // Texture-page sharing and palette sharing are independent.  VLF seeds
+  // bank zero, but a bank-one model can legitimately reuse the same TPAGE
+  // address with a different ZCLUT row.  The residency builder aliases rows
+  // only after comparing their actual bytes.
+  static_cast<void>(texture_page);
+  static_cast<void>(source_page);
+  const auto bank = std::min<std::size_t>(texture_bank, 1U);
   const auto physical_row =
       streamed_clut_row_remap[bank][y - mission_clut_source_y];
   const auto physical_x_block =
@@ -3904,7 +4766,8 @@ private:
           0x9e3779b9U ^ (static_cast<std::uint32_t>(object_index) << 16U) ^
           static_cast<std::uint32_t>(triangle_index * 0x45d9f3bU);
       if (!subdivide) {
-        appendShard(source, triangle, gameplay.objectTextureBank(object_index),
+        appendShard(source, triangle,
+                    gameplay.displayedObjectTextureBank(object_index),
                     presentation.camera, base_seed);
         ++emitted;
         continue;
@@ -3923,7 +4786,8 @@ private:
            ++fragment) {
         appendShard(
             fragments[fragment], triangle,
-            gameplay.objectTextureBank(object_index), presentation.camera,
+            gameplay.displayedObjectTextureBank(object_index),
+            presentation.camera,
             base_seed ^ static_cast<std::uint32_t>(fragment * 0x85ebca6bU));
         ++emitted;
       }
@@ -4676,13 +5540,14 @@ TexturedVertex
 emdTexturedVertex(const SVECTOR &position, const assets::EmdSection &section,
                   const assets::EmdPolygon &polygon, std::size_t corner,
                   std::span<const std::uint16_t> live_colors = {},
-                  bool apply_lighting = true) {
+                  bool apply_lighting = true,
+                  game::DynamicLightPoint normal = {}) {
   const auto vertex = polygon.vertex_indices[corner];
   return makeTexturedVertex(position, polygon.uv[corner],
                             decodeColor(live_colors.empty()
                                             ? section.vertices[vertex].color
                                             : live_colors[vertex]),
-                            apply_lighting);
+                            apply_lighting, normal);
 }
 
 using OrderingDepthTransform = int (*)(int depth);
@@ -4844,16 +5709,29 @@ void renderGlassShards(std::span<const GlassShardPresentationState> shards,
   }
 }
 
-void renderGmdObject(const assets::GmdModel &model,
-                     const game::SceneObject &object,
-                     game::ObjectVisualEffect visual_effect,
-                     unsigned int texture_bank, const game::CameraState &camera,
-                     const MATRIX &view, std::vector<OT_TAG> &ordering_table,
-                     PrimitiveBuffer &primitives, RenderStats &stats,
-                     VertexColor back_color = {128U, 128U, 128U},
-                     bool force_two_sided = false) {
+struct SurfacePickerObjectContext {
+  PsyCrossSurfacePicker *picker{};
+  const TextureStreamer *textures{};
+  std::vector<OT_TAG> *ordering_table{};
+  SurfacePickerKind kind{SurfacePickerKind::gmd_object};
+  std::uint32_t owner{};
+  std::string label;
+  std::uint16_t room{};
+  std::uint64_t guest_frame{};
+};
+
+void renderGmdObject(
+    const assets::GmdModel &model, const game::SceneObject &object,
+    game::ObjectVisualEffect visual_effect, unsigned int texture_bank,
+    const game::CameraState &camera, const MATRIX &view,
+    std::vector<OT_TAG> &ordering_table, PrimitiveBuffer &primitives,
+    RenderStats &stats, VertexColor back_color = {128U, 128U, 128U},
+    bool force_two_sided = false,
+    const SurfacePickerObjectContext *picker_context = nullptr) {
   const auto reverse_winding = reversesWinding(object.transform);
-  for (const auto &triangle : model.triangles()) {
+  for (auto triangle_index = std::size_t{};
+       triangle_index < model.triangles().size(); ++triangle_index) {
+    const auto &triangle = model.triangles()[triangle_index];
     if (triangle.flags == 0) {
       continue;
     }
@@ -4876,10 +5754,11 @@ void renderGmdObject(const assets::GmdModel &model,
       continue;
     }
     if (near_status == NearPlaneStatus::intersecting) {
+      const auto normal = visibleSurfaceNormal(positions);
       const std::array textured{
-          makeTexturedVertex(v0, triangle.uv[0], back_color),
-          makeTexturedVertex(v1, triangle.uv[1], back_color),
-          makeTexturedVertex(v2, triangle.uv[2], back_color),
+          makeTexturedVertex(v0, triangle.uv[0], back_color, true, normal),
+          makeTexturedVertex(v1, triangle.uv[1], back_color, true, normal),
+          makeTexturedVertex(v2, triangle.uv[2], back_color, true, normal),
       };
       submitClippedTriangle(textured,
                             TexturedMaterial{
@@ -4922,6 +5801,22 @@ void renderGmdObject(const assets::GmdModel &model,
     addPrim(&ordering_table[std::clamp(depth, 1, ordering_table_size - 1)],
             &primitive);
     const std::array projected{xy0, xy1, xy2};
+    if (picker_context != nullptr && picker_context->picker != nullptr &&
+        picker_context->textures != nullptr &&
+        picker_context->ordering_table != nullptr) {
+      const std::array uv{triangle.uv[0], triangle.uv[1], triangle.uv[2]};
+      if (picker_context->picker->observe(makeSurfacePickerSurface(
+              SurfacePickerId{picker_context->kind, picker_context->owner, 0U,
+                              static_cast<std::uint32_t>(triangle_index)},
+              picker_context->label, picker_context->room,
+              picker_context->guest_frame, positions, projected, uv, depth,
+              triangle.texture_page, primitive.tpage, triangle.clut,
+              primitive.clut, triangle.texture_page & 0x1fU, texture_bank,
+              *picker_context->textures))) {
+        submitSurfacePickerHighlight(
+            projected, depth, *picker_context->ordering_table, primitives);
+      }
+    }
     submitStats(stats, depth, projected);
   }
 }
@@ -4957,27 +5852,48 @@ void renderActorWeapon(const game::GameplaySession &gameplay,
                   retailHmdBackColor(actor_object));
 }
 
-void renderHmdObject(const assets::HmdModel &model,
-                     const game::SceneObject &object,
-                     const game::ActorPose *animation_pose,
-                     unsigned int texture_bank, const MATRIX &view,
-                     std::vector<OT_TAG> &ordering_table,
-                     PrimitiveBuffer &primitives, RenderStats &stats) {
+void prepareHmdWorldVertices(const assets::HmdModel &model,
+                             const game::SceneObject &object,
+                             const game::ActorPose *animation_pose,
+                             std::vector<Vector3> &result) {
   const auto direct_legacy_pose = hasLegacyHmdBones(model, object);
   const auto posed_vertices =
       direct_legacy_pose ? std::vector<Vector3>{}
                          : poseHmdVertices(model, animation_pose,
                                            object.legacy_hmd_root_space);
-  const auto back_color = retailHmdBackColor(object);
-  const auto vertex = [&](std::size_t index) {
+  result.clear();
+  result.reserve(model.vertices().size());
+  for (std::size_t index = 0U; index < model.vertices().size(); ++index) {
     if (!direct_legacy_pose) {
-      return transformHmdVertex(posed_vertices[index], object.transform);
+      const auto &vertex = posed_vertices[index];
+      result.push_back(
+          transformPoint(vertex.x, vertex.y, vertex.z, object.transform));
+      continue;
     }
     const auto &source = model.vertices()[index];
-    const auto world = transformPoint(
+    result.push_back(transformPoint(
         static_cast<double>(source.x), static_cast<double>(source.y),
         static_cast<double>(source.z),
-        object.legacy_hmd_bones[model.vertexParts()[index]]);
+        object.legacy_hmd_bones[model.vertexParts()[index]]));
+  }
+}
+
+void renderHmdObject(const assets::HmdModel &model,
+                     const game::SceneObject &object,
+                     const game::ActorPose *animation_pose,
+                     unsigned int texture_bank, const MATRIX &view,
+                     std::vector<OT_TAG> &ordering_table,
+                     PrimitiveBuffer &primitives, RenderStats &stats,
+                     std::span<const Vector3> prepared_world_vertices = {}) {
+  if (prepared_world_vertices.empty()) {
+    prepareHmdWorldVertices(model, object, animation_pose,
+                            primitives.hmd_world_vertex_scratch);
+    prepared_world_vertices = primitives.hmd_world_vertex_scratch;
+  }
+  const auto world_vertices = prepared_world_vertices;
+  const auto back_color = retailHmdBackColor(object);
+  const auto vertex = [&](std::size_t index) {
+    const auto &world = world_vertices[index];
     return makeVertex(world.x, world.y, world.z);
   };
   for (const auto &triangle : model.triangles()) {
@@ -4991,10 +5907,11 @@ void renderHmdObject(const assets::HmdModel &model,
       continue;
     }
     if (near_status == NearPlaneStatus::intersecting) {
+      const auto normal = visibleSurfaceNormal(positions);
       const std::array textured{
-          makeTexturedVertex(v0, triangle.uv[0], back_color),
-          makeTexturedVertex(v1, triangle.uv[1], back_color),
-          makeTexturedVertex(v2, triangle.uv[2], back_color),
+          makeTexturedVertex(v0, triangle.uv[0], back_color, true, normal),
+          makeTexturedVertex(v1, triangle.uv[1], back_color, true, normal),
+          makeTexturedVertex(v2, triangle.uv[2], back_color, true, normal),
       };
       submitClippedTriangle(
           textured,
@@ -5028,6 +5945,182 @@ void renderHmdObject(const assets::HmdModel &model,
             &primitive);
     const std::array projected{xy0, xy1, xy2};
     submitStats(stats, depth, projected);
+  }
+}
+
+void renderActorShadow(const game::GameplaySession &gameplay,
+                       const assets::HmdModel &model,
+                       const game::SceneObject &object,
+                       std::span<const Vector3> world_vertices,
+                       const MATRIX &view,
+                       std::vector<OT_TAG> &shadow_ordering_table,
+                       PrimitiveBuffer &primitives, RenderStats &stats) {
+  if (world_vertices.size() != model.vertices().size() ||
+      model.triangles().empty()) {
+    return;
+  }
+  auto minimum_y = std::numeric_limits<double>::max();
+  auto contact_y = std::numeric_limits<double>::lowest();
+  for (const auto &triangle : model.triangles()) {
+    for (const auto index : triangle.vertex_indices) {
+      minimum_y = std::min(minimum_y, world_vertices[index].y);
+      contact_y = std::max(contact_y, world_vertices[index].y);
+    }
+  }
+  if (!std::isfinite(minimum_y) || !std::isfinite(contact_y)) {
+    return;
+  }
+  const auto root = transformPoint(0.0, 0.0, 0.0, object.transform);
+  const auto surface = gameplay.actorGroundSurface(root.x, root.z, contact_y);
+  if (!surface || std::abs(surface->y - contact_y) > 1200.0) {
+    return;
+  }
+  const auto ground_point = game::DynamicLightPoint{root.x, surface->y, root.z};
+  const auto ground_normal = game::DynamicLightPoint{
+      surface->normal_x, surface->normal_y, surface->normal_z};
+  const auto actor_anchor =
+      game::DynamicLightPoint{root.x, (minimum_y + contact_y) * 0.5, root.z};
+  const auto projection = game::selectDynamicShadowProjection(
+      active_dynamic_lights, actor_anchor, ground_normal);
+  const auto receiver_for = [&](game::DynamicLightPoint source)
+      -> std::optional<ActorShadowReceiverVertex> {
+    const auto floor = game::projectDynamicShadowPoint(
+        source, ground_point, ground_normal, projection);
+    if (!floor) {
+      return std::nullopt;
+    }
+    const auto receiver = gameplay.actorShadowSurface(
+        source.x, source.y, source.z, floor->x, floor->y, floor->z);
+    if (!receiver) {
+      return ActorShadowReceiverVertex{*floor, ground_normal, false};
+    }
+    // The hit normal faces back toward the caster. A small receiver-relative
+    // offset keeps both wall and floor portions clear of coplanar Z fighting.
+    constexpr auto surface_bias = 4.0;
+    return ActorShadowReceiverVertex{
+        {receiver->x + receiver->normal_x * surface_bias,
+         receiver->y + receiver->normal_y * surface_bias,
+         receiver->z + receiver->normal_z * surface_bias},
+        {receiver->normal_x, receiver->normal_y, receiver->normal_z},
+        true};
+  };
+  auto &receivers = primitives.actor_shadow_receiver_scratch;
+  receivers.clear();
+  receivers.reserve(world_vertices.size());
+  for (const auto &vertex : world_vertices) {
+    receivers.push_back(receiver_for({vertex.x, vertex.y, vertex.z}));
+  }
+  const auto shade = static_cast<std::uint8_t>(std::clamp<long>(
+      std::lround(18.0 + projection.darkness * 58.0), 20L, 44L));
+  const auto projected_valid = [](long packed) {
+    constexpr auto maximum_safe_coordinate = 8192.0F;
+    return std::isfinite(screenX(packed)) && std::isfinite(screenY(packed)) &&
+           std::abs(screenX(packed)) <= maximum_safe_coordinate &&
+           std::abs(screenY(packed)) <= maximum_safe_coordinate;
+  };
+  const auto submit_shadow_triangle = [&](game::DynamicLightPoint first,
+                                          game::DynamicLightPoint second,
+                                          game::DynamicLightPoint third) {
+    auto v0 = makeVertex(first.x, first.y, first.z);
+    auto v1 = makeVertex(second.x, second.y, second.z);
+    auto v2 = makeVertex(third.x, third.y, third.z);
+    const std::array positions{v0, v1, v2};
+    if (classifyNearPlane(view, positions) != NearPlaneStatus::inside) {
+      return;
+    }
+    long xy0{};
+    long xy1{};
+    long xy2{};
+    long depth_cue{};
+    long flags{};
+    const auto depth =
+        RotTransPers3(&v0, &v1, &v2, &xy0, &xy1, &xy2, &depth_cue, &flags);
+    if (depth <= 0 || flags != 0L || !projected_valid(xy0) ||
+        !projected_valid(xy1) || !projected_valid(xy2)) {
+      return;
+    }
+    const auto area =
+        (screenX(xy1) - screenX(xy0)) * (screenY(xy2) - screenY(xy0)) -
+        (screenY(xy1) - screenY(xy0)) * (screenX(xy2) - screenX(xy0));
+    if (!std::isfinite(area) || std::abs(area) < 0.35F) {
+      return;
+    }
+    auto &primitive = primitives.actor_shadows.emplace_back();
+    setPolyF3(&primitive);
+    setSemiTrans(&primitive, 1);
+    setRGB0(&primitive, shade, shade, shade);
+    setProjected(&primitive.x0, xy0);
+    setProjected(&primitive.x1, xy1);
+    setProjected(&primitive.x2, xy2);
+    addPrim(
+        &shadow_ordering_table[std::clamp(depth, 1, ordering_table_size - 1)],
+        &primitive);
+    const std::array projected{xy0, xy1, xy2};
+    submitStats(stats, depth, projected);
+  };
+  const auto midpoint = [](game::DynamicLightPoint first,
+                           game::DynamicLightPoint second) {
+    return game::DynamicLightPoint{(first.x + second.x) * 0.5,
+                                   (first.y + second.y) * 0.5,
+                                   (first.z + second.z) * 0.5};
+  };
+  const auto normal_dot = [](const ActorShadowReceiverVertex &first,
+                             const ActorShadowReceiverVertex &second) {
+    return first.normal.x * second.normal.x + first.normal.y * second.normal.y +
+           first.normal.z * second.normal.z;
+  };
+  for (const auto &triangle : model.triangles()) {
+    if (std::ranges::any_of(triangle.vertex_indices, [&](std::uint16_t index) {
+          return index >= world_vertices.size() || !receivers[index];
+        })) {
+      continue;
+    }
+    const auto first_index = triangle.vertex_indices[0];
+    const auto second_index = triangle.vertex_indices[1];
+    const auto third_index = triangle.vertex_indices[2];
+    const auto &first = *receivers[first_index];
+    const auto &second = *receivers[second_index];
+    const auto &third = *receivers[third_index];
+    const auto receiver_changes =
+        first.wall != second.wall || first.wall != third.wall ||
+        second.wall != third.wall ||
+        (first.wall && (normal_dot(first, second) < 0.985 ||
+                        normal_dot(first, third) < 0.985 ||
+                        normal_dot(second, third) < 0.985));
+    if (!receiver_changes) {
+      submit_shadow_triangle(first.point, second.point, third.point);
+      continue;
+    }
+
+    // Subdivide only where one posed triangle crosses a floor/wall crease.
+    // Midpoint receiver samples keep the bend stable while preserving the
+    // detailed HMD outline everywhere else.
+    const auto first_source = game::DynamicLightPoint{
+        world_vertices[first_index].x, world_vertices[first_index].y,
+        world_vertices[first_index].z};
+    const auto second_source = game::DynamicLightPoint{
+        world_vertices[second_index].x, world_vertices[second_index].y,
+        world_vertices[second_index].z};
+    const auto third_source = game::DynamicLightPoint{
+        world_vertices[third_index].x, world_vertices[third_index].y,
+        world_vertices[third_index].z};
+    const auto first_second =
+        receiver_for(midpoint(first_source, second_source));
+    const auto second_third =
+        receiver_for(midpoint(second_source, third_source));
+    const auto third_first = receiver_for(midpoint(third_source, first_source));
+    if (!first_second || !second_third || !third_first) {
+      submit_shadow_triangle(first.point, second.point, third.point);
+      continue;
+    }
+    submit_shadow_triangle(first.point, first_second->point,
+                           third_first->point);
+    submit_shadow_triangle(first_second->point, second.point,
+                           second_third->point);
+    submit_shadow_triangle(third_first->point, second_third->point,
+                           third.point);
+    submit_shadow_triangle(first_second->point, second_third->point,
+                           third_first->point);
   }
 }
 
@@ -6233,15 +7326,19 @@ void renderWeaponEffects(
   }
 }
 
-void renderEmdObject(const assets::EmdScene &scene,
-                     const game::SceneObject &object, const MATRIX &view,
-                     std::vector<OT_TAG> &ordering_table,
-                     PrimitiveBuffer &primitives, RenderStats &stats,
-                     bool retail_scrim = false) {
+void renderEmdObject(
+    const assets::EmdScene &scene, const game::SceneObject &object,
+    const MATRIX &view, std::vector<OT_TAG> &ordering_table,
+    PrimitiveBuffer &primitives, RenderStats &stats, bool retail_scrim = false,
+    const SurfacePickerObjectContext *picker_context = nullptr) {
   const auto reverse_winding = reversesWinding(object.transform);
   const auto texture_bank = scene.textureBank();
-  for (const auto &section : scene.sections()) {
-    for (const auto &polygon : section.polygons) {
+  for (auto section_index = std::size_t{};
+       section_index < scene.sections().size(); ++section_index) {
+    const auto &section = scene.sections()[section_index];
+    for (auto polygon_index = std::size_t{};
+         polygon_index < section.polygons.size(); ++polygon_index) {
+      const auto &polygon = section.polygons[polygon_index];
       if (!polygon.renderable) {
         continue;
       }
@@ -6324,6 +7421,22 @@ void renderEmdObject(const assets::EmdScene &scene,
         addPrim(&ordering_table[std::clamp(depth, 1, ordering_table_size - 1)],
                 &primitive);
         const std::array projected{xy0, xy1, xy2, xy3};
+        if (picker_context != nullptr && picker_context->picker != nullptr &&
+            picker_context->textures != nullptr &&
+            picker_context->ordering_table != nullptr) {
+          if (picker_context->picker->observe(makeSurfacePickerSurface(
+                  SurfacePickerId{picker_context->kind, picker_context->owner,
+                                  static_cast<std::uint32_t>(section_index),
+                                  static_cast<std::uint32_t>(polygon_index)},
+                  picker_context->label, picker_context->room,
+                  picker_context->guest_frame, positions, projected, polygon.uv,
+                  depth, polygon.texture_page, primitive.tpage, polygon.clut,
+                  primitive.clut, texture_source_page, texture_bank,
+                  *picker_context->textures))) {
+            submitSurfacePickerHighlight(
+                projected, depth, *picker_context->ordering_table, primitives);
+          }
+        }
         submitStats(stats, depth, projected);
       } else {
         const std::array positions{v0, v1, v2};
@@ -6371,6 +7484,23 @@ void renderEmdObject(const assets::EmdScene &scene,
         addPrim(&ordering_table[std::clamp(depth, 1, ordering_table_size - 1)],
                 &primitive);
         const std::array projected{xy0, xy1, xy2};
+        if (picker_context != nullptr && picker_context->picker != nullptr &&
+            picker_context->textures != nullptr &&
+            picker_context->ordering_table != nullptr) {
+          const std::array uv{polygon.uv[0], polygon.uv[1], polygon.uv[2]};
+          if (picker_context->picker->observe(makeSurfacePickerSurface(
+                  SurfacePickerId{picker_context->kind, picker_context->owner,
+                                  static_cast<std::uint32_t>(section_index),
+                                  static_cast<std::uint32_t>(polygon_index)},
+                  picker_context->label, picker_context->room,
+                  picker_context->guest_frame, positions, projected, uv, depth,
+                  polygon.texture_page, primitive.tpage, polygon.clut,
+                  primitive.clut, texture_source_page, texture_bank,
+                  *picker_context->textures))) {
+            submitSurfacePickerHighlight(
+                projected, depth, *picker_context->ordering_table, primitives);
+          }
+        }
         submitStats(stats, depth, projected);
       }
     }
@@ -6451,14 +7581,18 @@ VertexColor localSceneBackColor(const game::GameplaySession &gameplay,
 }
 
 void renderObjects(const game::GameplaySession &gameplay,
+                   const TextureStreamer &textures,
                    const FireAnimation &fire_animation,
                    const FireTexturePlacement &fire_texture_placement,
                    const game::ActorAnimationBank &actor_animations,
                    std::uint64_t actor_tick,
                    const RenderPresentationSnapshot &presentation,
                    const MATRIX &view, std::vector<OT_TAG> &ordering_table,
+                   std::vector<OT_TAG> &shadow_ordering_table,
+                   std::vector<OT_TAG> &surface_picker_ordering_table,
                    std::vector<OT_TAG> &fire_ordering_table,
-                   PrimitiveBuffer &primitives, RenderStats &stats) {
+                   PrimitiveBuffer &primitives, RenderStats &stats,
+                   PsyCrossSurfacePicker &surface_picker) {
   for (const auto object_index : gameplay.activeObjects()) {
     if (object_index >= presentation.objects.size()) {
       continue;
@@ -6470,7 +7604,22 @@ void renderObjects(const game::GameplaySession &gameplay,
     }
     const auto &object_model = *displayed_model;
     const auto &geometry = object_model.geometry;
-    const auto texture_bank = gameplay.objectTextureBank(object_index);
+    const auto model_index = static_cast<std::uint32_t>(
+        displayed_model - gameplay.objectModels().data());
+    auto picker_context = SurfacePickerObjectContext{
+        .picker = &surface_picker,
+        .textures = &textures,
+        .ordering_table = &surface_picker_ordering_table,
+        .owner = object_index,
+        .label = "object-" + std::to_string(object_index) + "-model-" +
+                 std::to_string(model_index),
+        .room = gameplay.currentRoom(),
+        .guest_frame = presentation.guest_frame,
+    };
+    const auto *active_picker_context =
+        surface_picker.active() ? &picker_context : nullptr;
+    const auto texture_bank =
+        gameplay.displayedObjectTextureBank(object_index);
     if (const auto *model = std::get_if<assets::GmdModel>(&geometry)) {
       // The guest display-light pointer is reliable for the two weapon-crate
       // classes. Several flat GMD signs reuse that field for material state;
@@ -6486,7 +7635,7 @@ void renderObjects(const game::GameplaySession &gameplay,
                        : guest_back_color;
       renderGmdObject(*model, object, object_model.visual_effect, texture_bank,
                       presentation.camera, view, ordering_table, primitives,
-                      stats, back_color);
+                      stats, back_color, false, active_picker_context);
     } else if (const auto *hmd_model =
                    std::get_if<assets::HmdModel>(&geometry)) {
       const auto *state = gameplay.npcState(object_index);
@@ -6510,16 +7659,25 @@ void renderObjects(const game::GameplaySession &gameplay,
                     npcAnimationPhase(object, object_index));
       const auto *render_pose =
           dedicated_presentation && !exact_guest_pose ? nullptr : &pose;
+      prepareHmdWorldVertices(*hmd_model, object, render_pose,
+                              primitives.hmd_world_vertex_scratch);
+      const auto world_vertices =
+          std::span<const Vector3>{primitives.hmd_world_vertex_scratch};
+      if (state != nullptr || dedicated_presentation) {
+        renderActorShadow(gameplay, *hmd_model, object, world_vertices, view,
+                          shadow_ordering_table, primitives, stats);
+      }
       renderHmdObject(*hmd_model, object, render_pose, texture_bank, view,
-                      ordering_table, primitives, stats);
+                      ordering_table, primitives, stats, world_vertices);
       auto weapon = gameplay.legacyDedicatedActorWeapon(object_index);
       if (!weapon && state != nullptr && state->health != 0U) {
         weapon = state->weapon;
       }
       if (weapon) {
         renderActorWeapon(gameplay, *hmd_model, object, pose, *weapon,
-                          texture_bank, presentation.camera, view,
-                          ordering_table, primitives, stats);
+                          game::resident_weapon_texture_bank,
+                          presentation.camera, view, ordering_table, primitives,
+                          stats);
       }
     } else if (const auto *fire =
                    std::get_if<game::ObjectFireEmitter>(&geometry)) {
@@ -6531,8 +7689,10 @@ void renderObjects(const game::GameplaySession &gameplay,
                          primitives, stats);
       }
     } else {
+      picker_context.kind = SurfacePickerKind::emd_object;
       renderEmdObject(std::get<assets::EmdScene>(geometry), object, view,
-                      ordering_table, primitives, stats);
+                      ordering_table, primitives, stats, false,
+                      active_picker_context);
     }
   }
 }
@@ -6838,6 +7998,7 @@ void renderPresentedPlayer(const game::GameplaySession &gameplay,
                            const RenderPresentationSnapshot &presentation,
                            const MATRIX &view,
                            std::vector<OT_TAG> &ordering_table,
+                           std::vector<OT_TAG> &shadow_ordering_table,
                            PrimitiveBuffer &primitives, RenderStats &stats) {
   if (gameplay.playerAlive() && presentation.first_person_aim) {
     return;
@@ -6853,8 +8014,6 @@ void renderPresentedPlayer(const game::GameplaySession &gameplay,
     if (guest_player != nullptr) {
       player_object = *guest_player;
     }
-    const auto player_texture_bank =
-        gameplay.textureBankAt(gameplay.player().x, gameplay.player().z);
     const auto pose = [&] {
       if (!gameplay.playerAlive()) {
         return actor_animations.npcPose(
@@ -6869,11 +8028,18 @@ void renderPresentedPlayer(const game::GameplaySession &gameplay,
           gameplay.playerAnimation(), player_animation_tick,
           gameplay.playerPresentationAnimationTick());
     }();
-    renderHmdObject(*player_model, player_object, &pose, player_texture_bank,
-                    view, ordering_table, primitives, stats);
+    prepareHmdWorldVertices(*player_model, player_object, &pose,
+                            primitives.hmd_world_vertex_scratch);
+    const auto world_vertices =
+        std::span<const Vector3>{primitives.hmd_world_vertex_scratch};
+    renderActorShadow(gameplay, *player_model, player_object, world_vertices,
+                      view, shadow_ordering_table, primitives, stats);
+    renderHmdObject(*player_model, player_object, &pose,
+                    game::resident_hmd_texture_bank, view, ordering_table,
+                    primitives, stats, world_vertices);
     if (gameplay.playerAlive()) {
       renderActorWeapon(gameplay, *player_model, player_object, pose,
-                        presented_weapon, player_texture_bank,
+                        presented_weapon, game::resident_weapon_texture_bank,
                         presentation.camera, view, ordering_table, primitives,
                         stats);
     }
@@ -7104,7 +8270,8 @@ void renderGuestCameraLists(
       material_v1 =
           static_cast<std::uint8_t>(static_cast<int>(material_v1) + v_delta);
       primitive.tpage = static_cast<std::uint16_t>(
-          (environment->texture_page & 0x1fU) | (retail_tpage & ~0x1fU));
+          (environment->texture_page & 0xfc1fU) |
+          (retail_tpage & 0x03e0U));
       primitive.clut = environment->clut;
     } else {
       primitive.tpage =
@@ -7816,6 +8983,14 @@ void updateDynamicLightFrame(
     } else if (std::holds_alternative<game::ObjectFireEmitter>(
                    model.geometry)) {
       kind = game::DynamicLightKind::steady_fire;
+    } else if (object.damage_response ==
+                   game::ObjectDamageResponse::extinguish ||
+               model.visual_effect ==
+                   game::ObjectVisualEffect::billboard_glow) {
+      // All authored lamp families share the retail extinguish response. This
+      // is a stronger identity than a guessed filename and automatically
+      // keeps mission-specific lamps and their destruction latch in sync.
+      kind = game::DynamicLightKind::street_lamp;
     }
     if (!kind) {
       continue;
@@ -7847,12 +9022,97 @@ void updateDynamicLightFrame(
   std::vector<game::TransientDynamicLightState> transient;
   transient.reserve(weapon_edges.size() + retail_muzzle_flashes.size() +
                     native_muzzle_flashes.size() + gameplay.effects().size() +
-                    presentation.projectiles.size());
+                    presentation.projectiles.size() +
+                    gameplay.legacyExplParticles().size());
+
+  // Retail SPFX particles are the authoritative explosion/fire presentation
+  // once the guest renderer is active. Group the child sprites by controller
+  // and recover one bounded light at their common centre; otherwise native
+  // explosion effects are correctly suppressed but their illumination also
+  // disappears.
+  struct LegacyLightAccumulator {
+    std::uint16_t controller{};
+    std::int16_t source_slot{-1};
+    game::LegacyEffectSpriteFamily family{
+        game::LegacyEffectSpriteFamily::explosion};
+    double x{};
+    double y{};
+    double z{};
+    double maximum_scale{};
+    std::uint8_t earliest_frame{0xffU};
+    std::uint16_t count{};
+  };
+  std::vector<LegacyLightAccumulator> legacy_lights;
+  legacy_lights.reserve(gameplay.legacyExplParticles().size());
+  for (const auto &particle : gameplay.legacyExplParticles()) {
+    if (particle.family != game::LegacyEffectSpriteFamily::explosion &&
+        particle.family != game::LegacyEffectSpriteFamily::fire) {
+      continue;
+    }
+    auto accumulator = std::ranges::find_if(
+        legacy_lights, [&](const LegacyLightAccumulator &candidate) {
+          return candidate.controller == particle.controller &&
+                 candidate.source_slot == particle.source_slot &&
+                 candidate.family == particle.family;
+        });
+    if (accumulator == legacy_lights.end()) {
+      legacy_lights.push_back(LegacyLightAccumulator{
+          particle.controller,
+          particle.source_slot,
+          particle.family,
+      });
+      accumulator = std::prev(legacy_lights.end());
+    }
+    accumulator->x += static_cast<double>(particle.x);
+    accumulator->y += static_cast<double>(particle.y);
+    accumulator->z += static_cast<double>(particle.z);
+    accumulator->maximum_scale =
+        std::max(accumulator->maximum_scale,
+                 static_cast<double>(particle.scale_byte) / 57.0);
+    accumulator->earliest_frame =
+        std::min(accumulator->earliest_frame, particle.frame);
+    ++accumulator->count;
+  }
+  for (const auto &source : legacy_lights) {
+    if (source.count == 0U) {
+      continue;
+    }
+    const auto layout = game::legacyEffectSpriteLayout(source.family);
+    if (layout.frame_count == 0U ||
+        source.earliest_frame >= layout.frame_count) {
+      continue;
+    }
+    const auto fire = source.family == game::LegacyEffectSpriteFamily::fire;
+    const auto total = static_cast<std::uint16_t>(layout.frame_count);
+    const auto remaining =
+        fire ? std::uint16_t{1U}
+             : static_cast<std::uint16_t>(layout.frame_count -
+                                          source.earliest_frame);
+    const auto inverse_count = 1.0 / static_cast<double>(source.count);
+    transient.push_back(game::TransientDynamicLightState{
+        fire ? game::GameplayEffectType::burning_fire
+             : game::GameplayEffectType::explosion,
+        {source.x * inverse_count, source.y * inverse_count,
+         source.z * inverse_count},
+        static_cast<std::uint32_t>(
+            0x20000000U ^
+            (static_cast<std::uint32_t>(source.controller) << 8U) ^
+            static_cast<std::uint16_t>(source.source_slot) ^
+            static_cast<std::uint32_t>(source.family)),
+        std::clamp(source.maximum_scale, 0.5, 3.0),
+        remaining,
+        fire ? std::uint16_t{1U} : total,
+        true,
+    });
+  }
   for (const auto &edge : weapon_edges) {
     const auto weapon = static_cast<game::WeaponId>(edge.weapon);
-    if (presentation.first_person_aim ||
-        edge.type != game::LegacyWeaponEventType::shot ||
+    if (edge.type != game::LegacyWeaponEventType::shot ||
         !weaponUsesRetailMuzzleFlash(weapon)) {
+      continue;
+    }
+    if (presentation.first_person_aim &&
+        edge.actor_slot == presentation.player_guest_slot) {
       continue;
     }
     const auto muzzle = weaponMuzzleAnchorForGuestSlot(
@@ -7872,8 +9132,7 @@ void updateDynamicLightFrame(
     });
   }
   for (const auto &flash : retail_muzzle_flashes) {
-    if (presentation.first_person_aim ||
-        flash.source_slot == presentation.player_guest_slot) {
+    if (flash.source_slot == presentation.player_guest_slot) {
       continue;
     }
     const auto muzzle = weaponMuzzleAnchorForGuestSlot(
@@ -7995,7 +9254,10 @@ void updateDynamicLightFrame(
   active_dynamic_lights = game::buildDynamicLightFrame(
       persistent, transient,
       {presentation.camera.x, presentation.camera.y, presentation.camera.z},
-      std::span{directional}.first(directional_count));
+      std::span{directional}.first(directional_count),
+      presentation.guest_frame);
+  active_dynamic_light_observer = {presentation.camera.x, presentation.camera.y,
+                                   presentation.camera.z};
 }
 
 std::span<const std::uint16_t>
@@ -8059,16 +9321,23 @@ RenderStats renderWorld(
     std::span<const GlassShardPresentationState> glass_shards,
     double interpolation_amount, const RenderPresentationSnapshot &presentation,
     const MATRIX &view, std::vector<OT_TAG> &ordering_table,
+    std::vector<OT_TAG> &shadow_ordering_table,
     std::vector<OT_TAG> &scrim_ordering_table,
     std::vector<OT_TAG> &guest_overlay_ordering_table,
-    std::vector<OT_TAG> &fire_ordering_table, PrimitiveBuffer &primitives) {
+    std::vector<OT_TAG> &fire_ordering_table,
+    std::vector<OT_TAG> &surface_picker_ordering_table,
+    PrimitiveBuffer &primitives, PsyCrossSurfacePicker &surface_picker) {
   ClearOTagR(reinterpret_cast<u_long *>(ordering_table.data()),
+             ordering_table_size);
+  ClearOTagR(reinterpret_cast<u_long *>(shadow_ordering_table.data()),
              ordering_table_size);
   ClearOTagR(reinterpret_cast<u_long *>(scrim_ordering_table.data()),
              ordering_table_size);
   ClearOTagR(reinterpret_cast<u_long *>(guest_overlay_ordering_table.data()),
              ordering_table_size);
   ClearOTagR(reinterpret_cast<u_long *>(fire_ordering_table.data()),
+             ordering_table_size);
+  ClearOTagR(reinterpret_cast<u_long *>(surface_picker_ordering_table.data()),
              ordering_table_size);
   primitives.reset();
   updateDynamicLightFrame(gameplay, actor_animations, presentation,
@@ -8103,7 +9372,20 @@ RenderStats renderWorld(
   primitives.quads.reserve(polygon_count);
   std::size_t object_polygon_count{};
   std::size_t object_quad_count{};
+  std::size_t actor_shadow_triangle_count{};
   std::size_t fire_particle_budget{};
+  const auto add_shadow_budget = [&](std::size_t triangle_count,
+                                     const char *description) {
+    constexpr auto receiver_subdivision_triangles = std::size_t{4U};
+    if (triangle_count > std::numeric_limits<std::size_t>::max() /
+                             receiver_subdivision_triangles) {
+      throw core::Error{core::ErrorCode::invalid_format,
+                        std::string{description} +
+                            " primitive count overflows"};
+    }
+    add_to_budget(actor_shadow_triangle_count,
+                  triangle_count * receiver_subdivision_triangles, description);
+  };
   if (presentation.scrim.visible) {
     const auto *scrim = gameplay.detachedScrimModel();
     if (scrim == nullptr || !presentation.scrim.transform_valid) {
@@ -8139,6 +9421,10 @@ RenderStats renderWorld(
       add_to_budget(object_polygon_count, hmd_model->triangles().size(),
                     "Actor model");
       const auto *state = gameplay.npcState(object_index);
+      if (state != nullptr ||
+          gameplay.legacyDedicatedActorPresentation(object_index)) {
+        add_shadow_budget(hmd_model->triangles().size(), "Actor shadow");
+      }
       if (const auto dedicated =
               gameplay.legacyDedicatedActorWeapon(object_index)) {
         add_weapon_model(*dedicated);
@@ -8162,6 +9448,9 @@ RenderStats renderWorld(
                   "Player model");
     if (gameplay.playerAlive()) {
       add_weapon_model(presented_player_weapon);
+    }
+    if (!presentation.first_person_aim) {
+      add_shadow_budget(player_model->triangles().size(), "Player shadow");
     }
   }
   if (!presentation.guest_camera_lists_captured) {
@@ -8198,6 +9487,9 @@ RenderStats renderWorld(
   }
   primitives.objects.reserve(object_polygon_count * maximum_clipped_triangles);
   primitives.object_quads.reserve(object_quad_count);
+  primitives.surface_picker_triangles.reserve(1U);
+  primitives.surface_picker_quads.reserve(1U);
+  primitives.actor_shadows.reserve(actor_shadow_triangle_count);
   primitives.player.reserve(72U);
   // OT entries hold raw primitive addresses. Reserve the full worst-case
   // combat budget up front so a late blood spray/taser arc cannot reallocate
@@ -8258,7 +9550,9 @@ RenderStats renderWorld(
       const auto live_colors = liveWorldVertexColors(
           presentation, model_index, static_cast<std::uint16_t>(section_index),
           section.vertices.size());
-      for (const auto &polygon : section.polygons) {
+      for (auto polygon_index = std::size_t{};
+           polygon_index < section.polygons.size(); ++polygon_index) {
+        const auto &polygon = section.polygons[polygon_index];
         if (!polygon.renderable) {
           continue;
         }
@@ -8283,14 +9577,15 @@ RenderStats renderWorld(
             continue;
           }
           if (near_status == NearPlaneStatus::intersecting) {
-            const auto t0 =
-                emdTexturedVertex(v0, section, polygon, 0, live_colors);
-            const auto t1 =
-                emdTexturedVertex(v1, section, polygon, 1, live_colors);
-            const auto t2 =
-                emdTexturedVertex(v2, section, polygon, 2, live_colors);
-            const auto t3 =
-                emdTexturedVertex(v3, section, polygon, 3, live_colors);
+            const auto normal = visibleSurfaceNormal(positions);
+            const auto t0 = emdTexturedVertex(v0, section, polygon, 0,
+                                              live_colors, true, normal);
+            const auto t1 = emdTexturedVertex(v1, section, polygon, 1,
+                                              live_colors, true, normal);
+            const auto t2 = emdTexturedVertex(v2, section, polygon, 2,
+                                              live_colors, true, normal);
+            const auto t3 = emdTexturedVertex(v3, section, polygon, 3,
+                                              live_colors, true, normal);
             const std::array first_triangle{t0, t1, t2};
             const std::array second_triangle{t1, t3, t2};
             const TexturedMaterial material{
@@ -8333,6 +9628,19 @@ RenderStats renderWorld(
               &ordering_table[std::clamp(depth, 1, ordering_table_size - 1)],
               &primitive);
           const std::array projected{xy0, xy1, xy2, xy3};
+          if (surface_picker.active() &&
+              surface_picker.observe(makeSurfacePickerSurface(
+                  SurfacePickerId{SurfacePickerKind::world, model_index,
+                                  static_cast<std::uint32_t>(section_index),
+                                  static_cast<std::uint32_t>(polygon_index)},
+                  "world-model-" + std::to_string(model_index),
+                  gameplay.currentRoom(), presentation.guest_frame, positions,
+                  projected, polygon.uv, depth, polygon.texture_page,
+                  primitive.tpage, polygon.clut, primitive.clut,
+                  texture_source_page, texture_bank, textures))) {
+            submitSurfacePickerHighlight(
+                projected, depth, surface_picker_ordering_table, primitives);
+          }
           submitStats(stats, depth, projected);
         } else {
           const std::array positions{v0, v1, v2};
@@ -8342,10 +9650,14 @@ RenderStats renderWorld(
             continue;
           }
           if (near_status == NearPlaneStatus::intersecting) {
+            const auto normal = visibleSurfaceNormal(positions);
             const std::array textured{
-                emdTexturedVertex(v0, section, polygon, 0, live_colors),
-                emdTexturedVertex(v1, section, polygon, 1, live_colors),
-                emdTexturedVertex(v2, section, polygon, 2, live_colors),
+                emdTexturedVertex(v0, section, polygon, 0, live_colors, true,
+                                  normal),
+                emdTexturedVertex(v1, section, polygon, 1, live_colors, true,
+                                  normal),
+                emdTexturedVertex(v2, section, polygon, 2, live_colors, true,
+                                  normal),
             };
             submitClippedTriangle(
                 textured,
@@ -8378,6 +9690,20 @@ RenderStats renderWorld(
               &ordering_table[std::clamp(depth, 1, ordering_table_size - 1)],
               &primitive);
           const std::array projected{xy0, xy1, xy2};
+          const std::array uv{polygon.uv[0], polygon.uv[1], polygon.uv[2]};
+          if (surface_picker.active() &&
+              surface_picker.observe(makeSurfacePickerSurface(
+                  SurfacePickerId{SurfacePickerKind::world, model_index,
+                                  static_cast<std::uint32_t>(section_index),
+                                  static_cast<std::uint32_t>(polygon_index)},
+                  "world-model-" + std::to_string(model_index),
+                  gameplay.currentRoom(), presentation.guest_frame, positions,
+                  projected, uv, depth, polygon.texture_page, primitive.tpage,
+                  polygon.clut, primitive.clut, texture_source_page,
+                  texture_bank, textures))) {
+            submitSurfacePickerHighlight(
+                projected, depth, surface_picker_ordering_table, primitives);
+          }
           submitStats(stats, depth, projected);
         }
       }
@@ -8395,16 +9721,29 @@ RenderStats renderWorld(
     object.transform.x = source.translation.x;
     object.transform.y = -source.translation.y;
     object.transform.z = source.translation.z;
+    const auto picker_context = SurfacePickerObjectContext{
+        .picker = &surface_picker,
+        .textures = &textures,
+        .ordering_table = &surface_picker_ordering_table,
+        .kind = SurfacePickerKind::scrim,
+        .owner = 0U,
+        .label = "retail-scrim",
+        .room = gameplay.currentRoom(),
+        .guest_frame = presentation.guest_frame,
+    };
     // Retail flag 0x00200000 disables distance fade/culling and 0x00100000
     // excludes SCRIM from local vertex lights. Native presentation also gives
     // this semantic background its own non-depth-writing pass: the sky keeps
     // its retail painter order but can never compete with level geometry in Z.
     renderEmdObject(*scrim, object, view, scrim_ordering_table, primitives,
-                    stats, true);
+                    stats, true,
+                    surface_picker.active() ? &picker_context : nullptr);
   }
-  renderObjects(gameplay, fire_animation, fire_texture_placement,
+  renderObjects(gameplay, textures, fire_animation, fire_texture_placement,
                 actor_animations, actor_tick, presentation, view,
-                ordering_table, fire_ordering_table, primitives, stats);
+                ordering_table, shadow_ordering_table,
+                surface_picker_ordering_table, fire_ordering_table, primitives,
+                stats, surface_picker);
   renderDroppedItemSprites(hud_textures, gameplay, presentation, view,
                            ordering_table, primitives, stats);
   renderProjectileSprites(hud_textures, gameplay, presentation, view,
@@ -8421,7 +9760,8 @@ RenderStats renderWorld(
                          guest_overlay_ordering_table, primitives, stats);
   renderPresentedPlayer(gameplay, actor_animations, player_animation_tick,
                         presented_player_weapon, presentation, view,
-                        ordering_table, primitives, stats);
+                        ordering_table, shadow_ordering_table, primitives,
+                        stats);
   if (!primitives.storageStable()) {
     throw core::Error{core::ErrorCode::invalid_format,
                       "Primitive storage moved while building the OT"};
@@ -8858,9 +10198,11 @@ void drawRetailUiBackdrop(const game::LegacyUiBackdropBridgeState &backdrop,
 
 void drawRetailUiGlyphs(const HudTextureAtlas &textures,
                         std::span<const game::LegacyUiGlyphBridgeState> glyphs,
-                        int offset_x, int offset_y) {
+                        int offset_x, int offset_y,
+                        const PsyCrossFontTexture *font_override = nullptr) {
   const auto &font_page = textures.image("FONTA.TIM");
-  const ScopedPsyCrossFontTexture font_binding{textures.nativeFont()};
+  const ScopedPsyCrossFontTexture font_binding{
+      font_override != nullptr ? font_override : textures.nativeFont()};
   for (const auto &glyph : glyphs) {
     if (glyph.width == 0U || glyph.height == 0U) {
       continue;
@@ -8907,6 +10249,25 @@ std::size_t originalHudDrawableGlyphCount(std::string_view text) noexcept {
       std::ranges::count_if(text, [](char character) {
         return game::originalHudGlyph(character).has_value();
       }));
+}
+
+std::size_t originalHudSourceGlyphCount(std::string_view text,
+                                        bool reconstructed) noexcept {
+  auto count = originalHudDrawableGlyphCount(text);
+  if (!reconstructed) {
+    return count;
+  }
+
+  // reconstructOriginalHudText represents one non-font controller icon with
+  // the diagnostic word BUTTON.  The retail typewriter owns one packet for
+  // that icon, not six.  Counting the placeholder as six made translated
+  // prompts stop several glyphs early (notably the Lian Xing contact prompt).
+  constexpr auto placeholder = std::string_view{"BUTTON"};
+  for (auto cursor = text.find(placeholder); cursor != std::string_view::npos;
+       cursor = text.find(placeholder, cursor + placeholder.size())) {
+    count -= std::min(count, placeholder.size() - 1U);
+  }
+  return count;
 }
 
 std::string_view originalHudTextGlyphPrefix(std::string_view text,
@@ -8956,28 +10317,6 @@ int originalHudMaximumLineWidth(std::string_view text) noexcept {
     cursor = newline + 1U;
   }
   return maximum;
-}
-
-void drawOriginalHudTextBlockScaled(const HudTextureAtlas &textures,
-                                    std::string_view text, float left,
-                                    float top, float available_width,
-                                    float scale,
-                                    game::LegacyRgbBridgeState color) {
-  auto line = 0U;
-  for (auto cursor = std::size_t{}; cursor <= text.size(); ++line) {
-    const auto newline = text.find('\n', cursor);
-    const auto end = newline == std::string_view::npos ? text.size() : newline;
-    const auto line_text = text.substr(cursor, end - cursor);
-    const auto line_width =
-        static_cast<float>(game::originalHudTextWidth(line_text)) * scale;
-    drawOriginalHudTextScaled(
-        textures, line_text, left + (available_width - line_width) * 0.5F,
-        top + static_cast<float>(line) * 9.0F * scale, scale, color);
-    if (newline == std::string_view::npos) {
-      break;
-    }
-    cursor = newline + 1U;
-  }
 }
 
 std::optional<char> originalEnglishHudCharacter(
@@ -9045,48 +10384,24 @@ std::string reconstructOriginalHudText(
   return result;
 }
 
-std::string uppercaseAscii(std::string_view text) {
-  auto result = std::string{text};
-  for (auto &character : result) {
-    if (character >= 'a' && character <= 'z') {
-      character = static_cast<char>(character - 'a' + 'A');
-    }
-  }
-  return result;
-}
-
-std::optional<std::string> rifleScopeEnglishSource(
-    const game::LegacyUiMessageBridgeState &message) {
-  if (!game::russianLanguageActive()) {
-    return std::nullopt;
-  }
-  const auto resolve = [](std::string_view observed)
-      -> std::optional<std::string> {
-    if (observed.empty()) {
-      return std::nullopt;
-    }
-    if (const auto completed = game::completeGameplayTextSource(observed)) {
-      return std::string{*completed};
-    }
-    return std::nullopt;
-  };
-  if (auto source = resolve(message.text)) {
-    return source;
-  }
-  return resolve(reconstructOriginalHudText(message.glyphs));
-}
-
 bool drawBoundKeyboardMousePrompt(
     const HudTextureAtlas &textures,
     const game::LegacyUiMessageBridgeState &message,
     const KeyboardMouseBindings &bindings, int offset_x, int offset_y) {
-  const auto prompt = keyboardMousePromptText(message.text, bindings);
+  auto reconstructed = std::string{};
+  auto reconstructed_source = false;
+  auto prompt = keyboardMousePromptText(message.text, bindings);
+  if (!prompt) {
+    reconstructed = reconstructOriginalHudText(message.glyphs);
+    prompt = keyboardMousePromptText(reconstructed, bindings);
+    reconstructed_source = prompt.has_value();
+  }
   if (!prompt || message.glyphs.empty()) {
     return false;
   }
 
-  const auto retail_glyph_count =
-      originalHudDrawableGlyphCount(prompt->retail_text);
+  const auto retail_glyph_count = originalHudSourceGlyphCount(
+      prompt->retail_text, reconstructed_source);
   const auto bound_glyph_count =
       originalHudDrawableGlyphCount(prompt->bound_text);
   if (retail_glyph_count == 0U || bound_glyph_count == 0U) {
@@ -9127,24 +10442,43 @@ bool drawBoundKeyboardMousePrompt(
   return true;
 }
 
-bool drawLocalizedGameplayMessage(
-    const HudTextureAtlas &textures,
-    const game::LegacyUiMessageBridgeState &message, int offset_x, int offset_y,
-    const game::LegacyUiBackdropBridgeState *layout_backdrop,
-    std::string_view forced_english = {}) {
-  if (message.glyphs.empty() ||
-      (!game::russianLanguageActive() && forced_english.empty())) {
-    return false;
+struct LocalizedGameplayMessageLayout final {
+  std::string source;
+  std::string wrapped_text;
+  std::size_t source_glyph_count{};
+  std::size_t localized_glyph_count{};
+  std::size_t visible_glyph_count{};
+  float left{};
+  float top{};
+  float available_width{};
+  float scale{1.0F};
+  float block_height{8.0F};
+};
+
+std::size_t originalHudLineCount(std::string_view text) noexcept {
+  return text.empty()
+             ? 0U
+             : static_cast<std::size_t>(std::ranges::count(text, '\n')) + 1U;
+}
+
+std::optional<LocalizedGameplayMessageLayout>
+buildLocalizedGameplayMessageLayout(
+    const game::LegacyUiMessageBridgeState &message, int offset_y,
+    const KeyboardMouseBindings &bindings) {
+  if (message.glyphs.empty() || !game::russianLanguageActive()) {
+    return std::nullopt;
   }
   std::string source;
   std::string localized;
-  const auto resolve = [&](std::string_view observed) {
+  auto reconstructed_source = false;
+  const auto resolve = [&](std::string_view observed, bool reconstructed) {
     if (observed.empty()) {
       return false;
     }
     source = std::string{observed};
     localized = game::localizeTextCopy(source);
     if (localized != source) {
+      reconstructed_source = reconstructed;
       return true;
     }
     const auto completed = game::completeGameplayTextSource(observed);
@@ -9153,67 +10487,208 @@ bool drawLocalizedGameplayMessage(
     }
     source = std::string{*completed};
     localized = game::localizeTextCopy(source);
-    return localized != source;
-  };
-  if (!forced_english.empty()) {
-    source = std::string{forced_english};
-    // The ViT atlas intentionally replaces lowercase ASCII cells with
-    // Cyrillic capitals. Rifle scopes retain retail English, so use the
-    // untouched uppercase ASCII cells instead of sampling those remapped
-    // slots and producing mixed-language garbage.
-    localized = uppercaseAscii(forced_english);
-  } else {
-    if (!resolve(message.text) &&
-        !resolve(reconstructOriginalHudText(message.glyphs))) {
+    if (localized == source) {
       return false;
     }
+    reconstructed_source = reconstructed;
+    return true;
+  };
+  if (!resolve(message.text, false) &&
+      !resolve(reconstructOriginalHudText(message.glyphs), true)) {
+    return std::nullopt;
   }
+  // The retail contact template uses printf's first %s for the controller
+  // icon. Preserve the second, already-authored contact name, but convert the
+  // semantic button slot before the common native-token resolver runs.
+  if (keyboardMousePromptText(source, bindings)) {
+    if (const auto slot = localized.find("%s"); slot != std::string::npos) {
+      localized.replace(slot, 2U, "%x");
+    }
+  }
+  localized = keyboardMouseHintText(localized, bindings);
 
   const auto source_glyph_count =
-      std::max(std::size_t{1U}, originalHudDrawableGlyphCount(source));
+      std::max(std::size_t{1U},
+               originalHudSourceGlyphCount(source, reconstructed_source));
   const auto localized_glyph_count = originalHudDrawableGlyphCount(localized);
   if (source_glyph_count == 0U || localized_glyph_count == 0U) {
-    return false;
+    return std::nullopt;
   }
+  const auto presented_source_glyphs =
+      std::min(source_glyph_count, message.glyphs.size());
   const auto visible_localized_glyphs = std::min(
       localized_glyph_count, (message.glyphs.size() * localized_glyph_count +
                               source_glyph_count - 1U) /
                                  source_glyph_count);
-  const auto visible_text =
-      originalHudTextGlyphPrefix(localized, visible_localized_glyphs);
 
-  const auto left = std::ranges::min_element(
-      message.glyphs, {}, &game::LegacyUiGlyphBridgeState::x);
   const auto top = std::ranges::min_element(message.glyphs, {},
                                             &game::LegacyUiGlyphBridgeState::y);
-  const auto original_left = static_cast<int>(left->x);
-  // Retail positions the first visible glyph against the final centered
-  // line, even while the type-on reveal is incomplete. Use the full source
-  // metric so the Russian line does not change scale as glyphs appear.
-  const auto original_width = originalHudMaximumLineWidth(source);
-  const auto localized_width = originalHudMaximumLineWidth(localized);
-  if (original_width <= 0 || localized_width <= 0) {
+  LocalizedGameplayMessageLayout layout;
+  layout.source = std::move(source);
+  layout.source_glyph_count = source_glyph_count;
+  layout.localized_glyph_count = localized_glyph_count;
+  layout.visible_glyph_count =
+      std::min(visible_localized_glyphs,
+               (presented_source_glyphs * localized_glyph_count +
+                source_glyph_count - 1U) /
+                   source_glyph_count);
+
+  // Native Russian notifications share one readable 8-pixel font size.
+  // Long prose wraps inside a screen-safe column instead of shrinking into
+  // an inconsistent, blurry one-line substitute.
+  constexpr int horizontal_margin = 16;
+  constexpr int text_width = screen_width - horizontal_margin * 2;
+  layout.wrapped_text = game::originalHudWrapText(localized, text_width);
+  layout.available_width = static_cast<float>(text_width);
+  layout.scale = 1.0F;
+  layout.left = static_cast<float>(horizontal_margin);
+
+  const auto line_count = originalHudLineCount(layout.wrapped_text);
+  if (line_count == 0U) {
+    return std::nullopt;
+  }
+  layout.block_height =
+      8.0F * layout.scale +
+      static_cast<float>(line_count - 1U) * 9.0F * layout.scale;
+  const auto original_top =
+      static_cast<float>(screen_height / 2 + offset_y + top->y);
+  constexpr float vertical_margin = 4.0F;
+  layout.top = std::clamp(original_top, vertical_margin,
+                          static_cast<float>(screen_height) - vertical_margin -
+                              layout.block_height);
+  return layout;
+}
+
+void drawLocalizedGameplayMessage(
+    const HudTextureAtlas &textures,
+    const game::LegacyUiMessageBridgeState &message,
+    const LocalizedGameplayMessageLayout &layout) {
+  const auto &font_page = textures.image("FONTA.TIM");
+  const ScopedPsyCrossFontTexture font_binding{textures.nativeFont()};
+  auto localized_glyph = std::size_t{};
+  auto line = std::size_t{};
+  for (auto cursor = std::size_t{}; cursor <= layout.wrapped_text.size();
+       ++line) {
+    const auto newline = layout.wrapped_text.find('\n', cursor);
+    const auto end = newline == std::string_view::npos
+                         ? layout.wrapped_text.size()
+                         : newline;
+    const auto line_text =
+        std::string_view{layout.wrapped_text}.substr(cursor, end - cursor);
+    const auto line_width =
+        static_cast<float>(game::originalHudTextWidth(line_text)) *
+        layout.scale;
+    auto x = layout.left + (layout.available_width - line_width) * 0.5F;
+    const auto y = layout.top + static_cast<float>(line) * 9.0F * layout.scale;
+    for (const auto character : line_text) {
+      if (character == ' ') {
+        x += 4.0F * layout.scale;
+        continue;
+      }
+      const auto glyph = game::originalHudGlyph(character);
+      if (!glyph) {
+        continue;
+      }
+      if (localized_glyph >= layout.visible_glyph_count) {
+        return;
+      }
+      const auto source_glyph =
+          std::min(message.glyphs.size() - 1U,
+                   localized_glyph * layout.source_glyph_count /
+                       layout.localized_glyph_count);
+      drawHudSpriteRegionTintScaled(font_page, x, y, glyph->u, glyph->v,
+                                    glyph->width, glyph->height(), layout.scale,
+                                    message.glyphs[source_glyph].color);
+      x += static_cast<float>(glyph->advance()) * layout.scale;
+      ++localized_glyph;
+    }
+    if (newline == std::string_view::npos) {
+      break;
+    }
+    cursor = newline + 1U;
+  }
+}
+
+void arrangeLocalizedStatusMessages(
+    std::span<const game::LegacyUiMessageBridgeState> messages,
+    std::span<std::optional<LocalizedGameplayMessageLayout>> layouts) {
+  std::vector<std::size_t> status_indices;
+  status_indices.reserve(layouts.size());
+  for (auto index = std::size_t{}; index < layouts.size(); ++index) {
+    if (layouts[index] &&
+        messages[index].channel == game::LegacyUiMessageChannel::status) {
+      status_indices.push_back(index);
+    }
+  }
+  std::ranges::sort(status_indices, {},
+                    [&](std::size_t index) { return layouts[index]->top; });
+  if (status_indices.empty()) {
+    return;
+  }
+
+  constexpr float spacing = 2.0F;
+  auto cursor = 4.0F;
+  for (const auto index : status_indices) {
+    auto &layout = *layouts[index];
+    layout.top = std::max(layout.top, cursor);
+    cursor = layout.top + layout.block_height + spacing;
+  }
+  const auto excess = std::max(
+      0.0F, cursor - spacing - (static_cast<float>(screen_height) - 4.0F));
+  if (excess != 0.0F) {
+    for (const auto index : status_indices) {
+      layouts[index]->top -= excess;
+    }
+  }
+}
+
+bool drawLocalizedStatusBackdrop(
+    std::span<const game::LegacyUiMessageBridgeState> messages,
+    std::span<const std::optional<LocalizedGameplayMessageLayout>> layouts,
+    const game::LegacyUiBackdropBridgeState &retail_backdrop, int offset_x,
+    int offset_y) {
+  auto any = false;
+  auto left = static_cast<float>(screen_width);
+  auto right = 0.0F;
+  auto top = static_cast<float>(screen_height);
+  auto bottom = 0.0F;
+  constexpr float padding_x = 4.0F;
+  constexpr float padding_y = 3.0F;
+  for (auto index = std::size_t{}; index < layouts.size(); ++index) {
+    if (!layouts[index] ||
+        messages[index].channel != game::LegacyUiMessageChannel::status) {
+      continue;
+    }
+    const auto &layout = *layouts[index];
+    any = true;
+    left = std::min(left, layout.left - padding_x);
+    right = std::max(right, layout.left + layout.available_width + padding_x);
+    top = std::min(top, layout.top - padding_y);
+    bottom = std::max(bottom, layout.top + layout.block_height + padding_y);
+  }
+  if (!any) {
     return false;
   }
-  auto text_left = original_left;
-  auto available_width = original_width;
-  if (layout_backdrop != nullptr) {
-    const auto [left_corner, right_corner] =
-        std::ranges::minmax_element(layout_backdrop->corners, {},
-                                    &game::LegacyProjectedPointBridgeState::x);
-    constexpr int backdrop_padding = 4;
-    text_left = static_cast<int>(left_corner->x) + backdrop_padding;
-    available_width = std::max(1, static_cast<int>(right_corner->x) -
-                                      static_cast<int>(left_corner->x) -
-                                      backdrop_padding * 2);
-  }
-  const auto scale =
-      std::min(1.0F, static_cast<float>(available_width) / localized_width);
-  const auto x = static_cast<float>(screen_width / 2 + offset_x + text_left);
-  const auto y = static_cast<float>(screen_height / 2 + offset_y + top->y);
-  drawOriginalHudTextBlockScaled(textures, visible_text, x, y,
-                                 static_cast<float>(available_width), scale,
-                                 message.glyphs.front().color);
+
+  left = std::clamp(left, 2.0F, static_cast<float>(screen_width - 2));
+  right = std::clamp(right, left + 1.0F, static_cast<float>(screen_width - 2));
+  top = std::clamp(top, 2.0F, static_cast<float>(screen_height - 2));
+  bottom =
+      std::clamp(bottom, top + 1.0F, static_cast<float>(screen_height - 2));
+  const auto relative_x = [offset_x](float value) {
+    return static_cast<std::int16_t>(
+        std::lround(value - static_cast<float>(screen_width / 2 + offset_x)));
+  };
+  const auto relative_y = [offset_y](float value) {
+    return static_cast<std::int16_t>(
+        std::lround(value - static_cast<float>(screen_height / 2 + offset_y)));
+  };
+  auto backdrop = retail_backdrop;
+  backdrop.corners = {{{relative_x(left), relative_y(top)},
+                       {relative_x(right), relative_y(top)},
+                       {relative_x(left), relative_y(bottom)},
+                       {relative_x(right), relative_y(bottom)}}};
+  drawRetailUiBackdrop(backdrop, offset_x, offset_y);
   return true;
 }
 
@@ -10137,38 +11612,61 @@ void drawGameplayHud(const HudTextureAtlas &textures,
     }
   }
 
-  // These packets are the completed output of retail's FONT/TEXT state
-  // machine. Coordinates are relative to the PS1 draw offset (192,120), and
-  // already include wrapping, alignment, status stacking and HUD slide-in.
-  // The status POLY_F4 is submitted behind all glyph packets.
-  for (const auto &message : gameplay.legacyUiMessages()) {
-    if (message.backdrop) {
-      drawRetailUiBackdrop(*message.backdrop, offset_x, offset_y);
-    }
-  }
-  const auto status_backdrop = std::ranges::find_if(
-      gameplay.legacyUiMessages(), [](const auto &message) {
+  // English uses the completed retail FONT/TEXT packets verbatim. Russian
+  // retains their lifetime, type-on colors and slide timing, while native
+  // layout reflows the translated prose at the same 8-pixel font size.
+  const auto messages = gameplay.legacyUiMessages();
+  const auto status_backdrop =
+      std::ranges::find_if(messages, [](const auto &message) {
         return message.channel == game::LegacyUiMessageChannel::status &&
                message.backdrop.has_value();
       });
+  std::vector<std::optional<LocalizedGameplayMessageLayout>> message_layouts;
+  message_layouts.reserve(messages.size());
+  std::vector<bool> retail_scope_messages;
+  retail_scope_messages.reserve(messages.size());
+  for (const auto &message : messages) {
+    const auto retail_scope_message = useRetailEnglishScopeFont(
+        scoped, game::russianLanguageActive(), message.channel,
+        message.backdrop.has_value(), message.glyphs.size());
+    retail_scope_messages.push_back(retail_scope_message);
+    message_layouts.push_back(
+        retail_scope_message
+            ? std::nullopt
+            : buildLocalizedGameplayMessageLayout(message, offset_y,
+                                                   bindings));
+  }
+  arrangeLocalizedStatusMessages(messages, message_layouts);
+
+  auto localized_status_backdrop = false;
+  if (status_backdrop != messages.end()) {
+    localized_status_backdrop = drawLocalizedStatusBackdrop(
+        messages, message_layouts, *status_backdrop->backdrop, offset_x,
+        offset_y);
+  }
+  for (const auto &message : messages) {
+    if (!message.backdrop ||
+        (localized_status_backdrop &&
+         message.channel == game::LegacyUiMessageChannel::status)) {
+      continue;
+    }
+    drawRetailUiBackdrop(*message.backdrop, offset_x, offset_y);
+  }
   if (const auto &timer = gameplay.legacyUiTimer()) {
     drawRetailUiGlyphs(textures, timer->glyphs, offset_x, offset_y);
   }
-  for (const auto &message : gameplay.legacyUiMessages()) {
-    const auto *layout_backdrop =
-        message.backdrop ? &*message.backdrop
-        : message.channel == game::LegacyUiMessageChannel::status &&
-                status_backdrop != gameplay.legacyUiMessages().end()
-            ? &*status_backdrop->backdrop
-            : nullptr;
-    const auto scope_english =
-        scoped ? rifleScopeEnglishSource(message) : std::nullopt;
-    if (!drawLocalizedGameplayMessage(
-            textures, message, offset_x, offset_y, layout_backdrop,
-            scope_english ? std::string_view{*scope_english}
-                          : std::string_view{}) &&
-        !drawBoundKeyboardMousePrompt(textures, message, bindings, offset_x,
-                                      offset_y)) {
+  for (auto index = std::size_t{}; index < messages.size(); ++index) {
+    const auto &message = messages[index];
+    if (retail_scope_messages[index]) {
+      // Scope labels are completed retail FONT/TEXT packets. Draw their exact
+      // original UVs through the untouched SCUS font atlas instead of the ViT
+      // Cyrillic replacement, preserving wording, reveal animation and layout.
+      drawRetailUiGlyphs(textures, message.glyphs, offset_x, offset_y,
+                         textures.retailEnglishFont());
+    } else if (message_layouts[index]) {
+      drawLocalizedGameplayMessage(textures, message, *message_layouts[index]);
+    } else if (!drawBoundKeyboardMousePrompt(textures, message, bindings,
+                                             offset_x, offset_y)) {
       drawRetailUiGlyphs(textures, message.glyphs, offset_x, offset_y);
     }
   }
@@ -10301,16 +11799,59 @@ void drawPauseFontRegion(const assets::TimImage &image, int source_x,
   DrawPrim(&polygon);
 }
 
-int menuCharacterAdvance(char source) noexcept {
-  const auto value = static_cast<unsigned char>(source);
-  if (value == 1U || value == 2U) {
-    return 10;
+int menuLineDrawExtent(std::string_view text, int scale,
+                       float horizontal_scale = 1.0F) noexcept {
+  const auto scaled = [scale, horizontal_scale](int value) {
+    return std::max(
+        1, static_cast<int>(std::lround(value * scale * horizontal_scale)));
+  };
+  auto x = 0;
+  auto right = 0;
+  for (const auto source : text) {
+    const auto raw = static_cast<unsigned char>(source);
+    if (source == ' ') {
+      right = std::max(right, x + scaled(4));
+      x += scaled(4);
+      continue;
+    }
+    if (raw == 1U || raw == 2U) {
+      right = std::max(right, x + scaled(8));
+      x += scaled(10);
+      continue;
+    }
+    const auto glyph = originalHudGlyph(static_cast<char>(raw));
+    if (!glyph) {
+      continue;
+    }
+    right =
+        std::max(right, x + scaled(static_cast<int>(glyph->width)));
+    x += scaled(originalHudGlyphAdvance(*glyph));
   }
-  if (source == ' ') {
-    return 4;
+  return right;
+}
+
+float fittedMenuLineScale(std::string_view text, int scale,
+                          int available_width) noexcept {
+  // Use the exact same rounded glyph extents as drawMenuLine().  The former
+  // advance-sum estimate could be narrower than the actual final quad at a
+  // fractional scale, so drawMenuLine() discarded the last one or two glyphs
+  // (notably the trailing `ТЬ` in the Russian pause hint).
+  constexpr auto edge_guard = 2;
+  const auto target = std::max(1, available_width - edge_guard);
+  if (menuLineDrawExtent(text, scale) <= target) {
+    return 1.0F;
   }
-  const auto glyph = originalHudGlyph(static_cast<char>(value));
-  return glyph ? originalHudGlyphAdvance(*glyph) : 0;
+  auto lower = 0.05F;
+  auto upper = 1.0F;
+  for (auto iteration = 0; iteration < 16; ++iteration) {
+    const auto candidate = (lower + upper) * 0.5F;
+    if (menuLineDrawExtent(text, scale, candidate) <= target) {
+      lower = candidate;
+    } else {
+      upper = candidate;
+    }
+  }
+  return lower;
 }
 
 void drawMenuLine(std::string_view text, int x, int y, int scale, int maximum_x,
@@ -10376,43 +11917,15 @@ void drawMenuLine(std::string_view text, int x, int y, int scale, int maximum_x,
 
 int menuLineWidth(std::string_view text, int scale,
                   float horizontal_scale = 1.0F) noexcept {
-  auto width = 0;
-  for (const auto source : text) {
-    width +=
-        std::max(1, static_cast<int>(std::lround(menuCharacterAdvance(source) *
-                                                 scale * horizontal_scale)));
-  }
-  return width == 0 ? 0
-                    : width - std::max(1, static_cast<int>(std::lround(
-                                              2 * scale * horizontal_scale)));
-}
-
-std::string expandPauseHints(std::string_view source) {
-  std::string result;
-  result.reserve(source.size());
-  for (std::size_t index = 0; index < source.size(); ++index) {
-    if (source[index] == '%' && index + 1 < source.size()) {
-      if (source[index + 1] == 'x') {
-        result.push_back('\x01');
-        ++index;
-        continue;
-      }
-      if (source[index + 1] == 't') {
-        result.push_back('\x02');
-        ++index;
-        continue;
-      }
-    }
-    result.push_back(source[index] == '\t' ? ' ' : source[index]);
-  }
-  return result;
+  return menuLineDrawExtent(text, scale, horizontal_scale);
 }
 
 void drawMenuText(std::string_view source, const game::PauseRect &bounds,
                   int scale, PauseRgb color, game::PauseTextAlignment alignment,
-                  int line_height, const HudTextureAtlas &interface_textures) {
+                  int line_height, const HudTextureAtlas &interface_textures,
+                  const KeyboardMouseBindings &bindings) {
   const auto localized = game::localizeTextCopy(source);
-  const auto text = expandPauseHints(localized);
+  const auto text = keyboardMouseHintText(localized, bindings);
   const auto retail_line_height = std::max(line_height, 1);
   // Eight pixels is the physical glyph height. Inter-line leading may shrink
   // from the retail default when a translated paragraph needs the room, but
@@ -10420,16 +11933,18 @@ void drawMenuText(std::string_view source, const game::PauseRect &bounds,
   const auto maximum_lines =
       std::max(1, static_cast<int>(bounds.height) / (8 * scale));
   if (maximum_lines == 1) {
-    const auto newline = text.find('\n');
-    const auto line_text = std::string_view{text}.substr(0, newline);
+    // A one-line hint has no vertical room for wrapping, but it must not lose
+    // authored text if localization supplied an explicit break. Flatten the
+    // break and fit the complete semantic string instead of truncating it.
+    auto line_text = text;
+    std::ranges::replace(line_text, '\n', ' ');
     const auto natural_width = menuLineWidth(line_text, scale);
     // A one-line retail label is never clipped. Localized labels may be
     // proportionally condensed, but every authored glyph remains visible.
     const auto horizontal_scale =
-        natural_width <= bounds.width || natural_width == 0
+        natural_width == 0
             ? 1.0F
-            : static_cast<float>(bounds.width) /
-                  static_cast<float>(natural_width);
+            : fittedMenuLineScale(line_text, scale, bounds.width);
     const auto line_width = menuLineWidth(line_text, scale, horizontal_scale);
     auto x = static_cast<int>(bounds.x);
     if (alignment == game::PauseTextAlignment::center) {
@@ -10972,7 +12487,8 @@ void drawPauseDim(const game::PauseRect &bounds) {
 bool drawPauseMenu(const game::PauseMenu &menu,
                    const PauseTextureAtlas &textures,
                    const HudTextureAtlas &interface_textures,
-                   std::uint64_t animation_tick) {
+                   std::uint64_t animation_tick,
+                   const KeyboardMouseBindings &bindings) {
   GR_SetBlendMode(BM_NONE);
   GR_EnableDepth(0);
   const auto full_screen =
@@ -10985,13 +12501,13 @@ bool drawPauseMenu(const game::PauseMenu &menu,
     return false;
   }
   const auto draw_text =
-      [&interface_textures](
+      [&interface_textures, &bindings](
           std::string_view source, const game::PauseRect &bounds, int scale,
           PauseRgb color,
           game::PauseTextAlignment alignment = game::PauseTextAlignment::left,
           int line_height = 10) {
         drawMenuText(source, bounds, scale, color, alignment, line_height,
-                     interface_textures);
+                     interface_textures, bindings);
       };
   const auto commands = menu.buildRenderCommands();
   std::optional<game::PauseRect> map_command_bounds;
@@ -11265,15 +12781,17 @@ bool drawPauseMenu(const game::PauseMenu &menu,
 } // namespace
 
 struct PsyCrossCampaignSaveRenderer::State {
-  explicit State(const game::MissionPackage &mission) : textures{mission} {}
+  State(const game::MissionPackage &mission, KeyboardMouseBindings input)
+      : textures{mission}, input{input} {}
 
   HudTextureAtlas textures;
+  KeyboardMouseBindings input;
   std::uint64_t animation_tick{};
 };
 
 PsyCrossCampaignSaveRenderer::PsyCrossCampaignSaveRenderer(
-    const game::MissionPackage &mission)
-    : state_{std::make_unique<State>(mission)} {}
+    const game::MissionPackage &mission, KeyboardMouseBindings input)
+    : state_{std::make_unique<State>(mission, input)} {}
 
 PsyCrossCampaignSaveRenderer::~PsyCrossCampaignSaveRenderer() = default;
 
@@ -11295,7 +12813,8 @@ void PsyCrossCampaignSaveRenderer::draw(const game::CampaignSaveMenu &menu,
                         PauseRgb color = PauseRgb{150U, 160U, 230U},
                         game::PauseTextAlignment alignment =
                             game::PauseTextAlignment::left) {
-    drawMenuText(value, bounds, 1, color, alignment, 11, state_->textures);
+    drawMenuText(value, bounds, 1, color, alignment, 11, state_->textures,
+                 state_->input);
   };
 
   text("Mission Complete", {52, 35, 165, 10}, selected);
@@ -11352,7 +12871,8 @@ void PsyCrossCampaignSaveRenderer::drawLoadSlots(
                         PauseRgb color = PauseRgb{150U, 160U, 230U},
                         game::PauseTextAlignment alignment =
                             game::PauseTextAlignment::left) {
-    drawMenuText(value, bounds, 1, color, alignment, 11, state_->textures);
+    drawMenuText(value, bounds, 1, color, alignment, 11, state_->textures,
+                 state_->input);
   };
 
   drawBorderedRect({18, 18, 284, 204}, {2U, 4U, 18U}, muted);
@@ -11410,19 +12930,16 @@ SceneViewerResult PsyCrossSceneViewer::run(
   // never depends on reading already-unloaded guest pointers.
   auto latest_campaign_carry = gameplay.campaignCarryState();
   const auto apply_retail_cheats = [&] {
-    if (cheats_.all_weapons &&
-        !gameplay.activateRetailAllWeaponsCheat()) {
+    if (cheats_.all_weapons && !gameplay.activateRetailAllWeaponsCheat()) {
       PsyX_Log_Error("Retail all-weapons cheat activation failed\n");
     }
     if (cheats_.hard_mode && !gameplay.setRetailHardMode(true)) {
       PsyX_Log_Error("Retail hard-mode cheat activation failed\n");
     }
-    if (cheats_.one_shot_kills &&
-        !gameplay.setRetailOneShotKills(true)) {
+    if (cheats_.one_shot_kills && !gameplay.setRetailOneShotKills(true)) {
       PsyX_Log_Error("Retail one-shot cheat activation failed\n");
     }
-    if (cheats_.weak_enemies &&
-        !gameplay.setRetailWeakEnemies(true)) {
+    if (cheats_.weak_enemies && !gameplay.setRetailWeakEnemies(true)) {
       PsyX_Log_Error("Retail weak-enemies cheat activation failed\n");
     }
   };
@@ -11443,6 +12960,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
   CombatEffectTextureAtlas effect_textures{mission};
   PoliceLightbarAnimation police_lightbar_animation;
   RetailScrimAnimation retail_scrim_animation;
+  PsyCrossSurfacePicker surface_picker;
   // TextureStreamer already uploaded VLF and the effect atlas occupies a
   // reserved page. Reconcile only bank-specific scene data here; invalidating
   // and restoring both atlases doubled the synchronous startup transfer.
@@ -11461,9 +12979,11 @@ SceneViewerResult PsyCrossSceneViewer::run(
                 gameplay.player().yaw);
 
   std::vector<OT_TAG> ordering_table(ordering_table_size);
+  std::vector<OT_TAG> shadow_ordering_table(ordering_table_size);
   std::vector<OT_TAG> scrim_ordering_table(ordering_table_size);
   std::vector<OT_TAG> guest_overlay_ordering_table(ordering_table_size);
   std::vector<OT_TAG> fire_ordering_table(ordering_table_size);
+  std::vector<OT_TAG> surface_picker_ordering_table(ordering_table_size);
   PrimitiveBuffer primitives;
   constexpr std::uint16_t pause_button = 0x08U;
   constexpr std::uint16_t cancel_button = 0x1000U | 0x2000U;
@@ -11484,7 +13004,6 @@ SceneViewerResult PsyCrossSceneViewer::run(
   constexpr unsigned int maximum_updates_per_presentation = 2U;
   constexpr unsigned int maximum_audio_backlog_updates = 30U;
   constexpr unsigned int maximum_audio_updates_per_presentation = 30U;
-  constexpr unsigned int coherent_audio_updates_per_presentation = 6U;
   constexpr double quick_turn_tap_seconds = 0.1;
   constexpr double startup_input_settle_seconds = 1.0;
   constexpr double restart_input_settle_seconds = 0.25;
@@ -11497,6 +13016,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
   bool paused = false;
   bool binding_capture = false;
   bool pause_was_down = false;
+  bool interact_was_down = false;
   int pause_analog_x = 0;
   int pause_analog_y = 0;
   double dpad_down_held_seconds = 0.0;
@@ -11716,6 +13236,12 @@ SceneViewerResult PsyCrossSceneViewer::run(
                                  ? first_person_near_clip_depth
                                  : near_clip_depth;
     const auto &camera = presentation.camera;
+    surface_picker.beginFrame(SurfacePickerFrameContext{
+        .mission = std::string{mission.definition().resource_name},
+        .guest_frame = presentation.guest_frame,
+        .room = gameplay.currentRoom(),
+        .camera = SurfacePickerPoint3{camera.x, camera.y, camera.z},
+    });
     applyRetailEnvironment(presentation.environment, camera.projection,
                            presentation.retail_environment_active,
                            retail_blackout_mission);
@@ -11742,8 +13268,10 @@ SceneViewerResult PsyCrossSceneViewer::run(
         weapon_presentation_edges.sprites(),
         weapon_presentation_edges.rawPackets(), glass_shatter.shards(),
         interpolation_amount, presentation, view, ordering_table,
-        scrim_ordering_table, guest_overlay_ordering_table, fire_ordering_table,
-        primitives);
+        shadow_ordering_table, scrim_ordering_table,
+        guest_overlay_ordering_table, fire_ordering_table,
+        surface_picker_ordering_table, primitives, surface_picker);
+    surface_picker.finishFrame();
     if (advance_effects) {
       fire_animation.update();
       glass_shatter.advance();
@@ -11759,6 +13287,39 @@ SceneViewerResult PsyCrossSceneViewer::run(
     GR_EnableDepth(1);
     GR_SetDepthState(1, 1);
     DrawOTag(reinterpret_cast<u_long *>(&ordering_table.back()));
+    // Picker tint is a diagnostic overlay over the exact selected model
+    // surface. It writes no depth and a small offset prevents z-fighting while
+    // preserving ordinary world occlusion.
+    if (surface_picker.active()) {
+      GR_SetDepthState(1, 0);
+      GR_SetPolygonOffset(0.0F, -2.0F);
+      DrawOTag(
+          reinterpret_cast<u_long *>(&surface_picker_ordering_table.back()));
+      GR_SetPolygonOffset(0.0F, 0.0F);
+      GR_SetDepthState(1, 1);
+    }
+    // Posed silhouettes are projected onto exact gameplay receiver surfaces.
+    // First union their model triangles into a dedicated stencil bit, then
+    // shade that union once. This preserves limbs and equipment detail without
+    // exposing overlapping internal geometry through darker patches.
+    GR_SetBlendMode(BM_SUBTRACT);
+    GR_SetDepthState(1, 0);
+    GR_SetPolygonOffset(0.0F, -1.0F);
+    // Semi-transparent untextured PSX primitives inherit ABR from the active
+    // texture page. Pin ABR=2 here; otherwise the final world texture chosen
+    // by camera/OT order can turn subtractive shadows additive and white.
+    DR_TPAGE shadow_blend_page{};
+    SetDrawTPage(&shadow_blend_page, 1, 0, GetTPage(0, 2, 0, 0));
+    DrawPrim(&shadow_blend_page);
+    GR_BeginShadowMask();
+    DrawOTag(reinterpret_cast<u_long *>(&shadow_ordering_table.back()));
+    GR_BeginShadowShade();
+    DrawPrim(&shadow_blend_page);
+    DrawOTag(reinterpret_cast<u_long *>(&shadow_ordering_table.back()));
+    GR_EndShadowMask();
+    GR_SetPolygonOffset(0.0F, 0.0F);
+    GR_SetDepthState(1, 1);
+    GR_SetBlendMode(BM_NONE);
     // Opaque geometry owns PGXP-Z. Fire blends additively against that
     // depth without writing it, so walls occlude particles and lightbars.
     GR_SetBlendMode(BM_ADD);
@@ -11814,56 +13375,30 @@ SceneViewerResult PsyCrossSceneViewer::run(
   static_cast<void>(
       police_lightbar_animation.synchronize(gameplay, actor_tick, textures));
   std::array<psx::SpuPcmFrame, 4096U> gameplay_pcm{};
-  AudioOutputCatchUpPolicy audio_catch_up{
-      coherent_audio_updates_per_presentation};
   std::uint64_t audio_slices_completed{};
   std::uint64_t audio_pcm_frames_pumped{};
   std::uint64_t audio_pcm_blocks_pumped{};
   std::uint64_t audio_guest_clear_events{};
-  std::uint64_t audio_catch_up_events{};
   std::uint64_t audio_guest_pcm_frames_read{};
-  std::uint64_t audio_guest_pcm_frames_trimmed{};
-  AudioOutputCadencePolicy audio_output_cadence{psx::Spu::sample_rate,
-                                                retail_audio_callback_hz};
-  std::size_t audio_output_frames_due{};
-  std::vector<psx::SpuPcmFrame> gameplay_pcm_batch;
-  gameplay_pcm_batch.reserve(psx::Spu::pcm_queue_capacity);
   const auto pump_gameplay_audio = [&] {
-    if (audio_output_frames_due != 0U) {
-      gameplay_pcm_batch.clear();
-      while (const auto count = gameplay.takePcm(gameplay_pcm)) {
-        audio_guest_pcm_frames_read += count;
-        gameplay_pcm_batch.insert(
-            gameplay_pcm_batch.end(), gameplay_pcm.begin(),
-            gameplay_pcm.begin() + static_cast<std::ptrdiff_t>(count));
-      }
-
-      const auto output_count =
-          std::min(audio_output_frames_due, gameplay_pcm_batch.size());
-      const auto trimmed = gameplay_pcm_batch.size() - output_count;
-      audio_guest_pcm_frames_trimmed += trimmed;
-      if (output_count != 0U) {
-        gameplay_audio->queue(
-            std::span<const psx::SpuPcmFrame>{gameplay_pcm_batch}.last(
-                output_count));
-        audio_pcm_frames_pumped += output_count;
-        ++audio_pcm_blocks_pumped;
-        audio_output_frames_due -= output_count;
-      }
+    // SPU output is already clocked by the exact 120 Hz hardware scheduler.
+    // Preserve that stream byte-for-byte and in generation order. The former
+    // wall-budget path retained only the newest tail of a burst, so streaming
+    // callbacks silently removed gunshots/music and made the remaining audio
+    // jump forward relative to the picture.
+    while (const auto count = gameplay.takePcm(gameplay_pcm)) {
+      audio_guest_pcm_frames_read += count;
+      gameplay_audio->queue(
+          std::span<const psx::SpuPcmFrame>{gameplay_pcm}.first(count));
+      audio_pcm_frames_pumped += count;
+      ++audio_pcm_blocks_pumped;
     }
-    // Submit the fractional 128-frame tail as well. Holding it until the next
-    // retail callback leaves every host batch up to 2.9 ms too short and can
-    // repeatedly starve OpenAL at an exact VSYNC boundary.
     gameplay_audio->flush();
   };
   const auto discard_gameplay_audio = [&](std::string_view reason) {
     gameplay_audio->reset(reason);
     gameplay.clearPcm();
     ++audio_guest_clear_events;
-    audio_catch_up.reset();
-    audio_output_cadence.reset();
-    audio_output_frames_due = 0U;
-    gameplay_pcm_batch.clear();
     audio_accumulator_seconds = 0.0;
   };
 
@@ -11873,36 +13408,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
         static_cast<std::size_t>((accumulator_seconds + 1.0e-9) /
                                  retail_audio_step_seconds));
   };
-  const auto begin_audio_catch_up = [&](double accumulator_seconds) {
-    if (!audio_catch_up.beginFrame(
-            pending_audio_updates(accumulator_seconds))) {
-      return;
-    }
-    ++audio_catch_up_events;
-    PsyX_Log_Warning(
-        "[AudioDiag][catch-up] sequence=%llu pending=%zu accumulator_ms=%.3f\n",
-        static_cast<unsigned long long>(audio_catch_up_events),
-        pending_audio_updates(accumulator_seconds),
-        accumulator_seconds * 1000.0);
-    // Preserve the live host queue: resetting it here turns a transient long
-    // frame into an audible dropout. Guest PCM older than the bounded recovery
-    // window is still discarded below, so no stale tail can accumulate.
-    gameplay.clearPcm();
-    audio_output_frames_due = 0U;
-    gameplay_pcm_batch.clear();
-    ++audio_guest_clear_events;
-  };
-  const auto finish_audio_update = [&](double accumulator_seconds) {
-    const auto remaining_updates = pending_audio_updates(accumulator_seconds);
-    if (!audio_catch_up.retainCompletedUpdate(remaining_updates)) {
-      gameplay.clearPcm();
-      ++audio_guest_clear_events;
-      return false;
-    }
-    return true;
-  };
   const auto service_realtime_audio = [&]() {
-    begin_audio_catch_up(audio_accumulator_seconds);
     auto audio_updates = 0U;
     while (audio_updates < maximum_audio_updates_per_presentation &&
            audio_accumulator_seconds + 1.0e-9 >= retail_audio_step_seconds) {
@@ -11913,18 +13419,11 @@ SceneViewerResult PsyCrossSceneViewer::run(
       ++audio_slices_completed;
       audio_accumulator_seconds =
           std::max(0.0, audio_accumulator_seconds - retail_audio_step_seconds);
-      const auto frames_due = audio_output_cadence.advanceCallback();
-      if (finish_audio_update(audio_accumulator_seconds)) {
-        audio_output_frames_due =
-            std::min(audio_output_frames_due + frames_due,
-                     static_cast<std::size_t>(psx::Spu::pcm_queue_capacity));
-      }
+      // Publish each completed hardware slice immediately. This keeps input
+      // ordering intact and lets the device-side jitter ring absorb a slow
+      // render frame without a destructive catch-up/reset cycle.
+      pump_gameplay_audio();
     }
-    // The guest can mix more samples than wall time permits while executing a
-    // callback. Submit only the exact 120 Hz wall-clock budget and retain its
-    // newest samples, preventing both an ever-growing delay and stale audio
-    // after a heavy frame or mission restart.
-    pump_gameplay_audio();
     return true;
   };
 
@@ -11941,8 +13440,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
     PsyX_Log_Info(
         "[AudioDiag][clock] sequence=%llu context=%.*s guest_frame=%llu "
         "accumulator_ms=%.6f pending=%zu slices=%llu pcm_frames=%llu "
-        "pcm_blocks=%llu guest_pcm_read=%llu pcm_trimmed=%llu pcm_due=%zu "
-        "guest_clears=%llu catch_ups=%llu\n",
+        "pcm_blocks=%llu guest_pcm_read=%llu guest_clears=%llu\n",
         static_cast<unsigned long long>(audio_diagnostic_sequence),
         static_cast<int>(context.size()), context.data(),
         static_cast<unsigned long long>(
@@ -11953,10 +13451,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
         static_cast<unsigned long long>(audio_pcm_frames_pumped),
         static_cast<unsigned long long>(audio_pcm_blocks_pumped),
         static_cast<unsigned long long>(audio_guest_pcm_frames_read),
-        static_cast<unsigned long long>(audio_guest_pcm_frames_trimmed),
-        audio_output_frames_due,
-        static_cast<unsigned long long>(audio_guest_clear_events),
-        static_cast<unsigned long long>(audio_catch_up_events));
+        static_cast<unsigned long long>(audio_guest_clear_events));
     if (const auto guest = gameplay.audioDiagnostics()) {
       PsyX_Log_Info(
           "[AudioDiag][guest] sequence=%llu machine_tick=%llu "
@@ -12038,6 +13533,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
             ? std::span<const std::uint8_t>{keyboard, static_cast<std::size_t>(
                                                           keyboard_count)}
             : std::span<const std::uint8_t>{};
+    surface_picker.handleInput(keyboard_state);
     const auto bound_actions = sampleKeyboardMouseActions(
         input_, KeyboardMouseDeviceState{
                     .keyboard = keyboard_state,
@@ -12051,12 +13547,17 @@ SceneViewerResult PsyCrossSceneViewer::run(
     const auto pause_down = bound_actions[KeyboardMouseAction::pause];
     const auto pause_pressed =
         input_settle_seconds <= 0.0 && pause_down && !pause_was_down;
+    const auto interact_down =
+        bound_actions[KeyboardMouseAction::interact];
+    const auto interact_pressed = input_settle_seconds <= 0.0 &&
+                                  interact_down && !interact_was_down;
     const auto manual_aim_down = bound_actions[KeyboardMouseAction::aim];
     mouse_capture.set(!paused && manual_aim_down);
     int mouse_delta_x{};
     int mouse_delta_y{};
     SDL_GetRelativeMouseState(&mouse_delta_x, &mouse_delta_y);
     pause_was_down = pause_down;
+    interact_was_down = interact_down;
     const auto controller_movement =
         static_cast<std::uint16_t>(controller_held & movement_buttons);
     const auto analog_x = static_cast<int>(pad.analog[2]) - 128;
@@ -12156,7 +13657,8 @@ SceneViewerResult PsyCrossSceneViewer::run(
     previous_buttons = buttons;
     input_settle_seconds =
         std::max(0.0, input_settle_seconds - elapsed_seconds);
-    const auto pause_toggled = (pressed & pause_button) != 0 || pause_pressed;
+    const auto controller_pause_pressed = (pressed & pause_button) != 0;
+    const auto pause_toggled = controller_pause_pressed || pause_pressed;
     const auto pause_direction = [](int value) {
       constexpr int pause_deadzone = 56;
       return value < -pause_deadzone ? -1 : (value > pause_deadzone ? 1 : 0);
@@ -12190,7 +13692,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
       pause_analog_y = current_pause_y;
       pause_animation_tick = 0U;
       static_cast<void>(drawPauseMenu(pause_menu, pause_textures, hud_textures,
-                                      pause_animation_tick++));
+                                      pause_animation_tick++, input_));
       end_presented_frame();
       continue;
     }
@@ -12234,9 +13736,15 @@ SceneViewerResult PsyCrossSceneViewer::run(
                   ((pressed & left_button) != 0 || analog_left_edge),
           .right = acd_navigation_ready &&
                    ((pressed & right_button) != 0 || analog_right_edge),
-          .confirm = acd_navigation_ready && (pressed & confirm_button) != 0,
-          .cancel = acd_navigation_ready && (pressed & cancel_button) != 0,
-          .pause = pause_toggled,
+          .confirm = acd_navigation_ready &&
+                     ((pressed & confirm_button) != 0 || interact_pressed),
+          .cancel = acd_navigation_ready &&
+                    ((pressed & cancel_button) != 0 ||
+                     (pause_pressed &&
+                      pause_menu.screen() != game::PauseScreen::root)),
+          .pause = controller_pause_pressed ||
+                   (pause_pressed &&
+                    pause_menu.screen() == game::PauseScreen::root),
       };
 
       const auto cheat_context = [&] {
@@ -12269,9 +13777,10 @@ SceneViewerResult PsyCrossSceneViewer::run(
       if (!detected_cheat) {
         latched_pause_cheat.reset();
       } else if (detected_cheat != latched_pause_cheat) {
-        const auto enabled = *detected_cheat == game::RetailCheat::one_shot_kills
-                                 ? !cheats_.one_shot_kills
-                                 : true;
+        const auto enabled =
+            *detected_cheat == game::RetailCheat::one_shot_kills
+                ? !cheats_.one_shot_kills
+                : true;
         const auto activated = set_retail_cheat(*detected_cheat, enabled);
         if (activated) {
           pause_menu.setRetailCheatEnabled(*detected_cheat, enabled);
@@ -12477,7 +13986,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
       }
 
       static_cast<void>(drawPauseMenu(pause_menu, pause_textures, hud_textures,
-                                      pause_animation_tick++));
+                                      pause_animation_tick++, input_));
       end_presented_frame();
       continue;
     }
@@ -12495,36 +14004,6 @@ SceneViewerResult PsyCrossSceneViewer::run(
       player_input.synchronize(raw_player_input);
     } else {
       mapped_input = player_input.update(raw_player_input);
-    }
-    // Retail posts the failure text immediately, waits 0xc8 gameplay
-    // ticks, then completes its fade before state 2 requests the actual
-    // checkpoint restore. Do not let a face-button press bypass that VM
-    // timeline while the failure overlay is visible.
-    if (gameplay.failureRestartRequested()) {
-      if (!gameplay.restartCheckpoint()) {
-        PsyX_Log_Error(
-            "Failure restart rejected incoherent guest checkpoint\n");
-        return SceneViewerResult{previous_buttons,
-                                 SceneExitReason::return_to_title};
-      }
-      apply_retail_cheats();
-      discard_gameplay_audio("failure-restart-checkpoint");
-      fire_animation = FireAnimation{gameplay};
-      actor_tick = 0U;
-      previous_room = gameplay.currentRoom();
-      previous_weapon = gameplay.hud().inventory().current();
-      previous_projectile_count = gameplay.projectiles().size();
-      previous_dynamic_fire = false;
-      police_lightbar_animation.invalidate();
-      movement_armed = false;
-      neutral_movement_seconds = 0.0;
-      input_settle_seconds = restart_input_settle_seconds;
-      player_input.synchronize(raw_player_input);
-      reset_render_presentation();
-      clear_latched_gameplay_input();
-      mapped_input = {};
-      log_next_frame = true;
-      restore_gameplay_textures(true);
     }
     auto simulation_updates_this_frame = 0U;
     std::optional<std::uint8_t> direct_weapon;
@@ -12625,6 +14104,13 @@ SceneViewerResult PsyCrossSceneViewer::run(
       simulation_accumulator_seconds = std::max(
           0.0, simulation_accumulator_seconds - retail_simulation_step_seconds);
 
+      // State 2 retires the guest runtime on the exact tick which publishes
+      // the failure-restart request. Do not execute a second catch-up tick on
+      // that finished timeline; the coherent checkpoint is restored below.
+      if (gameplay.failureRestartRequested()) {
+        break;
+      }
+
       // Catch-up ticks retain held direction/buttons but never replay a host
       // edge or relative mouse/wheel impulse.
       sampled_input.next_weapon = false;
@@ -12636,6 +14122,39 @@ SceneViewerResult PsyCrossSceneViewer::run(
       sampled_input.quick_turn = false;
       sampled_input.weapon_menu_delta = 0;
       sampled_input.direct_weapon.reset();
+    }
+
+    // Retail posts the failure text immediately, waits 0xc8 gameplay ticks,
+    // completes its fade and then reaches state 2. Handle that terminal edge
+    // before advancing the independent 120 Hz audio clock: state 2 has
+    // intentionally retired the old runtime, so another audio slice would be
+    // misclassified as a fatal clock error and return to the title screen.
+    if (gameplay.failureRestartRequested()) {
+      if (!gameplay.restartCheckpoint()) {
+        PsyX_Log_Error(
+            "Failure restart rejected incoherent guest checkpoint\n");
+        return SceneViewerResult{previous_buttons,
+                                 SceneExitReason::return_to_title};
+      }
+      apply_retail_cheats();
+      discard_gameplay_audio("failure-restart-checkpoint");
+      fire_animation = FireAnimation{gameplay};
+      actor_tick = 0U;
+      previous_room = gameplay.currentRoom();
+      previous_weapon = gameplay.hud().inventory().current();
+      previous_projectile_count = gameplay.projectiles().size();
+      previous_dynamic_fire = false;
+      police_lightbar_animation.invalidate();
+      movement_armed = false;
+      neutral_movement_seconds = 0.0;
+      input_settle_seconds = restart_input_settle_seconds;
+      player_input.synchronize(raw_player_input);
+      reset_render_presentation();
+      clear_latched_gameplay_input();
+      log_next_frame = true;
+      restore_gameplay_textures(true);
+      PsyX_Log_Info("Failure checkpoint restored; gameplay resumed\n");
+      continue;
     }
     if (manual_aim) {
       // Lead only the unfinished 20 Hz retail tick. Relative mouse counts are

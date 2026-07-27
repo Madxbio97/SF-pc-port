@@ -449,14 +449,16 @@ bool LegacyGameplayVm::waitForCdRomInterrupt(
     if (command.pending == 0U && sector.pending == 0U) {
       return false;
     }
-    auto delay = std::numeric_limits<std::uint32_t>::max();
-    if (command.pending != 0U) {
-      delay = std::min(delay, command.delay_ticks);
+    // This is a synchronous HLE boundary: the guest cannot yield while it
+    // waits, whereas realtime SPU/CD time is owned by the independent 120 Hz
+    // scheduler. Advancing all hardware by the emulated seek/sector delay here
+    // rendered up to hundreds of milliseconds of future PCM during a room
+    // transition. The output then played that stale block before newly fired
+    // voices, which sounded like lag and missing samples. Complete only the
+    // next CD event; do not move the global hardware/audio clock.
+    if (!machine_.completeNextPendingCdRomEvent()) {
+      return false;
     }
-    if (sector.pending != 0U) {
-      delay = std::min(delay, sector.delay_ticks);
-    }
-    machine_.advanceHardwareTicks(std::max<std::uint32_t>(1U, delay));
   }
   return false;
 }
@@ -507,7 +509,14 @@ bool LegacyGameplayVm::dispatchCdRomReadyCallback() {
     return true;
   }
   if (interrupt != data_ready_interrupt) {
-    return false;
+    // This helper owns only the retail data-ready (INT1) fast path. Command
+    // acknowledgement/completion/error IRQs are ordinary CD-ROM state and are
+    // consumed by the guest's CD interrupt handler. Treating one of those
+    // latched IRQs as an audio-clock failure made the independent 120 Hz SPU
+    // scheduler abort during normal room streaming, even though neither the
+    // timer callback nor the audio timeline was invalid. Leave unrelated IRQs
+    // untouched and continue clocking the SPU.
+    return true;
   }
 
   std::array<std::byte, 8U> result{};
@@ -525,12 +534,21 @@ bool LegacyGameplayVm::dispatchCdRomReadyCallback() {
       !runtime_.write8(ready_state_address, data_ready_interrupt)) {
     return false;
   }
-  return callback == 0U ||
-         invoke(callback,
-                std::array{static_cast<std::uint32_t>(data_ready_interrupt),
-                           ready_result_address},
-                5'000'000U)
-             .completed();
+  // The native 120 Hz scheduler owns hardware time. Running this HLE callback
+  // through invoke() advanced CPU, CD and SPU clocks a second time during
+  // streaming, producing large bursts of future PCM which the frontend then
+  // had to discard. Execute it atomically like the other retail frame/audio
+  // callbacks: instructions still run, but only the scheduler advances the
+  // emulated hardware timeline.
+  if (callback == 0U) {
+    return true;
+  }
+  const auto callback_result = invokeFrameCall(
+      callback,
+      std::array{static_cast<std::uint32_t>(data_ready_interrupt),
+                 ready_result_address},
+      5'000'000U);
+  return callback_result.completed();
 }
 
 void LegacyGameplayVm::recoverCdRomTransfer() noexcept {
@@ -649,7 +667,9 @@ bool LegacyGameplayVm::transferCdRomSectors(std::uint32_t sector,
         !runtime_.write32(dma3_chcr, dma3_control)) {
       return fail();
     }
-    machine_.advanceHardwareTicks(data_words);
+    if (!machine_.completePendingDmaTransfers()) {
+      return fail();
+    }
     std::uint32_t channel_control{};
     if (!runtime_.read32(dma3_chcr, channel_control) ||
         (channel_control & (1U << 24U)) != 0U ||
@@ -6184,9 +6204,12 @@ bool LegacyGameplayVm::advanceAudioClockCallbacks(
 
       const auto callback = interrupt_callbacks_[profile.timer_irq];
       if (callback != 0U) {
-        if ((profile.expected_tick_callback != 0U &&
-             callback != profile.expected_tick_callback) ||
-            !invokeFrameCall(callback, {}, 5'000'000U).completed()) {
+        if (profile.expected_tick_callback != 0U &&
+            callback != profile.expected_tick_callback) {
+          return false;
+        }
+        const auto result = invokeFrameCall(callback, {}, 5'000'000U);
+        if (!result.completed()) {
           return false;
         }
       }
@@ -6452,6 +6475,9 @@ LegacyGameplayVm::runExecutionPump(std::optional<std::uint32_t> host_boundary,
         host_boundary,
     };
   };
+  const auto service_clock_neutral_dma = [&]() {
+    return advance_guest_clock || machine_.completePendingDmaTransfers();
+  };
 
   for (std::uint64_t operation = 0; operation < execution_budget; ++operation) {
     if (runtime_.atReturnSentinel()) {
@@ -6515,11 +6541,29 @@ LegacyGameplayVm::runExecutionPump(std::optional<std::uint32_t> host_boundary,
           };
         }
         instructions += execution.instructions;
+        if (!service_clock_neutral_dma()) {
+          return LegacyGameplayVmResult{
+              {psx::R3000StopReason::memory_fault, instructions,
+               runtime_.state().pc, 0U},
+              runtime_.state().gpr[2],
+              host_calls,
+              std::nullopt,
+          };
+        }
         continue;
       }
       runtime_.completeHostCall();
       if (advance_guest_clock) {
         machine_.advanceTicks(1U);
+      }
+      if (!service_clock_neutral_dma()) {
+        return LegacyGameplayVmResult{
+            {psx::R3000StopReason::memory_fault, instructions,
+             runtime_.state().pc, 0U},
+            runtime_.state().gpr[2],
+            host_calls,
+            std::nullopt,
+        };
       }
       continue;
     }
@@ -6535,6 +6579,15 @@ LegacyGameplayVm::runExecutionPump(std::optional<std::uint32_t> host_boundary,
       };
     }
     instructions += execution.instructions;
+    if (!service_clock_neutral_dma()) {
+      return LegacyGameplayVmResult{
+          {psx::R3000StopReason::memory_fault, instructions,
+           runtime_.state().pc, 0U},
+          runtime_.state().gpr[2],
+          host_calls,
+          std::nullopt,
+      };
+    }
   }
 
   if (runtime_.atReturnSentinel()) {
@@ -6564,7 +6617,12 @@ LegacyGameplayVm::runExecutionPump(std::optional<std::uint32_t> host_boundary,
 LegacyGameplayVmResult
 LegacyGameplayVm::tickRetailFrame(const LegacyRetailFrameProfile &profile,
                                   std::uint64_t execution_budget) {
-  return invoke(profile.frame_entry, {}, execution_budget);
+  // A retail frame is executed between two host-owned 20 Hz boundaries.
+  // Charging its interpreter instruction count to PsxMachine advances SPU/CD
+  // a second time and turns heavy streaming frames into seconds of queued
+  // future PCM. Keep the frame atomic; the independent 120 Hz scheduler is
+  // the sole owner of hardware time during realtime gameplay.
+  return invokeFrameCall(profile.frame_entry, {}, execution_budget);
 }
 
 LegacyRetailPlatformTailResult LegacyGameplayVm::tickRetailPlatformTail(
@@ -6575,8 +6633,12 @@ LegacyRetailPlatformTailResult LegacyGameplayVm::tickRetailPlatformTail(
   const std::array callback_arguments{
       advance_delayed_callbacks ? 1U : 0U,
   };
-  result.delayed_callbacks = invoke(profile.delayed_callbacks_entry,
-                                    callback_arguments, execution_budget);
+  // This tail is part of the same fixed retail frame as the state-machine
+  // body. In particular, room streaming can execute a large delayed-callback
+  // batch here. Running it through invoke() double-clocked SPU/CD by the
+  // batch's instruction count and accumulated an ever-growing audio delay.
+  result.delayed_callbacks = invokeFrameCall(
+      profile.delayed_callbacks_entry, callback_arguments, execution_budget);
   if (!result.delayed_callbacks.completed()) {
     return result;
   }
@@ -6611,8 +6673,8 @@ LegacyRetailPlatformTailResult LegacyGameplayVm::tickRetailPlatformTail(
       (current == 0xffU && step > 0) || (current == floor && step < 0);
   if (at_endpoint) {
     if (callback != 0U) {
-      result.fade_callback =
-          invoke(profile.fade_callback_dispatch_entry, {}, execution_budget);
+      result.fade_callback = invokeFrameCall(
+          profile.fade_callback_dispatch_entry, {}, execution_budget);
     }
     return result;
   }

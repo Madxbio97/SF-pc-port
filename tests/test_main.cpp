@@ -26,6 +26,7 @@
 #include "sf/game/state_stack.hpp"
 #include "sf/game/system.hpp"
 #include "sf/game/title.hpp"
+#include "sf/platform/retail_scope_text_policy.hpp"
 #include "sf/psx/executable.hpp"
 #include "sf/psx/function_map.hpp"
 
@@ -182,10 +183,9 @@ void testMissionCatalog() {
       2U, 0U, 1U, 0U, 0U, 1U, 2U, 0U, 1U, 2U,
   };
   for (std::size_t index = 0U; index < missions.size(); ++index) {
-    const auto briefing_overlay =
-        missions[index].briefing_overlay_name.empty()
-            ? missions[index].overlay_name
-            : missions[index].briefing_overlay_name;
+    const auto briefing_overlay = missions[index].briefing_overlay_name.empty()
+                                      ? missions[index].overlay_name
+                                      : missions[index].briefing_overlay_name;
     require(briefing_overlay == expected_briefing_overlays[index] &&
                 missions[index].briefing_record ==
                     expected_briefing_records[index],
@@ -613,6 +613,36 @@ void testLegacyDynamicPresentationPolicy() {
               !sf::game::legacyGuestHmdPoseComplete(8U, 9U) &&
               !sf::game::legacyGuestHmdPoseComplete(0U, 0U),
           "Retail HMD pose completeness ignored the resolved model parts");
+  auto retained_pose_complete = false;
+  const auto sample_actor_pose = [&](std::size_t available_bones) {
+    const auto current_pose_complete =
+        sf::game::legacyGuestHmdPoseComplete(available_bones, 15U);
+    const auto available = sf::game::legacyGuestActorPoseAvailable(
+        current_pose_complete, retained_pose_complete);
+    retained_pose_complete |= current_pose_complete;
+    return available;
+  };
+  require(sample_actor_pose(15U) && sample_actor_pose(3U) &&
+              sample_actor_pose(15U) &&
+              !sf::game::legacyGuestActorPoseAvailable(false, false),
+          "A partial bridge pose retired a previously posed actor lifetime");
+
+  auto first_lifetime = sf::game::LegacyObjectBridgeState{};
+  first_lifetime.definition = 37U;
+  first_lifetime.class_id = 1;
+  first_lifetime.authored_position = {120, 48, -330};
+  first_lifetime.path_pointer = 0x801a4934U;
+  first_lifetime.instance = 0x801b1000U;
+  first_lifetime.attributes = 5U;
+  first_lifetime.parameter = 2;
+  first_lifetime.linked_slot = 17;
+  auto second_lifetime = first_lifetime;
+  second_lifetime.instance = 0x801b1800U;
+  require(sf::game::legacyGuestIdentity(first_lifetime) ==
+              sf::game::legacyGuestIdentity(first_lifetime) &&
+              sf::game::legacyGuestIdentity(first_lifetime) !=
+                  sf::game::legacyGuestIdentity(second_lifetime),
+          "Recycled guest instances collided in actor lifetime identity");
   require(sf::game::legacy_instance_dormant == 0x02U &&
               sf::game::legacyGuestActorStreamVisible(true, false, 0U, false,
                                                       true, false, true) &&
@@ -699,6 +729,20 @@ void testLegacyDynamicPresentationPolicy() {
           texture_bank(1U, false, 0x00U) == 1U,
       "Texture bank ownership did not prefer current, unique or fail-closed "
       "provenance");
+  require(sf::game::resident_weapon_texture_bank == 0U,
+          "Resident weapon textures must remain in the authored SPFX bank");
+  require(sf::game::resident_hmd_texture_bank == 0U,
+          "Resident HMD textures must remain in their authored bank zero");
+  require(sf::game::resolveDisplayedObjectTextureBank(1U, true) == 0U &&
+              sf::game::resolveDisplayedObjectTextureBank(1U, false) == 1U,
+          "Displayed HMD inherited a streamed room texture bank");
+  const auto object_texture_bank = sf::game::resolveAuthoredObjectTextureBank;
+  require(
+      object_texture_bank(1U, false, false, 0x00U, 0x01U) == 0U &&
+          object_texture_bank(0U, false, false, 0x00U, 0x02U) == 1U &&
+          object_texture_bank(1U, false, false, 0x01U, 0x03U) == 0U &&
+          object_texture_bank(0U, true, true, 0x03U, 0x03U) == 0U,
+      "Retained objects lost authored texture ownership across a portal");
 }
 
 void testGameplayCheckpointRestorePolicy() {
@@ -2460,6 +2504,25 @@ void testPlayerInventory() {
 }
 
 void testGameplayHud() {
+  using sf::game::LegacyUiMessageChannel;
+  const auto retail_scope_font = sf::platform::useRetailEnglishScopeFont;
+  require(retail_scope_font(true, true, LegacyUiMessageChannel::centered,
+                            false, 1U) &&
+              retail_scope_font(true, true,
+                                LegacyUiMessageChannel::centered, false, 3U),
+          "Empty or partial scope source no longer selects the retail font");
+  require(!retail_scope_font(false, true, LegacyUiMessageChannel::centered,
+                             false, 3U) &&
+              !retail_scope_font(true, false,
+                                 LegacyUiMessageChannel::centered, false, 3U) &&
+              !retail_scope_font(true, true, LegacyUiMessageChannel::status,
+                                 false, 3U) &&
+              !retail_scope_font(true, true,
+                                 LegacyUiMessageChannel::centered, true, 3U) &&
+              !retail_scope_font(true, true,
+                                 LegacyUiMessageChannel::centered, false, 0U),
+          "Non-scope gameplay text escaped into the retail font path");
+
   require(sf::game::originalHudGlyph('!') ==
                   sf::game::OriginalHudGlyph{8U, 24U, 1U} &&
               sf::game::originalHudGlyph('\'') ==
@@ -2474,6 +2537,29 @@ void testGameplayHud() {
               sf::game::originalPrimaryStatusLabel(
                   sf::game::PrimaryStatus::health) == "HEALTH",
           "Original gameplay-font UV/advance table mismatch");
+
+  const auto wrapped = sf::game::originalHudWrapText(
+      "ALPHA BETA GAMMA", sf::game::originalHudTextWidth("ALPHA BETA"));
+  require(wrapped == "ALPHA BETA\nGAMMA",
+          "Gameplay notification word wrapping mismatch");
+  require(sf::game::originalHudWrapText("ALPHA\nBETA", 1000) == "ALPHA\nBETA",
+          "Gameplay notification wrapping lost an explicit newline");
+  const auto split_word = sf::game::originalHudWrapText(
+      "ABCDEFGHIJ", sf::game::originalHudTextWidth("ABCD"));
+  require(split_word.find('\n') != std::string::npos,
+          "Overlong gameplay notification token was not split");
+  for (auto cursor = std::size_t{}; cursor <= split_word.size();) {
+    const auto end = split_word.find('\n', cursor);
+    const auto line_end = end == std::string::npos ? split_word.size() : end;
+    require(sf::game::originalHudTextWidth(std::string_view{split_word}.substr(
+                cursor, line_end - cursor)) <=
+                sf::game::originalHudTextWidth("ABCD"),
+            "Wrapped gameplay notification exceeds its text column");
+    if (end == std::string::npos) {
+      break;
+    }
+    cursor = end + 1U;
+  }
 
   sf::game::setGameLanguage(sf::game::GameLanguage::russian_vit);
   require(sf::game::originalHudGlyph(static_cast<char>(0xdfU)) ==

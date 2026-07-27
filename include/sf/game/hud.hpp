@@ -107,6 +107,12 @@ originalHudGlyph(char value) noexcept;
 [[nodiscard]] std::optional<OriginalHudGlyph>
 originalEnglishHudGlyph(char value) noexcept;
 [[nodiscard]] int originalHudTextWidth(std::string_view text) noexcept;
+// Wrap one-byte HUD text at word boundaries using the exact retail glyph
+// advances. Explicit newlines are preserved and an overlong word is split at
+// glyph boundaries, so presentation never has to shrink one notification
+// relative to another.
+[[nodiscard]] std::string originalHudWrapText(std::string_view text,
+                                              int maximum_width);
 [[nodiscard]] std::string originalAmmoText(const WeaponDefinition &definition,
                                            const WeaponState &weapon);
 // FUN_80039b44 stores each weapon layer by its centre.  Convert those native
@@ -121,8 +127,9 @@ struct OriginalAimReticleGeometry {
   int horizontal_ray{};
   int vertical_ray{};
 
-  friend constexpr bool operator==(const OriginalAimReticleGeometry &,
-                                   const OriginalAimReticleGeometry &) = default;
+  friend constexpr bool
+  operator==(const OriginalAimReticleGeometry &,
+             const OriginalAimReticleGeometry &) = default;
 };
 
 // FUN_80041830 builds the target box and its four centre rays from the
@@ -140,8 +147,9 @@ struct OriginalHeadshotCalloutGeometry {
   int text_x{};
   int text_y{};
 
-  friend constexpr bool operator==(const OriginalHeadshotCalloutGeometry &,
-                                   const OriginalHeadshotCalloutGeometry &) = default;
+  friend constexpr bool
+  operator==(const OriginalHeadshotCalloutGeometry &,
+             const OriginalHeadshotCalloutGeometry &) = default;
 };
 
 // The retail Head Shot notification is connected to the upper target ray by
@@ -167,8 +175,7 @@ struct OriginalRadarGeometry {
 [[nodiscard]] OriginalRadarGeometry
 originalRadarGeometry(std::uint8_t reveal_frame) noexcept;
 
-[[nodiscard]] const WeaponDefinition *
-tryWeaponDefinition(WeaponId id) noexcept;
+[[nodiscard]] const WeaponDefinition *tryWeaponDefinition(WeaponId id) noexcept;
 [[nodiscard]] const WeaponDefinition &weaponDefinition(WeaponId id);
 // Floor pickups normally reuse the active HUD icon group. A handful of
 // retail item slots deliberately select empty group zero even though their
@@ -254,15 +261,15 @@ struct OriginalWeaponMenuGeometry {
   HudRgb background_color{};
   HudRgb frame_color{};
 
-  friend constexpr bool operator==(const OriginalWeaponMenuGeometry &,
-                                   const OriginalWeaponMenuGeometry &) = default;
+  friend constexpr bool
+  operator==(const OriginalWeaponMenuGeometry &,
+             const OriginalWeaponMenuGeometry &) = default;
 };
 
 // FUN_800405f4 creates the long-switch backing from two overlapping
 // semi-transparent quads and two horizontal lines. Coordinates are relative
 // to the retail HUD's 192x120 centre.
-[[nodiscard]] OriginalWeaponMenuGeometry
-originalWeaponMenuGeometry() noexcept;
+[[nodiscard]] OriginalWeaponMenuGeometry originalWeaponMenuGeometry() noexcept;
 
 [[nodiscard]] constexpr std::string_view
 originalPrimaryStatusLabel(PrimaryStatus status) noexcept {
@@ -311,7 +318,9 @@ public:
   [[nodiscard]] HudRgb healthBarColor() const noexcept;
   [[nodiscard]] std::uint8_t primaryBar() const noexcept;
   [[nodiscard]] std::uint8_t dangerBar() const noexcept;
-  [[nodiscard]] bool dangerCritical() const noexcept { return danger_critical_; }
+  [[nodiscard]] bool dangerCritical() const noexcept {
+    return danger_critical_;
+  }
   [[nodiscard]] std::optional<std::uint8_t> targetBar() const noexcept;
   [[nodiscard]] std::uint8_t displayedPrimaryBar() const noexcept {
     return displayed_primary_bar_;
@@ -354,9 +363,9 @@ private:
   [[nodiscard]] static std::uint8_t scaleBar(std::uint16_t value,
                                              std::uint16_t maximum) noexcept;
   [[nodiscard]] static std::uint8_t approachBar(std::uint8_t displayed,
-                                                 std::uint8_t target) noexcept;
+                                                std::uint8_t target) noexcept;
   [[nodiscard]] static std::uint8_t approachReveal(std::uint8_t displayed,
-                                                    bool visible) noexcept;
+                                                   bool visible) noexcept;
 
   PlayerInventory inventory_;
   PlayerVitals vitals_{};

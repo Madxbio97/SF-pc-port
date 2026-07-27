@@ -230,20 +230,46 @@ void testKeyboardMousePromptText() {
                                                 bindings) ==
               sf::platform::KeyboardMousePromptText{
                   "Press START to see objectives",
-                  "Press Escape to see objectives"},
+                  "Press ESCAPE to see objectives"},
           "START prompt did not use the launcher pause binding");
   bindings[KeyboardMouseAction::interact] = KeyboardMouseInput::mouse_left;
   require(sf::platform::keyboardMousePromptText("Press X to Contact Lian Xing",
                                                 bindings) ==
               sf::platform::KeyboardMousePromptText{
                   "Press X to Contact Lian Xing",
-                  "Press Mouse Left to Contact Lian Xing"},
+                  "Press MOUSE LEFT to Contact Lian Xing"},
           "Contact prompt did not use a remapped mouse interaction binding");
+  require(sf::platform::keyboardMousePromptText(
+              "Press BUTTON to Contact Lian Xing", bindings) ==
+              sf::platform::KeyboardMousePromptText{
+                  "Press BUTTON to Contact Lian Xing",
+                  "Press MOUSE LEFT to Contact Lian Xing"},
+          "Reconstructed contact prompt did not resolve its button placeholder");
   bindings[KeyboardMouseAction::interact] = KeyboardMouseInput::left_bracket;
   require(
       sf::platform::keyboardMousePromptText("Press CROSS to continue", bindings)
-              ->bound_text == "Press Left Bracket to continue",
+              ->bound_text == "Press LEFT BRACKET to continue",
       "A bind absent from FONTA was not converted to drawable text");
+  bindings[KeyboardMouseAction::pause] = KeyboardMouseInput::mouse_x2;
+  require(sf::platform::keyboardMouseHintText(
+              "%x select   %t back", bindings) ==
+              "LEFT BRACKET select   MOUSE X2 back",
+          "Native menu hints did not resolve both active PC bindings");
+  require(sf::platform::keyboardMouseHintText("ordinary text", bindings) ==
+              "ordinary text",
+          "Native menu hint resolver changed text without control tokens");
+  require(sf::platform::keyboardMouseHintText(
+              "Press new button for action", bindings) ==
+              "Press new button for action",
+          "Binding-capture instructions were mistaken for control tokens");
+  bindings[KeyboardMouseAction::interact] = KeyboardMouseInput::keypad_plus;
+  require(sf::platform::keyboardMouseHintText("%x accept", bindings) ==
+              "NUMPAD PLUS accept",
+          "A keypad binding emitted a glyph absent from the HUD font");
+  bindings[KeyboardMouseAction::interact] = KeyboardMouseInput::keypad_equals;
+  require(sf::platform::keyboardMouseHintText("%x accept", bindings) ==
+              "NUMPAD EQUALS accept",
+          "The keypad equals binding emitted an unsupported glyph");
   require(!sf::platform::keyboardMousePromptText("Objective added", bindings),
           "Ordinary retail text was mistaken for a control prompt");
 }

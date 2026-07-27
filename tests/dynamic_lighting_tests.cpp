@@ -1,5 +1,6 @@
 #include "sf/game/dynamic_lighting.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -164,6 +165,98 @@ void testRadialSamplingAndNeutralModulation() {
           "Invalid lighting input changed authored vertex color");
 }
 
+void testSurfaceLightingRejectsBackFaces() {
+  const std::array sources{lamp(1U, 0.0)};
+  const auto frame = sf::game::buildDynamicLightFrame(
+      sources, {}, sf::game::DynamicLightPoint{});
+  const auto front = sf::game::sampleDynamicLighting(
+      frame, sf::game::DynamicLightPoint{0.0, 0.0, 0.0},
+      sf::game::DynamicLightPoint{0.0, -1.0, 0.0});
+  const auto back = sf::game::sampleDynamicLighting(
+      frame, sf::game::DynamicLightPoint{0.0, 0.0, 0.0},
+      sf::game::DynamicLightPoint{0.0, 1.0, 0.0});
+  require(front.red > front.green && front.green > front.blue &&
+              back.red == 0.0 && back.green == 0.0 && back.blue == 0.0,
+          "Dynamic light leaked through the back of a surface");
+}
+
+void testActorShadowTracksEligibleDynamicLight() {
+  const std::array sources{lamp(1U, 0.0)};
+  const auto frame = sf::game::buildDynamicLightFrame(
+      sources, {}, sf::game::DynamicLightPoint{});
+  const auto projection = sf::game::selectDynamicShadowProjection(
+      frame, {300.0, 0.0, 0.0}, {0.0, 1.0, 0.0});
+  require(projection.source_driven && projection.ray_direction.x > 0.0 &&
+              projection.ray_direction.y > 0.0 && projection.darkness > 0.18,
+          "Actor shadow ignored the strongest overhead dynamic light");
+
+  const auto point = sf::game::projectDynamicShadowPoint(
+      {300.0, -400.0, 0.0}, {300.0, 0.0, 0.0}, {0.0, 1.0, 0.0}, projection);
+  require(point && point->x > 300.0 && std::abs(point->y + 3.0) < 0.000001,
+          "Actor silhouette did not project onto its biased support plane");
+}
+
+void testActorShadowRejectsLowLightAndMalformedPlane() {
+  auto low = lamp(2U, 0.0);
+  low.position = {-300.0, 0.0, 0.0};
+  const std::array sources{low};
+  const auto frame = sf::game::buildDynamicLightFrame(
+      sources, {}, sf::game::DynamicLightPoint{});
+  const auto projection = sf::game::selectDynamicShadowProjection(
+      frame, {0.0, 0.0, 0.0}, {0.0, 1.0, 0.0});
+  require(!projection.source_driven,
+          "Floor-height light stretched an actor shadow at grazing angle");
+  require(!sf::game::projectDynamicShadowPoint({0.0, -100.0, 0.0}, {}, {},
+                                               projection),
+          "Actor shadow accepted a malformed support plane");
+}
+
+void testActorShadowBlendsSourcesAndBoundsStretch() {
+  const std::array balanced{lamp(3U, -350.0), lamp(4U, 350.0)};
+  const auto frame = sf::game::buildDynamicLightFrame(
+      balanced, {}, sf::game::DynamicLightPoint{});
+  const auto projection = sf::game::selectDynamicShadowProjection(
+      frame, {0.0, 0.0, 0.0}, {0.0, 1.0, 0.0});
+  require(projection.source_driven &&
+              std::abs(projection.ray_direction.x) < 0.2,
+          "Balanced shadow sources snapped to one light instead of blending");
+
+  const auto grazing = sf::game::projectDynamicShadowPoint(
+      {0.0, -400.0, 0.0}, {}, {0.0, 1.0, 0.0},
+      sf::game::DynamicShadowProjection{{1.0, 0.1, 0.0}, 0.3, true});
+  require(grazing && grazing->x <= 340.000001 && grazing->x >= 339.999999 &&
+              std::abs(grazing->y + 3.0) < 0.000001,
+          "Grazing actor shadow exceeded its bounded silhouette stretch");
+}
+
+void testPersistentAnimationUsesGuestTime() {
+  auto lightbar = lamp(0U, 0.0);
+  lightbar.kind = sf::game::DynamicLightKind::police_lightbar;
+  const std::array police{lightbar};
+  const auto blue = sf::game::buildDynamicLightFrame(
+      police, {}, sf::game::DynamicLightPoint{}, {}, 0U);
+  const auto red = sf::game::buildDynamicLightFrame(
+      police, {}, sf::game::DynamicLightPoint{}, {}, 2U);
+  require(blue.active().front().color.blue > blue.active().front().color.red &&
+              red.active().front().color.red > red.active().front().color.blue,
+          "Police lightbar did not alternate its dynamic red/blue pulse");
+
+  auto flame = lamp(7U, 0.0);
+  flame.kind = sf::game::DynamicLightKind::steady_fire;
+  const std::array fire{flame};
+  const auto first = sf::game::buildDynamicLightFrame(
+      fire, {}, sf::game::DynamicLightPoint{}, {}, 8U);
+  const auto repeated = sf::game::buildDynamicLightFrame(
+      fire, {}, sf::game::DynamicLightPoint{}, {}, 8U);
+  const auto advanced = sf::game::buildDynamicLightFrame(
+      fire, {}, sf::game::DynamicLightPoint{}, {}, 10U);
+  require(first.active().front().intensity ==
+                  repeated.active().front().intensity &&
+              first.active().front().intensity !=
+                  advanced.active().front().intensity,
+          "Fire flicker is host-frame dependent or remains static");
+}
+
 void testBoundedSelectionKeepsTransientAndNearestLamps() {
   std::array<sf::game::PersistentDynamicLightState,
              sf::game::maximum_dynamic_lights + 4U>
@@ -189,6 +282,33 @@ void testBoundedSelectionKeepsTransientAndNearestLamps() {
           "Transient light lost priority over persistent sources");
   require(frame.active().back().source_id == 30U,
           "Bounded selection did not retain the nearest persistent lamps");
+}
+
+void testBoundedSelectionKeepsDirectionalLight() {
+  std::array<sf::game::PersistentDynamicLightState,
+             sf::game::maximum_dynamic_lights>
+      sources{};
+  for (std::size_t index = 0U; index < sources.size(); ++index) {
+    sources[index] = lamp(static_cast<std::uint32_t>(index),
+                          static_cast<double>(index) * 10.0);
+  }
+  const std::array directional{sf::game::DirectionalDynamicLightState{
+      sf::game::DynamicLightKind::flashlight,
+      {50000.0, 0.0, 0.0},
+      {0.0, 0.0, 1.0},
+      0xf1a5U,
+      true,
+      true,
+  }};
+  const auto frame = sf::game::buildDynamicLightFrame(
+      sources, {}, sf::game::DynamicLightPoint{}, directional);
+  require(frame.count == sf::game::maximum_dynamic_lights &&
+              std::ranges::any_of(frame.active(),
+                                  [](const auto &light) {
+                                    return light.source_id == 0xf1a5U &&
+                                           light.directional;
+                                  }),
+          "Bounded selection discarded the authoritative flashlight");
 }
 
 sf::game::RetailVertexLightState retailLight() {
@@ -505,7 +625,13 @@ int main() {
     testTransientLightsAreExactAndFinite();
     testFlashlightConeIsDirectionalAndAuthoritative();
     testRadialSamplingAndNeutralModulation();
+    testSurfaceLightingRejectsBackFaces();
+    testActorShadowTracksEligibleDynamicLight();
+    testActorShadowRejectsLowLightAndMalformedPlane();
+    testActorShadowBlendsSourcesAndBoundsStretch();
+    testPersistentAnimationUsesGuestTime();
     testBoundedSelectionKeepsTransientAndNearestLamps();
+    testBoundedSelectionKeepsDirectionalLight();
     testRetailGmdBackColorUsesNeutralTextureScale();
     testSceneTriangleLightingInterpolatesFloorColor();
     testRetailVertexLightSzBranchesAreExact();

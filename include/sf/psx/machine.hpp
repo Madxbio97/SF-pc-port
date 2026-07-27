@@ -125,6 +125,14 @@ public:
   }
   [[nodiscard]] std::optional<std::uint64_t>
   dmaCompletionTick(DmaChannel channel) const noexcept;
+  // Clock-neutral guest callbacks still need MMIO DMA requests to become
+  // observable before a retail busy-wait can return. Complete those scheduled
+  // transfers without advancing the CPU/SPU/CD timeline.
+  [[nodiscard]] bool completePendingDmaTransfers() noexcept;
+  // Synchronous HLE CD reads cannot yield back to the realtime 120 Hz clock.
+  // Complete one scheduled CD event in-place so their busy-waits make forward
+  // progress without rendering a block of future SPU audio in one host frame.
+  [[nodiscard]] bool completeNextPendingCdRomEvent() noexcept;
   [[nodiscard]] const InterruptController &interrupts() const noexcept {
     return interrupts_;
   }

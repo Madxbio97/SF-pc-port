@@ -159,6 +159,72 @@ PsxMachine::dmaCompletionTick(DmaChannel channel) const noexcept {
   return std::nullopt;
 }
 
+bool PsxMachine::completePendingDmaTransfers() noexcept {
+  // One completion can make a different channel startable, so allow a bounded
+  // number of passes. DMA completion itself clears CHCR busy and therefore
+  // cannot reschedule the same request indefinitely.
+  for (std::size_t pass = 0U; pass < DmaController::channel_count; ++pass) {
+    auto completed_any = false;
+    for (std::size_t index = 0U; index < DmaController::channel_count;
+         ++index) {
+      const auto channel = channelFromIndex(index);
+      const auto token = dma_.scheduledToken(channel);
+      if (token == 0U) {
+        continue;
+      }
+      if (!scheduler_.cancel(token)) {
+        return false;
+      }
+      dispatchEvent(MachineEvent{
+          .deadline = scheduler_.now(),
+          .token = token,
+          .payload = 0U,
+          .type = MachineEventType::dma_complete,
+          .index = static_cast<std::uint8_t>(index),
+      });
+      if (dma_.scheduledToken(channel) == token) {
+        return false;
+      }
+      completed_any = true;
+    }
+    if (!completed_any) {
+      return true;
+    }
+  }
+
+  for (std::size_t index = 0U; index < DmaController::channel_count; ++index) {
+    if (dma_.scheduledToken(channelFromIndex(index)) != 0U) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool PsxMachine::completeNextPendingCdRomEvent() noexcept {
+  const auto command = cdrom_.commandSchedule();
+  const auto sector = cdrom_.sectorSchedule();
+  const auto state = scheduler_.captureState();
+  for (std::size_t index = 0U; index < state.event_count; ++index) {
+    auto event = state.events[index];
+    const auto current_command =
+        event.type == MachineEventType::cdrom_command && event.index == 0U &&
+        command.pending != 0U && event.payload == command.generation;
+    const auto current_sector =
+        event.type == MachineEventType::cdrom_sector && event.index == 0U &&
+        sector.pending != 0U && event.payload == sector.generation;
+    if (!current_command && !current_sector) {
+      continue;
+    }
+    if (!scheduler_.cancel(event.token)) {
+      return false;
+    }
+    event.deadline = scheduler_.now();
+    dispatchEvent(event);
+    return true;
+  }
+  return false;
+}
+
 void PsxMachine::attachDmaPort(DmaChannel channel, DmaPort *port) noexcept {
   const auto index = channelIndex(channel);
   if (index >= dma_ports_.size()) {

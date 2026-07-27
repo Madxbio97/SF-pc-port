@@ -223,6 +223,15 @@ struct KeyboardMousePromptText {
 keyboardMousePromptText(std::string_view source,
                         const KeyboardMouseBindings &bindings);
 
+// Native UI text retains the retail MENU/INIT control tokens in portable
+// data.  Resolve them only at presentation time so launcher rebinding is
+// reflected by every pause, briefing and save-menu hint without mutating the
+// localized strings.  %x is the PC action/confirm binding; %t is the active
+// pause binding used for back/cancel/resume.
+[[nodiscard]] std::string
+keyboardMouseHintText(std::string_view source,
+                      const KeyboardMouseBindings &bindings);
+
 // Platform-neutral device snapshot used by the SDL adapter and unit tests.
 // KeyboardMouseInput keyboard values are stable SDL/USB scancodes, so the
 // platform layer can safely bounds-check them without depending on SDL.

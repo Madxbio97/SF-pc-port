@@ -11,26 +11,25 @@ a native Windows host for rendering, input, menus, audio and FMV playback.
 ## Public test
 
 The current build is
-[Public Test 0.1.0-PT7](https://github.com/Madxbio97/SF-pc-port/releases/tag/v0.1.0-public-test.7).
+[Public Test 0.1.0-PT8](https://github.com/Madxbio97/SF-pc-port/releases/tag/v0.1.0-public-test.8).
 Download the Windows x64 ZIP from the release page and verify it against the
 published `.sha256` file before extracting it.
 
-PT7 adds the complete Russian text pack and unified 2x font atlas, restores full
-mission briefings and weapon information, finishes the PS1-style pause-menu
-layout, replaces the gameplay audio queue workaround with continuous callback
-streaming, and adds working VSYNC/frame limiting. It also includes the renderer,
-campaign, destructible-state and PHARCOM streaming fixes from the previous public
-tests.
+PT8 fixes streamed VRAM ownership and texture-bank selection so scenery and
+actor models survive room transitions, and adds a diagnostic Surface Picker for
+future rendering reports. It also refactors the independent 120 Hz SPU/CD/DMA
+clock, adds dynamic scene lighting and geometry-based character shadows, restores
+original scope labels, and resolves PC-bound button prompts in both languages.
 
 See [CHANGELOG.md](CHANGELOG.md) for the complete release summary.
 
 ## Quick start
 
-1. Download `SyphonFilterPC-0.1.0-public-test.7-win64.zip` from the release page.
+1. Download `SyphonFilterPC-0.1.0-public-test.8-win64.zip` from the release page.
 2. Verify its SHA-256 checksum:
 
    ```powershell
-   Get-FileHash .\SyphonFilterPC-0.1.0-public-test.7-win64.zip -Algorithm SHA256
+   Get-FileHash .\SyphonFilterPC-0.1.0-public-test.8-win64.zip -Algorithm SHA256
    ```
 
 3. Extract the ZIP into a new folder.
@@ -74,6 +73,11 @@ revisions, repacks and modified images are not expected to work.
 - Native OpenAL presentation of game audio and FFmpeg-backed PS1 STR playback.
 - High-resolution, perspective-correct and Z-buffered scene rendering with PGXP
   geometry support.
+- Dynamic scene lighting layered over the authored PS1 vertex colours: intact
+  mission lamps, fire, alternating police lights, muzzle flashes, explosions
+  and the retail flashlight illuminate terrain, props and actors with bounded
+  falloff and surface-aware response. Gabe, allies and enemies cast posed,
+  light-directed shadows onto authored floors, slopes and moving lifts.
 - Restored PS1-style HUD, inventory, objectives, parameters, weapons and map
   pages, including current-position and active-objective indicators.
 - Correct scene occlusion for pickups, grenade sprites and transient effects.

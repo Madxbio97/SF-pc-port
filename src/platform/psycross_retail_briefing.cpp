@@ -275,17 +275,10 @@ int characterAdvance(char value) noexcept {
   return glyph ? glyph->advance() : 0;
 }
 
-int promptTextWidth() noexcept {
+int promptTextWidth(std::string_view source) noexcept {
   auto width = 0;
-  const auto source = game::localizeText(assets::RetailBriefingLayout::prompt);
   for (std::size_t index = 0U; index < source.size(); ++index) {
-    if (source[index] == '%' && index + 1U < source.size() &&
-        source[index + 1U] == 'x') {
-      width += assets::RetailBriefingLayout::cross_advance;
-      ++index;
-    } else {
-      width += characterAdvance(source[index]);
-    }
+    width += characterAdvance(source[index]);
   }
   return width == 0 ? 0 : width - 2;
 }
@@ -433,7 +426,8 @@ int drawTextObject(const assets::TimImage &font, std::string_view text,
 
 void drawPrompt(const std::vector<BriefingTexture> &textures,
                 std::uint32_t retail_tick,
-                const PsyCrossFontTexture *native_font) {
+                const PsyCrossFontTexture *native_font,
+                const KeyboardMouseBindings &bindings) {
   const auto find = [&](std::string_view name) -> const assets::TimImage & {
     const auto match =
         std::find_if(textures.begin(), textures.end(),
@@ -450,35 +444,14 @@ void drawPrompt(const std::vector<BriefingTexture> &textures,
                          ? Rgb{200U, 200U, 255U}
                          : Rgb{};
   const auto right = screen_center_x + assets::RetailBriefingLayout::prompt_x;
-  const auto prompt_width = promptTextWidth();
-  if (!game::russianLanguageActive() &&
-      prompt_width != assets::RetailBriefingLayout::prompt_width) {
-    throw core::Error{core::ErrorCode::invalid_format,
-                      "Retail briefing prompt metrics do not match SCUS"};
-  }
+  const auto source = keyboardMouseHintText(
+      game::localizeTextCopy(assets::RetailBriefingLayout::prompt), bindings);
+  const auto prompt_width = promptTextWidth(source);
   auto x = right - prompt_width;
   const auto y = screen_center_y + assets::RetailBriefingLayout::prompt_y;
   const auto &font = find("FONTA.TIM");
-  const auto &symbols = find("SYMBOL.TIM");
   const ScopedPsyCrossFontTexture font_binding{native_font};
-  const auto source = game::localizeText(assets::RetailBriefingLayout::prompt);
   for (std::size_t index = 0U; index < source.size(); ++index) {
-    if (source[index] == '%' && index + 1U < source.size() &&
-        source[index + 1U] == 'x') {
-      if (native_font != nullptr) {
-        PsyCrossFontTexture::restoreVram();
-      }
-      drawTextureRegion(symbols, x, y, assets::RetailBriefingLayout::cross_u,
-                        assets::RetailBriefingLayout::cross_v,
-                        assets::RetailBriefingLayout::cross_width,
-                        assets::RetailBriefingLayout::cross_height, color);
-      if (native_font != nullptr) {
-        native_font->bind();
-      }
-      x += assets::RetailBriefingLayout::cross_advance;
-      ++index;
-      continue;
-    }
     if (source[index] == ' ') {
       x += 4;
       continue;
@@ -496,7 +469,8 @@ void drawPrompt(const std::vector<BriefingTexture> &textures,
 } // namespace
 
 struct PsyCrossRetailBriefing::Impl final {
-  explicit Impl(const game::MissionPackage &mission) {
+  Impl(const game::MissionPackage &mission, KeyboardMouseBindings input)
+      : input{input} {
     constexpr std::array required{
         std::string_view{"FONTA.TIM"},
         std::string_view{"FONTB.TIM"},
@@ -563,11 +537,12 @@ struct PsyCrossRetailBriefing::Impl final {
 
   std::vector<BriefingTexture> textures;
   std::unique_ptr<PsyCrossFontTexture> native_font;
+  KeyboardMouseBindings input;
 };
 
 PsyCrossRetailBriefing::PsyCrossRetailBriefing(
-    const game::MissionPackage &mission)
-    : impl_(std::make_unique<Impl>(mission)) {}
+    const game::MissionPackage &mission, KeyboardMouseBindings bindings)
+    : impl_(std::make_unique<Impl>(mission, bindings)) {}
 
 PsyCrossRetailBriefing::~PsyCrossRetailBriefing() = default;
 
@@ -603,7 +578,8 @@ bool PsyCrossRetailBriefing::draw(const assets::MissionBriefing &briefing,
          retail_line_height;
   }
   if (text_animation_complete) {
-    drawPrompt(impl_->textures, retail_tick, impl_->native_font.get());
+    drawPrompt(impl_->textures, retail_tick, impl_->native_font.get(),
+               impl_->input);
   }
 
   DrawSync(0);

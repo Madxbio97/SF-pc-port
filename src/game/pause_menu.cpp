@@ -994,7 +994,7 @@ PauseMenuCommand PauseMenu::updateConfirmation(const PauseMenuInput &input) {
 void PauseMenu::showControllerMissing() {
   binding_pending_ = false;
   notification_ = "Controller missing. Please reinsert controller into "
-                  "controller port 1 and press the START "
+                  "controller port 1 and press the %t "
                   "button to continue";
   if (screen() != PauseScreen::notification) {
     push(PauseScreen::notification);

@@ -185,6 +185,7 @@ if(SF_ENABLE_PSYCROSS)
         src/platform/psycross_retail_briefing.cpp
         src/platform/psycross_runtime_guards.cpp
         src/platform/psycross_scene_viewer.cpp
+        src/platform/psycross_surface_picker.cpp
         src/platform/psycross_vram.cpp
         src/platform/psycross_window_mode.cpp
     )

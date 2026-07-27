@@ -113,6 +113,14 @@
 #define VRAM_WIDTH		(1024)
 #define VRAM_HEIGHT		(512)
 
+// Host-only texture pages used by native ports when a widened scene needs
+// more simultaneously resident material aliases than fit in PS1 VRAM.  They
+// deliberately live in a separate GL texture: framebuffer, MoveImage and
+// every guest VRAM address retain the exact 1024x512 retail layout.
+#define VRAM_ALIAS_PAGE_COUNT (63)
+#define VRAM_ALIAS_WIDTH      (1024)
+#define VRAM_ALIAS_HEIGHT     (1024)
+
 #define TPAGE_WIDTH		(256)
 #define TPAGE_HEIGHT	(256)
 
@@ -125,7 +133,8 @@ typedef struct
 	float		x, y, page, clut;
 	float		z, scr_h, ofsX, ofsY;
 #else
-	short		x, y, page, clut;
+	short		x, y;
+	u_short	page, clut;
 #endif
 
 	u_char		u, v, bright, dither;
@@ -140,6 +149,7 @@ typedef struct
 typedef enum 
 {
 	a_position,
+	a_page_clut,
 	a_zw,
 	a_texcoord,
 	a_color,
@@ -191,9 +201,33 @@ extern TextureID	g_vramTexture;
 extern void			GR_SwapWindow();
 
 // PSX VRAM operations
+enum GrVRAMWriteKind
+{
+	GR_VRAM_WRITE_UPLOAD = 1,
+	GR_VRAM_WRITE_MOVE = 2,
+	GR_VRAM_WRITE_CLEAR = 3,
+	GR_VRAM_WRITE_FRAMEBUFFER = 4,
+};
+
+typedef struct GrVRAMWriteEvent
+{
+	unsigned long long sequence;
+	int kind;
+	int source_x;
+	int source_y;
+	int destination_x;
+	int destination_y;
+	int width;
+	int height;
+} GrVRAMWriteEvent;
+
 extern void			GR_SaveVRAM(const char* outputFileName, int x, int y, int width, int height, int bReadFromFrameBuffer);
 extern void			GR_CopyVRAM(unsigned short* src, int x, int y, int w, int h, int dst_x, int dst_y);
 extern void			GR_ReadVRAM(unsigned short* dst, int x, int y, int dst_w, int dst_h);
+extern void			GR_UploadVRAMAliasPage(int page, const unsigned short* src);
+extern void			GR_ReadVRAMAliasPage(int page, unsigned short* dst);
+extern unsigned long long GR_GetVRAMWriteSequence();
+extern int			GR_ReadVRAMWriteEvents(unsigned long long after_sequence, GrVRAMWriteEvent* events, int capacity);
 
 extern void			GR_StoreFrameBuffer(int x, int y, int w, int h);
 extern void			GR_UpdateVRAM();
@@ -214,6 +248,9 @@ extern void			GR_Ortho2D(float left, float right, float bottom, float top, float
 extern void			GR_SetBlendMode(BlendMode blendMode);
 extern void			GR_SetPolygonOffset(float slope, float units);
 extern void			GR_SetStencilMode(int drawPrim);
+extern void			GR_BeginShadowMask(void);
+extern void			GR_BeginShadowShade(void);
+extern void			GR_EndShadowMask(void);
 extern void			GR_EnableDepth(int enable);
 extern void			GR_SetDepthState(int testEnable, int writeEnable);
 extern void			GR_ClearDepthBuffer(void);

@@ -212,24 +212,55 @@ std::string normalizedRetailPrompt(std::string_view source) {
 std::string hudInputName(KeyboardMouseInput input) {
   // FONTA does not contain these punctuation glyphs. Spell the handful of
   // affected inputs out so every launcher-supported binding remains visible.
+  std::string name;
   switch (input) {
   case KeyboardMouseInput::left_bracket:
-    return "Left Bracket";
+    name = "Left Bracket";
+    break;
   case KeyboardMouseInput::right_bracket:
-    return "Right Bracket";
+    name = "Right Bracket";
+    break;
   case KeyboardMouseInput::equals:
-    return "Equals";
+    name = "Equals";
+    break;
   case KeyboardMouseInput::semicolon:
-    return "Semicolon";
+    name = "Semicolon";
+    break;
   case KeyboardMouseInput::grave:
-    return "Grave";
+    name = "Grave";
+    break;
   case KeyboardMouseInput::non_us_hash:
-    return "Non-US Hash";
+    name = "Non-US Hash";
+    break;
   case KeyboardMouseInput::keypad_multiply:
-    return "Numpad Multiply";
+    name = "Numpad Multiply";
+    break;
+  case KeyboardMouseInput::keypad_plus:
+    name = "Numpad Plus";
+    break;
+  case KeyboardMouseInput::keypad_equals:
+    name = "Numpad Equals";
+    break;
   default:
-    return std::string{keyboardMouseInputName(input)};
+    name = keyboardMouseInputName(input);
+    break;
   }
+
+  // The ViT one-byte font map deliberately reuses `a..z` for Cyrillic.
+  // Keep dynamic PC binding labels in the atlas' untouched `A..Z` cells;
+  // otherwise a mixed-case name such as "Escape" renders its lower-case
+  // `s` through the Cyrillic slot and appears as "E\u041bCAPE". This mapping is
+  // presentation-only: launcher labels and persisted binding names retain
+  // their normal title case.
+  std::ranges::transform(name, name.begin(), [](const char value) {
+    const auto raw = static_cast<unsigned char>(value);
+    return raw >= static_cast<unsigned char>('a') &&
+                   raw <= static_cast<unsigned char>('z')
+               ? static_cast<char>(raw - static_cast<unsigned char>('a') +
+                                   static_cast<unsigned char>('A'))
+               : value;
+  });
+  return name;
 }
 
 } // namespace
@@ -467,6 +498,29 @@ keyboardMousePromptText(std::string_view source,
   bound.replace(token_begin, token_end - token_begin,
                 hudInputName(bindings[action]));
   return KeyboardMousePromptText{std::move(retail), std::move(bound)};
+}
+
+std::string keyboardMouseHintText(std::string_view source,
+                                  const KeyboardMouseBindings &bindings) {
+  std::string result;
+  result.reserve(source.size());
+  for (auto index = std::size_t{}; index < source.size(); ++index) {
+    if (source[index] == '%' && index + 1U < source.size()) {
+      const auto token = asciiLower(source[index + 1U]);
+      const auto action = token == 'x'
+                              ? std::optional{KeyboardMouseAction::interact}
+                          : token == 't'
+                              ? std::optional{KeyboardMouseAction::pause}
+                              : std::nullopt;
+      if (action) {
+        result.append(hudInputName(bindings[*action]));
+        ++index;
+        continue;
+      }
+    }
+    result.push_back(source[index] == '\t' ? ' ' : source[index]);
+  }
+  return result;
 }
 
 KeyboardMouseActionSnapshot

@@ -444,13 +444,17 @@ void testRetailCheatsMenu() {
   requireRetailComposition(menu);
 
   constexpr std::array labels{
-      "All Weapons + Infinite Ammo", "Hard Mode",    "One-Shot Kills",
-      "Stage Select",                "Weak Enemies", "Movie Theater",
+      "All Weapons + Infinite Ammo",
+      "Hard Mode",
+      "One-Shot Kills",
+      "Stage Select",
+      "Weak Enemies",
+      "Movie Theater",
   };
   const auto commands = menu.buildRenderCommands();
   for (std::size_t index = 0; index < labels.size(); ++index) {
-    require(std::ranges::any_of(
-        commands, [index, &labels](const auto &command) {
+    require(
+        std::ranges::any_of(commands, [index, &labels](const auto &command) {
           return command.kind == PauseRenderKind::menu_item &&
                  command.panel == PausePanelRole::left_content &&
                  command.id == index && command.text == labels[index] &&
@@ -1105,6 +1109,11 @@ void testCompoundRussianMenuLocalization() {
   require(ammo.find("Ammo") == std::string::npos &&
           ammo.find("15/90") != std::string::npos);
   require(sf::game::localizeTextCopy("Gas Granade") != "Gas Granade");
+  for (const auto label : {"Grenades", "GRANADES", "Gas Grenades",
+                           "GAS GRANADES"}) {
+    const auto translated = sf::game::localizeTextCopy(label);
+    require(translated != label && translated.find('?') == std::string::npos);
+  }
   require(sf::game::localizeTextCopy("N/A") != "N/A");
   require(sf::game::localizeTextCopy("Infinite") != "Infinite");
   for (const auto message :
@@ -1171,9 +1180,16 @@ void testCompoundRussianMenuLocalization() {
         "Gas Granades Taken", "Gas Grenade  taken"}) {
     require(sf::game::localizeTextCopy(variant) == gas_grenade_pickup);
   }
+  for (const auto prefix :
+       {"Gas G", "Gas Gren", "Gas Grana", "GAS GRENADES TAK"}) {
+    const auto completed = sf::game::completeGameplayTextSource(prefix);
+    require(completed == std::optional<std::string_view>{"Gas Grenade taken"});
+    require(sf::game::localizeTextCopy(*completed) == gas_grenade_pickup);
+  }
   for (const auto message : {
            "Press Triangle to contact Lian Xing",
            "Press X to Contact Lian Xing",
+           "Press BUTTON to Contact Lian Xing",
            "Press \x1f"
            " to Contact Lian Xing",
            "Flak Jacket Undamaged",
@@ -1190,6 +1206,13 @@ void testCompoundRussianMenuLocalization() {
             translated.find("remaining") == std::string::npos &&
             translated.find('?') == std::string::npos);
   }
+  const auto contact_prompt =
+      sf::game::localizeTextCopy("Press BUTTON to Contact Lian Xing");
+  require(contact_prompt.find("%x") != std::string::npos &&
+          contact_prompt.find("%s") == std::string::npos &&
+          contact_prompt.find("BUTTON") == std::string::npos &&
+          contact_prompt.find(sf::game::localizeTextCopy("Lian Xing")) ==
+              std::string::npos);
   for (const auto objective : {
            "Turn off power to terminal security doors",
            "Locate explosives cache",
@@ -1376,6 +1399,29 @@ void testFormattedMissionLocalization() {
   std::filesystem::remove_all(root);
 }
 
+void testMissionMenuLocalizationDoesNotLeakAcrossLanguages() {
+  const std::vector<std::string> objectives{
+      "Eliminate Kravitch and destroy comm. array",
+      "Protect CBDC bomb squad",
+  };
+  const std::vector<std::string> parameters{
+      "Do not kill Aramov",
+  };
+
+  sf::game::setGameLanguage(sf::game::GameLanguage::english);
+  require(!sf::game::localizedMissionMenuTexts(0U, objectives, parameters));
+
+  sf::game::setGameLanguage(sf::game::GameLanguage::russian_vit);
+  const auto localized =
+      sf::game::localizedMissionMenuTexts(0U, objectives, parameters);
+  require(localized && localized->objectives.size() == objectives.size() &&
+          localized->parameters.size() == parameters.size() &&
+          localized->objectives.front() != objectives.front() &&
+          localized->parameters.front() != parameters.front());
+
+  sf::game::setGameLanguage(sf::game::GameLanguage::english);
+}
+
 void testRetailCheatChordsAndContexts() {
   using sf::game::RetailCheat;
   using sf::game::RetailPauseCheatContext;
@@ -1394,8 +1440,8 @@ void testRetailCheatChordsAndContexts() {
   const auto all_weapons = sf::game::detectRetailPauseCheat(
       0xe320U, RetailPauseCheatContext::weapons_section);
   require(all_weapons && *all_weapons == RetailCheat::all_weapons);
-  require(!sf::game::detectRetailPauseCheat(
-      0xe320U, RetailPauseCheatContext::map));
+  require(
+      !sf::game::detectRetailPauseCheat(0xe320U, RetailPauseCheatContext::map));
 
   const auto stage_select = sf::game::detectRetailPauseCheat(
       0xed00U, RetailPauseCheatContext::select_mission);
@@ -1403,10 +1449,10 @@ void testRetailCheatChordsAndContexts() {
   require(!sf::game::detectRetailPauseCheat(
       0xfd00U, RetailPauseCheatContext::select_mission));
 
-  const auto weak = sf::game::detectRetailPauseCheat(
-      0x4c20U, RetailPauseCheatContext::map);
-  const auto theater = sf::game::detectRetailPauseCheat(
-      0x4920U, RetailPauseCheatContext::map);
+  const auto weak =
+      sf::game::detectRetailPauseCheat(0x4c20U, RetailPauseCheatContext::map);
+  const auto theater =
+      sf::game::detectRetailPauseCheat(0x4920U, RetailPauseCheatContext::map);
   require(weak && *weak == RetailCheat::weak_enemies);
   require(theater && *theater == RetailCheat::movie_theater);
 }
@@ -1442,6 +1488,7 @@ int main() {
     testCompoundRussianMenuLocalization();
     testProofreadRussianCampaignTextIsBuiltIn();
     testFormattedMissionLocalization();
+    testMissionMenuLocalizationDoesNotLeakAcrossLanguages();
     testRetailCheatChordsAndContexts();
   } catch (const std::exception &error) {
     std::fprintf(stderr, "%s\n", error.what());

@@ -80,32 +80,6 @@ void testStoppedSourcePrebufferIsNotRecycled() {
           "Explicit reset did not protect the new prebuffer");
 }
 
-void testCatchUpDropsOnlyStalePcm() {
-  sf::platform::AudioOutputCatchUpPolicy policy{1U, 3U};
-  require(!policy.beginFrame(1U) && policy.retainCompletedUpdate(0U) &&
-              !policy.catchingUp(),
-          "Normal audio update entered catch-up mode");
-
-  require(policy.beginFrame(4U) && policy.catchingUp(),
-          "Audio catch-up did not request one output reset");
-  require(!policy.retainCompletedUpdate(3U) && !policy.beginFrame(2U),
-          "Historical catch-up PCM was retained or catch-up reset twice");
-  require(policy.retainCompletedUpdate(2U) &&
-              policy.retainCompletedUpdate(1U) && policy.catchingUp(),
-          "Recovery prebuffer PCM was discarded too aggressively");
-  require(policy.retainCompletedUpdate(0U) && !policy.catchingUp(),
-          "Final catch-up PCM was discarded or catch-up stayed active");
-
-  static_cast<void>(policy.beginFrame(3U));
-  policy.reset();
-  require(!policy.catchingUp() && policy.retainCompletedUpdate(0U),
-          "Explicit audio reset retained catch-up state");
-
-  sf::platform::AudioOutputCatchUpPolicy sliced_policy{6U};
-  require(!sliced_policy.beginFrame(4U) && sliced_policy.beginFrame(7U),
-          "Normal 120 Hz slices were mistaken for an audio discontinuity");
-}
-
 void testExactRetailAudioCadence() {
   sf::platform::AudioOutputCadencePolicy cadence{44'100U, 120U};
   std::size_t first_second{};
@@ -227,7 +201,6 @@ int main() {
     testStartupAndStableRecovery();
     testRealtimeFrameRingWrapsWithoutBlockingOrReordering();
     testStoppedSourcePrebufferIsNotRecycled();
-    testCatchUpDropsOnlyStalePcm();
     testExactRetailAudioCadence();
     testBoundedGainRamp();
     testRetailVolumeMapping();

@@ -118,6 +118,30 @@ fire clips its complete quad perimeter before triangulation. Generated vertices
 then pass through the normal GTE/PGXP path. Collision still has access to the
 complete parsed terrain.
 
+Dynamic illumination remains a presentation layer over the guest-authored
+vertex colours. `sf_game` builds a bounded immutable light frame from positively
+identified, resident sources and exact effect lifetimes. The renderer samples
+that frame for terrain, transformed props and posed actors, orients polygon
+normals toward the visible surface, and rejects back-side illumination. Police
+and fire animation follows the 20 Hz guest frame rather than the host refresh
+rate, so VSYNC and high frame limits cannot change flicker or colour phase.
+Destroyed lamp state and retail SPFX controller lifetimes remain authoritative.
+
+Character shadows are renderer-only projections of the posed HMD triangles.
+`GameplaySession` exposes the same nearest support plane and moving lift surface
+used by movement plus the first visible receiver between each posed vertex and
+that plane. Triangles crossing a floor/wall crease receive one adaptive midpoint
+subdivision, allowing the detailed silhouette to fold onto an intervening wall
+without a large primitive oscillating between receivers. The light module
+continuously blends eligible source rays with a stable scene key and caps tangent
+stretch relative to actor height, avoiding source-selection snaps and
+grazing-angle giant shadows. PsyCross first unions the projected model triangles
+in a dedicated stencil bit, then darkens every covered pixel exactly once through
+a subtractive, depth-tested, non-depth-writing OT pass. This preserves limbs and
+equipment while hiding internal triangle overlap. Terrain, Gabe, NPCs and enemies
+occlude shadows normally while later pickups and particles retain their own depth
+behavior.
+
 Low-level VLF validation, physical page remapping and TIM uploads are isolated
 in `psycross_vram`; the scene viewer consumes that interface and no longer owns
 byte packing or raw `LoadImage` setup. Retail MENU.OVL map projection and pause

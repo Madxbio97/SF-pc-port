@@ -1,6 +1,7 @@
 #pragma once
 
 #include "sf/game/gameplay.hpp"
+#include "sf/platform/player_input.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -25,6 +26,7 @@ public:
         const game::MissionPackage& mission,
         PADRAW& pad,
         std::uint16_t previous_buttons,
+        const KeyboardMouseBindings& bindings,
         std::optional<game::CampaignCarryState> carry = std::nullopt);
 
     [[nodiscard]] std::unique_ptr<game::GameplaySession>
