@@ -11,7 +11,7 @@ a native Windows host for rendering, input, menus, audio and FMV playback.
 ## Public test
 
 The current build is
-[Public Test 0.1.0-PT9](https://github.com/Madxbio97/SF-pc-port/releases/tag/v0.1.0-public-test.9).
+[Public Test 0.1.0-PT10](https://github.com/Madxbio97/SF-pc-port/releases/tag/v0.1.0-public-test.10).
 Download the Windows x64 ZIP from the release page and verify it against the
 published `.sha256` file before extracting it.
 
@@ -25,11 +25,11 @@ See [CHANGELOG.md](CHANGELOG.md) for the complete release summary.
 
 ## Quick start
 
-1. Download `SyphonFilterPC-0.1.0-public-test.9-win64.zip` from the release page.
+1. Download `SyphonFilterPC-0.1.0-public-test.10-win64.zip` from the release page.
 2. Verify its SHA-256 checksum:
 
    ```powershell
-   Get-FileHash .\SyphonFilterPC-0.1.0-public-test.9-win64.zip -Algorithm SHA256
+   Get-FileHash .\SyphonFilterPC-0.1.0-public-test.10-win64.zip -Algorithm SHA256
    ```
 
 3. Extract the ZIP into a new folder.

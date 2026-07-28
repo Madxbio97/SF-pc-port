@@ -3888,6 +3888,8 @@ struct ActorShadowPresentationState {
 
 class ActorShadowPresentationCache {
 public:
+  ActorShadowPresentationCache() { states_.reserve(maximum_cached_shadows); }
+
   void beginFrame(std::uint64_t guest_frame) {
     constexpr auto retention_guest_frames = std::uint64_t{40U};
     if (guest_frame < last_guest_frame_) {
@@ -3913,8 +3915,7 @@ public:
       // actor identities through one room. Bound retained pose-sized arrays
       // and evict the least recently used shadow only; actor rendering itself
       // is never coupled to this enhancement cache.
-      constexpr auto maximum_cached_actor_shadows = std::size_t{256U};
-      if (states_.size() >= maximum_cached_actor_shadows) {
+      if (states_.size() >= maximum_cached_shadows) {
         const auto oldest = std::ranges::min_element(
             states_, {}, &ActorShadowPresentationState::last_seen_guest_frame);
         states_.erase(oldest);
@@ -3941,6 +3942,7 @@ public:
   }
 
 private:
+  static constexpr auto maximum_cached_shadows = std::size_t{256U};
   std::vector<ActorShadowPresentationState> states_;
   std::uint64_t last_guest_frame_{};
 };
@@ -3984,6 +3986,20 @@ struct PrimitiveBuffer {
   std::vector<Vector3> hmd_world_vertex_scratch;
   std::vector<std::optional<ActorShadowReceiverVertex>>
       actor_shadow_receiver_scratch;
+
+  [[nodiscard]] bool needsCapacityPlan(std::uint64_t guest_frame,
+                                       std::uint16_t room) noexcept {
+    if (capacity_plan_valid_ && capacity_guest_frame_ == guest_frame &&
+        capacity_room_ == room) {
+      return false;
+    }
+    capacity_plan_valid_ = true;
+    capacity_guest_frame_ = guest_frame;
+    capacity_room_ = room;
+    return true;
+  }
+
+  void invalidateCapacityPlan() noexcept { capacity_plan_valid_ = false; }
 
   void reset() noexcept {
     triangles.reset();
@@ -4074,6 +4090,11 @@ struct PrimitiveBuffer {
            guest_raw_gouraud_triangles.storageStable() &&
            guest_raw_modes.storageStable();
   }
+
+private:
+  std::uint64_t capacity_guest_frame_{};
+  std::uint16_t capacity_room_{};
+  bool capacity_plan_valid_{};
 };
 
 struct RenderStats {
@@ -5395,14 +5416,15 @@ aimTargetAnchor(const game::GameplaySession &gameplay,
                 : std::nullopt;
 }
 
-std::vector<WorldCalloutAnchor>
-worldCalloutAnchors(const game::GameplaySession &gameplay,
-                    const game::ActorAnimationBank &actor_animations,
-                    std::uint64_t actor_tick,
-                    std::span<const game::SceneObject> presentation_objects,
-                    HmdPoseScratch &pose_scratch) {
-  std::vector<WorldCalloutAnchor> result;
-  result.reserve(gameplay.legacyWorldCallouts().size());
+void worldCalloutAnchors(
+    const game::GameplaySession &gameplay,
+    const game::ActorAnimationBank &actor_animations, std::uint64_t actor_tick,
+    std::span<const game::SceneObject> presentation_objects,
+    HmdPoseScratch &pose_scratch, std::vector<WorldCalloutAnchor> &result) {
+  result.clear();
+  if (result.capacity() < gameplay.legacyWorldCallouts().size()) {
+    result.reserve(gameplay.legacyWorldCallouts().size());
+  }
   for (const auto &callout : gameplay.legacyWorldCallouts()) {
     const auto anchor = sceneObjectCalloutAnchor(
         gameplay, actor_animations, actor_tick, presentation_objects,
@@ -5413,7 +5435,6 @@ worldCalloutAnchors(const game::GameplaySession &gameplay,
     result.push_back(
         WorldCalloutAnchor{*anchor, callout.text, callout.headshot});
   }
-  return result;
 }
 
 std::optional<Vector3> weaponMuzzleAnchor(const game::GameplaySession &gameplay,
@@ -6397,6 +6418,10 @@ struct FireParticle {
   std::uint8_t blue{128U};
 };
 
+struct WeaponEffectsScratch {
+  std::vector<FireParticle> legacy_particles;
+};
+
 struct FireEmitterState {
   bool present{};
   std::int32_t start_x{};
@@ -7102,7 +7127,7 @@ void renderWeaponEffects(
     const RenderPresentationSnapshot &presentation, const MATRIX &view,
     std::vector<OT_TAG> &ordering_table,
     std::vector<OT_TAG> &fire_ordering_table, PrimitiveBuffer &primitives,
-    RenderStats &stats) {
+    RenderStats &stats, WeaponEffectsScratch &scratch) {
   const auto &presentation_camera = presentation.camera;
   const auto &shot = gameplay.lastShot();
   const auto &player = gameplay.player();
@@ -7452,7 +7477,8 @@ void renderWeaponEffects(
   // renderGuestCameraLists suppresses only these proven SPFX sprites below;
   // unrelated family-zero sprites (glass, weather and overlay effects) keep
   // their exact retail packets.
-  std::vector<FireParticle> legacy_particles;
+  auto &legacy_particles = scratch.legacy_particles;
+  legacy_particles.clear();
   legacy_particles.reserve(gameplay.legacyExplParticles().size());
   for (const auto &source : gameplay.legacyExplParticles()) {
     const auto *frames = legacyEffectFrames(fire, source.family);
@@ -9234,6 +9260,25 @@ void renderFlashlightCone(const game::GameplaySession &gameplay,
   }
 }
 
+struct LegacyLightAccumulator {
+  std::uint16_t controller{};
+  std::int16_t source_slot{-1};
+  game::LegacyEffectSpriteFamily family{
+      game::LegacyEffectSpriteFamily::explosion};
+  double x{};
+  double y{};
+  double z{};
+  double maximum_scale{};
+  std::uint8_t earliest_frame{0xffU};
+  std::uint16_t count{};
+};
+
+struct DynamicLightFrameScratch {
+  std::vector<game::PersistentDynamicLightState> persistent;
+  std::vector<game::TransientDynamicLightState> transient;
+  std::vector<LegacyLightAccumulator> legacy_lights;
+};
+
 void updateDynamicLightFrame(
     const game::GameplaySession &gameplay,
     const game::ActorAnimationBank &actor_animations,
@@ -9241,7 +9286,8 @@ void updateDynamicLightFrame(
     std::span<const game::LegacyWeaponEventBridgeState> weapon_edges,
     std::span<const game::LegacyMuzzleFlashPresentationState>
         retail_muzzle_flashes,
-    std::span<const game::GameplayEffect> native_muzzle_flashes) {
+    std::span<const game::GameplayEffect> native_muzzle_flashes,
+    DynamicLightFrameScratch &scratch) {
   active_retail_vertex_lights.clear();
   active_retail_vertex_lights.reserve(presentation.vertex_lights.size());
   for (const auto &source : presentation.vertex_lights) {
@@ -9249,7 +9295,8 @@ void updateDynamicLightFrame(
   }
   active_retail_light_projection = std::max(presentation.camera.projection, 1);
 
-  std::vector<game::PersistentDynamicLightState> persistent;
+  auto &persistent = scratch.persistent;
+  persistent.clear();
   persistent.reserve(gameplay.activeObjects().size());
   for (const auto object_index : gameplay.activeObjects()) {
     if (object_index >= presentation.objects.size()) {
@@ -9302,7 +9349,8 @@ void updateDynamicLightFrame(
     });
   }
 
-  std::vector<game::TransientDynamicLightState> transient;
+  auto &transient = scratch.transient;
+  transient.clear();
   transient.reserve(weapon_edges.size() + retail_muzzle_flashes.size() +
                     native_muzzle_flashes.size() + gameplay.effects().size() +
                     presentation.projectiles.size() +
@@ -9313,19 +9361,8 @@ void updateDynamicLightFrame(
   // and recover one bounded light at their common centre; otherwise native
   // explosion effects are correctly suppressed but their illumination also
   // disappears.
-  struct LegacyLightAccumulator {
-    std::uint16_t controller{};
-    std::int16_t source_slot{-1};
-    game::LegacyEffectSpriteFamily family{
-        game::LegacyEffectSpriteFamily::explosion};
-    double x{};
-    double y{};
-    double z{};
-    double maximum_scale{};
-    std::uint8_t earliest_frame{0xffU};
-    std::uint16_t count{};
-  };
-  std::vector<LegacyLightAccumulator> legacy_lights;
+  auto &legacy_lights = scratch.legacy_lights;
+  legacy_lights.clear();
   legacy_lights.reserve(gameplay.legacyExplParticles().size());
   for (const auto &particle : gameplay.legacyExplParticles()) {
     if (particle.family != game::LegacyEffectSpriteFamily::explosion &&
@@ -9611,7 +9648,9 @@ RenderStats renderWorld(
 #if defined(SF_ENABLE_SURFACE_PICKER)
     std::vector<OT_TAG> &surface_picker_ordering_table,
 #endif
-    ActorShadowPresentationCache &shadow_cache, HmdPoseScratch &pose_scratch,
+    ActorShadowPresentationCache &shadow_cache,
+    DynamicLightFrameScratch &dynamic_light_scratch,
+    WeaponEffectsScratch &weapon_effects_scratch, HmdPoseScratch &pose_scratch,
     PrimitiveBuffer &primitives
 #if defined(SF_ENABLE_SURFACE_PICKER)
     ,
@@ -9637,202 +9676,214 @@ RenderStats renderWorld(
   shadow_cache.beginFrame(presentation.guest_frame);
   updateDynamicLightFrame(gameplay, actor_animations, presentation,
                           weapon_edges, retail_muzzle_flashes,
-                          native_muzzle_flashes);
+                          native_muzzle_flashes, dynamic_light_scratch);
   const auto presented_player_weapon =
       presentation.flashlight_enabled ? game::WeaponId::flashlight
                                       : gameplay.hud().inventory().current();
 
-  const auto add_to_budget = [](std::size_t &budget, std::size_t amount,
-                                const char *description) {
-    if (amount > std::numeric_limits<std::size_t>::max() - budget) {
+  // The retail state can only change at 20 Hz. Recounting every model,
+  // object, effect and pickup on each native presentation frame made the
+  // 120/240 FPS modes repeat the same capacity pass up to twelve times.
+  // Existing capacities remain valid after reset(), so plan them once per
+  // guest frame (and explicitly invalidate at mission/room transitions).
+  if (primitives.needsCapacityPlan(presentation.guest_frame,
+                                   gameplay.currentRoom())) {
+    const auto add_to_budget = [](std::size_t &budget, std::size_t amount,
+                                  const char *description) {
+      if (amount > std::numeric_limits<std::size_t>::max() - budget) {
+        throw core::Error{core::ErrorCode::invalid_format,
+                          std::string{description} +
+                              " primitive count overflows"};
+      }
+      budget += amount;
+    };
+    std::size_t polygon_count = 0;
+    for (const auto model_index : gameplay.activeModels()) {
+      add_to_budget(polygon_count,
+                    gameplay.models()[model_index].scene.polygonCount(),
+                    "Terrain");
+    }
+    constexpr std::size_t maximum_clipped_triangles = 4U;
+    if (polygon_count >
+        std::numeric_limits<std::size_t>::max() / maximum_clipped_triangles) {
       throw core::Error{core::ErrorCode::invalid_format,
-                        std::string{description} +
-                            " primitive count overflows"};
+                        "Terrain primitive count overflows"};
     }
-    budget += amount;
-  };
-  std::size_t polygon_count = 0;
-  for (const auto model_index : gameplay.activeModels()) {
-    add_to_budget(polygon_count,
-                  gameplay.models()[model_index].scene.polygonCount(),
-                  "Terrain");
-  }
-  constexpr std::size_t maximum_clipped_triangles = 4U;
-  if (polygon_count >
-      std::numeric_limits<std::size_t>::max() / maximum_clipped_triangles) {
-    throw core::Error{core::ErrorCode::invalid_format,
-                      "Terrain primitive count overflows"};
-  }
-  primitives.triangles.reserve(polygon_count * maximum_clipped_triangles);
-  primitives.quads.reserve(polygon_count);
-  std::size_t object_polygon_count{};
-  std::size_t object_quad_count{};
-  std::size_t actor_shadow_triangle_count{};
-  std::size_t fire_particle_budget{};
-  const auto add_shadow_budget = [&](std::size_t triangle_count,
-                                     const char *description) {
-    constexpr auto receiver_subdivision_triangles = std::size_t{4U};
-    if (triangle_count > std::numeric_limits<std::size_t>::max() /
-                             receiver_subdivision_triangles) {
+    primitives.triangles.reserve(polygon_count * maximum_clipped_triangles);
+    primitives.quads.reserve(polygon_count);
+    std::size_t object_polygon_count{};
+    std::size_t object_quad_count{};
+    std::size_t actor_shadow_triangle_count{};
+    std::size_t fire_particle_budget{};
+    const auto add_shadow_budget = [&](std::size_t triangle_count,
+                                       const char *description) {
+      constexpr auto receiver_subdivision_triangles = std::size_t{4U};
+      if (triangle_count > std::numeric_limits<std::size_t>::max() /
+                               receiver_subdivision_triangles) {
+        throw core::Error{core::ErrorCode::invalid_format,
+                          std::string{description} +
+                              " primitive count overflows"};
+      }
+      add_to_budget(actor_shadow_triangle_count,
+                    triangle_count * receiver_subdivision_triangles,
+                    description);
+    };
+    if (presentation.scrim.visible) {
+      const auto *scrim = gameplay.detachedScrimModel();
+      if (scrim == nullptr || !presentation.scrim.transform_valid) {
+        throw core::Error{core::ErrorCode::not_found,
+                          "Visible retail SCRIM is incomplete"};
+      }
+      add_to_budget(object_polygon_count, scrim->polygonCount(),
+                    "Retail SCRIM");
+    }
+    const auto add_weapon_model = [&](game::WeaponId weapon) {
+      const auto *weapon_model = gameplay.weaponModel(weapon);
+      if (weapon_model == nullptr) {
+        return;
+      }
+      const auto *geometry =
+          std::get_if<assets::GmdModel>(&weapon_model->geometry);
+      if (geometry != nullptr) {
+        add_to_budget(object_polygon_count, geometry->triangles().size(),
+                      "Weapon model");
+      }
+    };
+    for (const auto object_index : gameplay.activeObjects()) {
+      const auto *displayed_model = gameplay.displayedObjectModel(object_index);
+      if (displayed_model == nullptr) {
+        continue;
+      }
+      const auto &object_model = *displayed_model;
+      const auto &geometry = object_model.geometry;
+      if (const auto *model = std::get_if<assets::GmdModel>(&geometry)) {
+        add_to_budget(object_polygon_count, model->triangles().size(),
+                      "Object model");
+      } else if (const auto *hmd_model =
+                     std::get_if<assets::HmdModel>(&geometry)) {
+        add_to_budget(object_polygon_count, hmd_model->triangles().size(),
+                      "Actor model");
+        const auto *state = gameplay.npcState(object_index);
+        if (state != nullptr ||
+            gameplay.legacyDedicatedActorPresentation(object_index)) {
+          add_shadow_budget(hmd_model->triangles().size(), "Actor shadow");
+        }
+        if (const auto dedicated =
+                gameplay.legacyDedicatedActorWeapon(object_index)) {
+          add_weapon_model(*dedicated);
+        } else if (state != nullptr && state->health != 0U) {
+          add_weapon_model(state->weapon);
+        }
+      } else if (std::holds_alternative<game::ObjectFireEmitter>(geometry)) {
+        if (!gameplay.legacyEffectParticlesAuthoritative()) {
+          add_to_budget(fire_particle_budget, fire_particle_count,
+                        "Object fire");
+        }
+      } else {
+        add_to_budget(object_polygon_count,
+                      std::get<assets::EmdScene>(geometry).polygonCount(),
+                      "Object scene");
+      }
+    }
+    add_to_budget(object_polygon_count, glass_shards.size(), "Glass shards");
+    if (const auto *player_model =
+            std::get_if<assets::HmdModel>(&gameplay.playerModel().geometry)) {
+      add_to_budget(object_polygon_count, player_model->triangles().size(),
+                    "Player model");
+      if (gameplay.playerAlive()) {
+        add_weapon_model(presented_player_weapon);
+      }
+      if (!presentation.first_person_aim) {
+        add_shadow_budget(player_model->triangles().size(), "Player shadow");
+      }
+    }
+    if (!presentation.guest_camera_lists_captured) {
+      add_to_budget(fire_particle_budget, gameplay.legacyExplParticles().size(),
+                    "Legacy effect");
+    }
+    const auto &shot = gameplay.lastShot();
+    if (shot.fired && shot.weapon == game::WeaponId::flamethrower &&
+        !gameplay.legacyEffectParticlesAuthoritative()) {
+      add_to_budget(fire_particle_budget, 7U, "Flamethrower");
+    }
+    for (const auto &projectile : gameplay.projectiles()) {
+      if (projectile.active &&
+          projectile.phase == game::ProjectilePhase::explosion) {
+        add_to_budget(fire_particle_budget, 6U, "Projectile explosion");
+      }
+    }
+    for (const auto &effect : gameplay.effects()) {
+      if (effect.type == game::GameplayEffectType::burning_fire) {
+        add_to_budget(fire_particle_budget, 12U, "Burning effect");
+      } else if (effect.type == game::GameplayEffectType::explosion) {
+        add_to_budget(fire_particle_budget, 9U, "Explosion effect");
+      }
+    }
+    // A near-plane clipped camera-facing particle becomes at most three
+    // triangles. Counting it as a regular four-triangle clipped polygon keeps
+    // the shared object vector stable and therefore every OT pointer valid.
+    add_to_budget(object_polygon_count, fire_particle_budget, "Fire effect");
+    object_quad_count = object_polygon_count;
+    if (object_polygon_count >
+        std::numeric_limits<std::size_t>::max() / maximum_clipped_triangles) {
       throw core::Error{core::ErrorCode::invalid_format,
-                        std::string{description} +
-                            " primitive count overflows"};
+                        "Object primitive count overflows"};
     }
-    add_to_budget(actor_shadow_triangle_count,
-                  triangle_count * receiver_subdivision_triangles, description);
-  };
-  if (presentation.scrim.visible) {
-    const auto *scrim = gameplay.detachedScrimModel();
-    if (scrim == nullptr || !presentation.scrim.transform_valid) {
-      throw core::Error{core::ErrorCode::not_found,
-                        "Visible retail SCRIM is incomplete"};
-    }
-    add_to_budget(object_polygon_count, scrim->polygonCount(), "Retail SCRIM");
-  }
-  const auto add_weapon_model = [&](game::WeaponId weapon) {
-    const auto *weapon_model = gameplay.weaponModel(weapon);
-    if (weapon_model == nullptr) {
-      return;
-    }
-    const auto *geometry =
-        std::get_if<assets::GmdModel>(&weapon_model->geometry);
-    if (geometry != nullptr) {
-      add_to_budget(object_polygon_count, geometry->triangles().size(),
-                    "Weapon model");
-    }
-  };
-  for (const auto object_index : gameplay.activeObjects()) {
-    const auto *displayed_model = gameplay.displayedObjectModel(object_index);
-    if (displayed_model == nullptr) {
-      continue;
-    }
-    const auto &object_model = *displayed_model;
-    const auto &geometry = object_model.geometry;
-    if (const auto *model = std::get_if<assets::GmdModel>(&geometry)) {
-      add_to_budget(object_polygon_count, model->triangles().size(),
-                    "Object model");
-    } else if (const auto *hmd_model =
-                   std::get_if<assets::HmdModel>(&geometry)) {
-      add_to_budget(object_polygon_count, hmd_model->triangles().size(),
-                    "Actor model");
-      const auto *state = gameplay.npcState(object_index);
-      if (state != nullptr ||
-          gameplay.legacyDedicatedActorPresentation(object_index)) {
-        add_shadow_budget(hmd_model->triangles().size(), "Actor shadow");
-      }
-      if (const auto dedicated =
-              gameplay.legacyDedicatedActorWeapon(object_index)) {
-        add_weapon_model(*dedicated);
-      } else if (state != nullptr && state->health != 0U) {
-        add_weapon_model(state->weapon);
-      }
-    } else if (std::holds_alternative<game::ObjectFireEmitter>(geometry)) {
-      if (!gameplay.legacyEffectParticlesAuthoritative()) {
-        add_to_budget(fire_particle_budget, fire_particle_count, "Object fire");
-      }
-    } else {
-      add_to_budget(object_polygon_count,
-                    std::get<assets::EmdScene>(geometry).polygonCount(),
-                    "Object scene");
-    }
-  }
-  add_to_budget(object_polygon_count, glass_shards.size(), "Glass shards");
-  if (const auto *player_model =
-          std::get_if<assets::HmdModel>(&gameplay.playerModel().geometry)) {
-    add_to_budget(object_polygon_count, player_model->triangles().size(),
-                  "Player model");
-    if (gameplay.playerAlive()) {
-      add_weapon_model(presented_player_weapon);
-    }
-    if (!presentation.first_person_aim) {
-      add_shadow_budget(player_model->triangles().size(), "Player shadow");
-    }
-  }
-  if (!presentation.guest_camera_lists_captured) {
-    add_to_budget(fire_particle_budget, gameplay.legacyExplParticles().size(),
-                  "Legacy effect");
-  }
-  const auto &shot = gameplay.lastShot();
-  if (shot.fired && shot.weapon == game::WeaponId::flamethrower &&
-      !gameplay.legacyEffectParticlesAuthoritative()) {
-    add_to_budget(fire_particle_budget, 7U, "Flamethrower");
-  }
-  for (const auto &projectile : gameplay.projectiles()) {
-    if (projectile.active &&
-        projectile.phase == game::ProjectilePhase::explosion) {
-      add_to_budget(fire_particle_budget, 6U, "Projectile explosion");
-    }
-  }
-  for (const auto &effect : gameplay.effects()) {
-    if (effect.type == game::GameplayEffectType::burning_fire) {
-      add_to_budget(fire_particle_budget, 12U, "Burning effect");
-    } else if (effect.type == game::GameplayEffectType::explosion) {
-      add_to_budget(fire_particle_budget, 9U, "Explosion effect");
-    }
-  }
-  // A near-plane clipped camera-facing particle becomes at most three
-  // triangles. Counting it as a regular four-triangle clipped polygon keeps
-  // the shared object vector stable and therefore every OT pointer valid.
-  add_to_budget(object_polygon_count, fire_particle_budget, "Fire effect");
-  object_quad_count = object_polygon_count;
-  if (object_polygon_count >
-      std::numeric_limits<std::size_t>::max() / maximum_clipped_triangles) {
-    throw core::Error{core::ErrorCode::invalid_format,
-                      "Object primitive count overflows"};
-  }
-  primitives.objects.reserve(object_polygon_count * maximum_clipped_triangles);
-  primitives.object_quads.reserve(object_quad_count);
+    primitives.objects.reserve(object_polygon_count *
+                               maximum_clipped_triangles);
+    primitives.object_quads.reserve(object_quad_count);
 #if defined(SF_ENABLE_SURFACE_PICKER)
-  primitives.surface_picker_triangles.reserve(1U);
-  primitives.surface_picker_quads.reserve(1U);
+    primitives.surface_picker_triangles.reserve(1U);
+    primitives.surface_picker_quads.reserve(1U);
 #endif
-  primitives.actor_shadows.reserve(actor_shadow_triangle_count);
-  primitives.player.reserve(72U);
-  // OT entries hold raw primitive addresses. Reserve the full worst-case
-  // combat budget up front so a late blood spray/taser arc cannot reallocate
-  // either vector and invalidate already-linked wall/effect primitives.
-  primitives.effects.reserve(4096U);
-  primitives.combat_effect_lines.reserve(256U);
-  primitives.combat_effect_triangles.reserve(256U);
-  constexpr auto flashlight_cone_quad_budget = std::size_t{108U};
-  primitives.flashlight_cone_quads.reserve(flashlight_cone_quad_budget);
-  primitives.effect_sprite_quads.reserve(2048U);
-  primitives.park2_flamethrower_ribbons.reserve(
-      gameplay.legacyPark2FlamethrowerRibbons().size());
-  std::size_t pickup_sprite_budget{};
-  for (const auto &item : presentation.dropped_items) {
-    add_to_budget(pickup_sprite_budget,
-                  game::droppedItemIconLayers(item.item).size(),
-                  "Pickup sprite");
-  }
-  primitives.pickup_sprites.reserve(pickup_sprite_budget);
-  std::size_t projectile_sprite_budget{};
-  for (const auto &projectile : presentation.projectiles) {
-    if (!projectile.active ||
-        projectile.phase != game::ProjectilePhase::flying ||
-        (projectile.weapon != game::WeaponId::fragmentation_grenade &&
-         projectile.weapon != game::WeaponId::gas_grenade)) {
-      continue;
+    primitives.actor_shadows.reserve(actor_shadow_triangle_count);
+    primitives.player.reserve(72U);
+    // OT entries hold raw primitive addresses. Reserve the full worst-case
+    // combat budget up front so a late blood spray/taser arc cannot reallocate
+    // either vector and invalidate already-linked wall/effect primitives.
+    primitives.effects.reserve(4096U);
+    primitives.combat_effect_lines.reserve(256U);
+    primitives.combat_effect_triangles.reserve(256U);
+    constexpr auto flashlight_cone_quad_budget = std::size_t{108U};
+    primitives.flashlight_cone_quads.reserve(flashlight_cone_quad_budget);
+    primitives.effect_sprite_quads.reserve(2048U);
+    primitives.park2_flamethrower_ribbons.reserve(
+        gameplay.legacyPark2FlamethrowerRibbons().size());
+    std::size_t pickup_sprite_budget{};
+    for (const auto &item : presentation.dropped_items) {
+      add_to_budget(pickup_sprite_budget,
+                    game::droppedItemIconLayers(item.item).size(),
+                    "Pickup sprite");
     }
-    add_to_budget(
-        projectile_sprite_budget,
-        game::weaponDefinition(projectile.weapon).icon.layers().size(),
-        "Projectile sprite");
+    primitives.pickup_sprites.reserve(pickup_sprite_budget);
+    std::size_t projectile_sprite_budget{};
+    for (const auto &projectile : presentation.projectiles) {
+      if (!projectile.active ||
+          projectile.phase != game::ProjectilePhase::flying ||
+          (projectile.weapon != game::WeaponId::fragmentation_grenade &&
+           projectile.weapon != game::WeaponId::gas_grenade)) {
+        continue;
+      }
+      add_to_budget(
+          projectile_sprite_budget,
+          game::weaponDefinition(projectile.weapon).icon.layers().size(),
+          "Projectile sprite");
+    }
+    primitives.projectile_sprites.reserve(projectile_sprite_budget);
+    primitives.guest_sprites.reserve(presentation.guest_sprites.size() +
+                                     retained_sprites.size());
+    primitives.guest_lines.reserve(presentation.guest_lines.size());
+    primitives.guest_line_modes.reserve(presentation.guest_lines.size());
+    const auto guest_raw_packet_budget =
+        presentation.guest_raw_packets.size() + retained_raw_packets.size();
+    primitives.guest_raw_tiles.reserve(guest_raw_packet_budget);
+    primitives.guest_raw_flat_lines.reserve(guest_raw_packet_budget);
+    primitives.guest_raw_flat_triangles.reserve(guest_raw_packet_budget);
+    primitives.guest_raw_flat_quads.reserve(guest_raw_packet_budget);
+    primitives.guest_raw_gouraud_lines.reserve(guest_raw_packet_budget);
+    primitives.guest_raw_gouraud_triangles.reserve(guest_raw_packet_budget);
+    primitives.guest_raw_modes.reserve(guest_raw_packet_budget);
   }
-  primitives.projectile_sprites.reserve(projectile_sprite_budget);
-  primitives.guest_sprites.reserve(presentation.guest_sprites.size() +
-                                   retained_sprites.size());
-  primitives.guest_lines.reserve(presentation.guest_lines.size());
-  primitives.guest_line_modes.reserve(presentation.guest_lines.size());
-  const auto guest_raw_packet_budget =
-      presentation.guest_raw_packets.size() + retained_raw_packets.size();
-  primitives.guest_raw_tiles.reserve(guest_raw_packet_budget);
-  primitives.guest_raw_flat_lines.reserve(guest_raw_packet_budget);
-  primitives.guest_raw_flat_triangles.reserve(guest_raw_packet_budget);
-  primitives.guest_raw_flat_quads.reserve(guest_raw_packet_budget);
-  primitives.guest_raw_gouraud_lines.reserve(guest_raw_packet_budget);
-  primitives.guest_raw_gouraud_triangles.reserve(guest_raw_packet_budget);
-  primitives.guest_raw_modes.reserve(guest_raw_packet_budget);
   primitives.lockStorage();
 
   SetRotMatrix(const_cast<MATRIX *>(&view));
@@ -10073,7 +10124,7 @@ RenderStats renderWorld(
                       native_muzzle_flashes, retail_lines, combat_particles,
                       fire_texture_placement, effect_textures, actor_animations,
                       presentation, view, ordering_table, fire_ordering_table,
-                      primitives, stats);
+                      primitives, stats, weapon_effects_scratch);
   renderGuestCameraLists(gameplay, textures, presentation, retained_sprites,
                          retained_raw_packets, view, ordering_table,
                          guest_overlay_ordering_table, primitives, stats);
@@ -10794,6 +10845,11 @@ struct GameplayMessageLayout final {
   float available_width{};
   float scale{1.0F};
   float block_height{8.0F};
+};
+
+struct GameplayHudScratch final {
+  std::vector<std::optional<GameplayMessageLayout>> message_layouts;
+  std::vector<std::uint8_t> retail_scope_messages;
 };
 
 std::size_t originalHudLineCount(std::string_view text) noexcept {
@@ -11754,7 +11810,7 @@ void drawGameplayHud(const HudTextureAtlas &textures,
                      const KeyboardMouseBindings &bindings,
                      bool first_person_aim, std::int32_t aim_heading,
                      double presented_weapon_switch_frames, int offset_x,
-                     int offset_y) {
+                     int offset_y, GameplayHudScratch &scratch) {
   const auto &hud = gameplay.hud();
   const auto target_locked = gameplay.targetLocked();
   const auto project_anchor =
@@ -11999,9 +12055,11 @@ void drawGameplayHud(const HudTextureAtlas &textures,
         return message.channel == game::LegacyUiMessageChannel::status &&
                message.backdrop.has_value();
       });
-  std::vector<std::optional<GameplayMessageLayout>> message_layouts;
+  auto &message_layouts = scratch.message_layouts;
+  message_layouts.clear();
   message_layouts.reserve(messages.size());
-  std::vector<bool> retail_scope_messages;
+  auto &retail_scope_messages = scratch.retail_scope_messages;
+  retail_scope_messages.clear();
   retail_scope_messages.reserve(messages.size());
   for (const auto &message : messages) {
     const auto scope_message = isRetailScopeMessage(
@@ -13372,7 +13430,11 @@ SceneViewerResult PsyCrossSceneViewer::run(
 #endif
   PrimitiveBuffer primitives;
   ActorShadowPresentationCache actor_shadow_cache;
+  DynamicLightFrameScratch dynamic_light_scratch;
+  WeaponEffectsScratch weapon_effects_scratch;
   HmdPoseScratch hmd_pose_scratch;
+  std::vector<WorldCalloutAnchor> world_callout_scratch;
+  GameplayHudScratch gameplay_hud_scratch;
   constexpr std::uint16_t pause_button = 0x08U;
   constexpr std::uint16_t cancel_button = 0x1000U | 0x2000U;
   constexpr std::uint16_t confirm_button = 0x4000U | 0x8000U;
@@ -13493,6 +13555,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
     muzzle_flash_edges.reset();
     glass_shatter.reset(gameplay);
     actor_shadow_cache.reset();
+    primitives.invalidateCapacityPlan();
     weapon_presentation_edges.observe(gameplay.legacyPresentationFrame());
     muzzle_flash_edges.observe(gameplay.effects());
     simulation_accumulator_seconds = 0.0;
@@ -13648,9 +13711,9 @@ SceneViewerResult PsyCrossSceneViewer::run(
     const auto target_anchor =
         aimTargetAnchor(gameplay, actor_animations, actor_tick,
                         presentation.objects, hmd_pose_scratch);
-    const auto world_callouts =
-        worldCalloutAnchors(gameplay, actor_animations, actor_tick,
-                            presentation.objects, hmd_pose_scratch);
+    worldCalloutAnchors(gameplay, actor_animations, actor_tick,
+                        presentation.objects, hmd_pose_scratch,
+                        world_callout_scratch);
     auto view = makeViewMatrix(camera);
     registerPreciseViewMatrix(view, camera);
     // Retail pickups and flying grenade billboards use interface art but are
@@ -13674,7 +13737,8 @@ SceneViewerResult PsyCrossSceneViewer::run(
 #if defined(SF_ENABLE_SURFACE_PICKER)
         surface_picker_ordering_table,
 #endif
-        actor_shadow_cache, hmd_pose_scratch, primitives
+        actor_shadow_cache, dynamic_light_scratch, weapon_effects_scratch,
+        hmd_pose_scratch, primitives
 #if defined(SF_ENABLE_SURFACE_PICKER)
         ,
         surface_picker
@@ -13733,6 +13797,10 @@ SceneViewerResult PsyCrossSceneViewer::run(
     GR_SetPolygonOffset(0.0F, 0.0F);
     GR_SetDepthState(1, 1);
     GR_SetBlendMode(BM_NONE);
+    // Darken only opaque world geometry from its resolved PGXP depth. Running
+    // before additive fire and the depth-free presentation passes keeps
+    // particles, optics, interface glyphs and FMV overlays untouched.
+    GR_ApplySSAO();
     // Opaque geometry owns PGXP-Z. Fire blends additively against that
     // depth without writing it, so walls occlude particles and lightbars.
     GR_SetBlendMode(BM_ADD);
@@ -13770,11 +13838,11 @@ SceneViewerResult PsyCrossSceneViewer::run(
                            presentation.retail_environment_active);
     drawGameBrightness(pause_settings.brightness);
     if (!gameplay.cinematic() && !gameplay.missionComplete()) {
-      drawGameplayHud(hud_textures, gameplay, camera, target_anchor,
-                      world_callouts, input_, presentation.first_person_aim,
-                      aim_heading, presented_weapon_switch_frames,
-                      pause_settings.screen_center_x,
-                      pause_settings.screen_center_y);
+      drawGameplayHud(
+          hud_textures, gameplay, camera, target_anchor, world_callout_scratch,
+          input_, presentation.first_person_aim, aim_heading,
+          presented_weapon_switch_frames, pause_settings.screen_center_x,
+          pause_settings.screen_center_y, gameplay_hud_scratch);
       drawRetailGrenadeTrajectory(presentation, pause_settings.screen_center_x,
                                   pause_settings.screen_center_y);
     }
@@ -14434,20 +14502,18 @@ SceneViewerResult PsyCrossSceneViewer::run(
     auto sampled_input = game::GameplayInput{
         // Chase keeps the original tank controls. First-person uses a modern
         // split: W/S moves, A/D strafes, mouse/right-stick controls sight.
-        .move = movement_armed
-                    ? (manual_aim ? first_person_input.move
-                                  : mapped_input.move_forward)
-                    : 0.0,
+        .move = movement_armed ? (manual_aim ? first_person_input.move
+                                             : mapped_input.move_forward)
+                               : 0.0,
         .turn = movement_armed && !manual_aim ? mapped_input.turn : 0.0,
         .run = movement_armed && mapped_input.run.held,
         .aim = manual_aim,
         .next_weapon = mapped_input.next_weapon.pressed,
         .previous_weapon = mapped_input.previous_weapon.pressed,
         .quick_weapon = mapped_input.quick_weapon.pressed,
-        .strafe = movement_armed
-                      ? (manual_aim ? first_person_input.strafe
-                                    : mapped_input.move_strafe)
-                      : 0.0,
+        .strafe = movement_armed ? (manual_aim ? first_person_input.strafe
+                                               : mapped_input.move_strafe)
+                                 : 0.0,
         // Directional look is a held rate and is safe on every catch-up tick.
         // Relative mouse motion is accumulated separately below and consumed
         // exactly once.
@@ -14474,8 +14540,8 @@ SceneViewerResult PsyCrossSceneViewer::run(
         .direct_weapon = direct_weapon,
         // Q/E or physical L2/R2 retain the original camera-only corner peek
         // without being confused with first-person A/D locomotion.
-        .aim_peek = movement_armed && manual_aim ? first_person_input.peek
-                                                 : 0.0,
+        .aim_peek =
+            movement_armed && manual_aim ? first_person_input.peek : 0.0,
     };
     if (manual_aim) {
       sf::platform::PlayerInput relative_look;
@@ -14714,6 +14780,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
     if (gameplay.currentRoom() != previous_room) {
       previous_room = gameplay.currentRoom();
       actor_shadow_cache.reset();
+      primitives.invalidateCapacityPlan();
       textures.ensure(gameplay);
       log_next_frame = true;
     }

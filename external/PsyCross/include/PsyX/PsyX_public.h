@@ -67,7 +67,6 @@ typedef struct
 extern "C"
 {
 #endif
-
 	/* Mapped inputs */
 	extern PsyXControllerMapping g_cfg_controllerMapping;
 	extern PsyXKeyboardMapping g_cfg_keyboardMapping;
@@ -81,6 +80,7 @@ extern "C"
 	extern int g_cfg_pgxpZBuffer;
 	extern int g_cfg_bilinearFiltering;
 	extern int g_cfg_anisotropicFiltering;
+	extern int g_cfg_ssao;
 	extern int g_cfg_pgxpTextureCorrection;
 	extern int g_cfg_msaaSamples;
 	extern int g_cfg_aspectMode;

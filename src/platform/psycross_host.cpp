@@ -50,6 +50,7 @@ void configureGraphics(const GraphicsSettings &settings) noexcept {
   g_cfg_msaaSamples = settings.msaa_samples;
   g_cfg_bilinearFiltering = settings.bilinear_filtering ? 1 : 0;
   g_cfg_anisotropicFiltering = settings.anisotropic_filtering ? 1 : 0;
+  g_cfg_ssao = settings.ambient_occlusion ? 1 : 0;
   g_cfg_aspectMode = settings.aspect_ratio == AspectRatioMode::adaptive
                          ? PSYX_ASPECT_ADAPTIVE
                          : PSYX_ASPECT_ORIGINAL_4_3;
@@ -166,21 +167,20 @@ sampleHostKeyboardMouseActions(const KeyboardMouseBindings &bindings) {
   const auto *keyboard = SDL_GetKeyboardState(&keyboard_count);
   const auto keyboard_state =
       keyboard != nullptr && keyboard_count > 0
-          ? std::span<const std::uint8_t>{
-                keyboard, static_cast<std::size_t>(keyboard_count)}
+          ? std::span<const std::uint8_t>{keyboard, static_cast<std::size_t>(
+                                                        keyboard_count)}
           : std::span<const std::uint8_t>{};
   const auto mouse_buttons = SDL_GetMouseState(nullptr, nullptr);
   return sampleKeyboardMouseActions(
-      bindings,
-      KeyboardMouseDeviceState{
-          .keyboard = keyboard_state,
-          .mouse_left = (mouse_buttons & SDL_BUTTON_LMASK) != 0U,
-          .mouse_right = (mouse_buttons & SDL_BUTTON_RMASK) != 0U,
-          .mouse_middle = (mouse_buttons & SDL_BUTTON_MMASK) != 0U,
-          .mouse_x1 = (mouse_buttons & SDL_BUTTON_X1MASK) != 0U,
-          .mouse_x2 = (mouse_buttons & SDL_BUTTON_X2MASK) != 0U,
-          .mouse_wheel_delta = detail::consumePsyCrossMouseWheel(),
-      });
+      bindings, KeyboardMouseDeviceState{
+                    .keyboard = keyboard_state,
+                    .mouse_left = (mouse_buttons & SDL_BUTTON_LMASK) != 0U,
+                    .mouse_right = (mouse_buttons & SDL_BUTTON_RMASK) != 0U,
+                    .mouse_middle = (mouse_buttons & SDL_BUTTON_MMASK) != 0U,
+                    .mouse_x1 = (mouse_buttons & SDL_BUTTON_X1MASK) != 0U,
+                    .mouse_x2 = (mouse_buttons & SDL_BUTTON_X2MASK) != 0U,
+                    .mouse_wheel_delta = detail::consumePsyCrossMouseWheel(),
+                });
 }
 
 SaveStoreDecision
@@ -199,13 +199,12 @@ storeTitleSaveSlotsWithRecovery(const std::filesystem::path &path,
   const auto input_name = [&](KeyboardMouseAction action) {
     return std::string{keyboardMouseInputName(bindings[action])};
   };
-  const auto notice = "       SAVE FAILED\n\n  " +
-                      input_name(KeyboardMouseAction::interact) +
-                      "  Retry\n  " + input_name(KeyboardMouseAction::fire) +
-                      "  Continue without saving\n  " +
-                      input_name(KeyboardMouseAction::pause) +
-                      "  Return to title\n\n"
-                      "Campaign progress remains active.";
+  const auto notice =
+      "       SAVE FAILED\n\n  " + input_name(KeyboardMouseAction::interact) +
+      "  Retry\n  " + input_name(KeyboardMouseAction::fire) +
+      "  Continue without saving\n  " + input_name(KeyboardMouseAction::pause) +
+      "  Return to title\n\n"
+      "Campaign progress remains active.";
   auto keyboard_initialized = false;
   auto interact_was_down = false;
   auto fire_was_down = false;
@@ -254,12 +253,10 @@ storeTitleSaveSlotsWithRecovery(const std::filesystem::path &path,
 
 int titleAnalogDirection(const PADRAW &pad) noexcept;
 
-game::CampaignSaveResult
-runCampaignSaveMenu(const game::MissionPackage &mission,
-                    const game::TitleSaveSlots &slots, PADRAW &pad,
-                    std::uint16_t &previous_buttons,
-                    detail::PsyCrossUiAudio &ui_audio,
-                    const KeyboardMouseBindings &bindings) {
+game::CampaignSaveResult runCampaignSaveMenu(
+    const game::MissionPackage &mission, const game::TitleSaveSlots &slots,
+    PADRAW &pad, std::uint16_t &previous_buttons,
+    detail::PsyCrossUiAudio &ui_audio, const KeyboardMouseBindings &bindings) {
   // Gameplay already owns the correct 384x240 presentation target. Reuse its
   // original font/ACD renderer instead of switching to the debug-font movie
   // target whose VRAM page has been overwritten by the mission renderer.
@@ -521,7 +518,7 @@ public:
     detail::PsyCrossUiAudio ui_audio{cue_path_};
     detail::PsyCrossMoviePlayer movie_player;
     detail::PsyCrossCampaignSaveRenderer title_load_renderer{initial_mission_,
-                                                              input_};
+                                                             input_};
     const detail::MovieOverlayCallbacks overlay{
         [this, &pad, &ui_audio, &title_cheat_latched,
          &title_keyboard_initialized, &title_interact_was_down,
@@ -529,19 +526,17 @@ public:
                                 std::uint32_t movie_frame) {
           ui_audio.update();
           const auto actions = sampleHostKeyboardMouseActions(input_);
-          const auto interact_down =
-              actions[KeyboardMouseAction::interact];
+          const auto interact_down = actions[KeyboardMouseAction::interact];
           const auto pause_down = actions[KeyboardMouseAction::pause];
           const auto interact_pressed = title_keyboard_initialized &&
                                         interact_down &&
                                         !title_interact_was_down;
-          const auto pause_pressed = title_keyboard_initialized && pause_down &&
-                                     !title_pause_was_down;
+          const auto pause_pressed =
+              title_keyboard_initialized && pause_down && !title_pause_was_down;
           title_keyboard_initialized = true;
           title_interact_was_down = interact_down;
           title_pause_was_down = pause_down;
-          const auto held =
-              static_cast<std::uint16_t>(~readHostButtons(pad));
+          const auto held = static_cast<std::uint16_t>(~readHostButtons(pad));
           const auto title_cheat = game::detectRetailTitleCheat(
               held, menu_.phase() == game::TitlePhase::menu &&
                         menu_.selection() == 0U);
@@ -567,10 +562,9 @@ public:
               .confirm = (pressed & (0x4000U | 0x8000U | 0x08U)) != 0 ||
                          interact_pressed,
               .cancel = (pressed & (0x2000U | 0x01U)) != 0 || pause_pressed,
-              .confirm_down =
-                  ((~readHostButtons(pad)) &
-                   (0x4000U | 0x8000U | 0x08U)) != 0U ||
-                  interact_down,
+              .confirm_down = ((~readHostButtons(pad)) &
+                               (0x4000U | 0x8000U | 0x08U)) != 0U ||
+                              interact_down,
           };
           const auto previous_selection = menu_.selection();
           const auto previous_phase = menu_.phase();
@@ -733,9 +727,8 @@ public:
         // Every campaign entry owns a mission-start loading boundary. DLFs
         // with authored directive text use it verbatim; continuation maps use
         // their catalog title instead of silently skipping the briefing UI.
-        previous_buttons =
-            mission_start.run(*mission, pad, previous_buttons, input_,
-                              campaign_carry);
+        previous_buttons = mission_start.run(*mission, pad, previous_buttons,
+                                             input_, campaign_carry);
 
         const auto &definition = mission->definition();
         std::cout << "Starting mission " << (definition.index + 1U) << ": "
@@ -922,10 +915,9 @@ public:
                                          mission_start.takePreloadedAudio());
     if (result.reason == detail::SceneExitReason::mission_complete &&
         !mission_.endingMovie().path.empty()) {
-      static_cast<void>(movie_player.playStandalone(mission_.endingMovie(), pad,
-                                                    result.previous_buttons,
-                                                    endingMovieSkipPolicy(
-                                                        mission_.definition())));
+      static_cast<void>(movie_player.playStandalone(
+          mission_.endingMovie(), pad, result.previous_buttons,
+          endingMovieSkipPolicy(mission_.definition())));
     }
     PadStopCom();
   }

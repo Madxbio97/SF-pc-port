@@ -29,6 +29,8 @@ remain unchanged.
 - **Resolution** controls the internal scene and depth buffers as well as output.
 - **Aspect** chooses original 4:3 framing or adaptive Hor+/Vert+ framing.
 - **Fullscreen** starts in borderless desktop fullscreen.
+- **Screen-space ambient occlusion** adds soft depth-aware shading where world
+  surfaces meet. It does not affect the HUD or menu text.
 - **MSAA** selects disabled, 2x, 4x or 8x multisampling.
 - **Bilinear filtering** smooths textures while clamping each PS1 atlas tile to
   avoid seams and neighboring-texture bleed.

@@ -3,6 +3,28 @@
 All notable public-test changes are documented here. The project currently uses
 pre-release tags rather than a stable semantic-versioning promise.
 
+## 0.1.0-public-test.10 - 2026-07-28
+
+### Rendering
+
+- Added optional half-resolution SSAO with reversed-Z reconstruction and a
+  depth-aware bilateral blur. The effect is composited before transparent
+  effects and HUD rendering, so interface art remains clean.
+- Removed synchronous OpenGL state queries from the frame, resolve and SSAO
+  paths by making renderer-owned state explicit and cached.
+- Replaced full VRAM texture refreshes with coalesced dirty-row uploads and
+  converted native framebuffer readback directly into guest VRAM.
+- Reused dynamic-light, shadow, HUD, callout and weapon-effect scratch storage
+  across presentation frames, and moved expensive primitive-capacity planning
+  to the original 20 Hz guest tick.
+- Reduced SSAO sampling and blur bandwidth while retaining depth-aware edges.
+
+### Release artifact
+
+- File: `SyphonFilterPC-0.1.0-public-test.10-win64.zip`
+- Checksum: supplied in the accompanying `.zip.sha256` file.
+- Supported disc: *Syphon Filter* USA v1.1 (`SCUS-94240`), BIN/CUE.
+
 ## 0.1.0-public-test.9 - 2026-07-28
 
 ### Gameplay and input
