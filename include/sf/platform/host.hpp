@@ -27,7 +27,6 @@ struct GraphicsSettings {
   int msaa_samples{4};
   bool bilinear_filtering{true};
   bool anisotropic_filtering{true};
-  bool ambient_occlusion{true};
   AspectRatioMode aspect_ratio{AspectRatioMode::adaptive};
   bool vsync{true};
   std::uint32_t frame_limit{60U};

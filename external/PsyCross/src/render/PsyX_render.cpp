@@ -205,7 +205,6 @@ int g_cfg_pgxpTextureCorrection = 1;
 int g_cfg_pgxpZBuffer = 1;
 int g_cfg_bilinearFiltering = 0;
 int g_cfg_anisotropicFiltering = 0;
-int g_cfg_ssao = 0;
 int g_cfg_msaaSamples = 0;
 int g_cfg_aspectMode = PSYX_ASPECT_ORIGINAL_4_3;
 
@@ -434,24 +433,6 @@ int g_nativeFramebufferWidth;
 int g_nativeFramebufferHeight;
 int g_nativeFramebufferSamples;
 
-GLuint g_glSSAOFramebuffer[2];
-GLuint g_glSSAOTexture[2];
-GLuint g_glSSAOVertexArray;
-int g_ssaoFramebufferWidth;
-int g_ssaoFramebufferHeight;
-int g_ssaoFramebufferAvailable;
-ShaderID g_ssaoShader;
-ShaderID g_ssaoBlurShader;
-ShaderID g_ssaoCompositeShader;
-GLint g_ssaoProjectionScaleLoc = -1;
-GLint g_ssaoNearFarLoc = -1;
-GLint g_ssaoBlurInvResolutionLoc = -1;
-GLint g_ssaoBlurNearFarLoc = -1;
-float g_ssaoProjectionScaleX;
-float g_ssaoProjectionScaleY;
-float g_ssaoNearPlane;
-float g_ssaoFarPlane;
-
 #if defined(RENDERER_OGL)
 static GLenum g_nativeDepthInternalFormat = GL_DEPTH32F_STENCIL8;
 
@@ -474,41 +455,6 @@ static void PsyX_AllocateNativeDepthTexture(GLenum internalFormat, int width,
   glBindTexture(GL_TEXTURE_2D, 0);
 }
 
-static int PsyX_EnsureSSAOFramebuffers(int width, int height) {
-  if (!g_cfg_ssao)
-    return 1;
-
-  const int aoWidth = std::max(1, (width + 1) / 2);
-  const int aoHeight = std::max(1, (height + 1) / 2);
-  if (g_ssaoFramebufferAvailable && g_ssaoFramebufferWidth == aoWidth &&
-      g_ssaoFramebufferHeight == aoHeight) {
-    return 1;
-  }
-
-  g_ssaoFramebufferAvailable = 0;
-  for (int index = 0; index < 2; ++index) {
-    glBindTexture(GL_TEXTURE_2D, g_glSSAOTexture[index]);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, aoWidth, aoHeight, 0, GL_RED,
-                 GL_UNSIGNED_BYTE, NULL);
-    glBindFramebuffer(GL_FRAMEBUFFER, g_glSSAOFramebuffer[index]);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
-                           g_glSSAOTexture[index], 0);
-    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
-      eprintwarn("SSAO framebuffer is unavailable; disabling SSAO\n");
-      glBindTexture(GL_TEXTURE_2D, 0);
-      return 0;
-    }
-  }
-  glBindTexture(GL_TEXTURE_2D, 0);
-  g_ssaoFramebufferWidth = aoWidth;
-  g_ssaoFramebufferHeight = aoHeight;
-  g_ssaoFramebufferAvailable = 1;
-  return 1;
-}
 #endif
 
 static GLuint PsyX_GetNativeDrawFramebuffer() {
@@ -623,9 +569,6 @@ static int PsyX_EnsureNativeFramebuffer() {
 
   g_nativeFramebufferWidth = nativeViewport.w;
   g_nativeFramebufferHeight = nativeViewport.h;
-#if defined(RENDERER_OGL)
-  PsyX_EnsureSSAOFramebuffers(nativeViewport.w, nativeViewport.h);
-#endif
   eprintf("*Internal render target: %dx%d, MSAA: %dx\n",
           g_nativeFramebufferWidth, g_nativeFramebufferHeight,
           g_nativeFramebufferSamples);
@@ -854,12 +797,6 @@ void GR_Shutdown() {
   glDeleteTextures(1, &g_glNativeColorTexture);
 #if defined(RENDERER_OGL)
   glDeleteTextures(1, &g_glNativeDepthTexture);
-  glDeleteFramebuffers(2, g_glSSAOFramebuffer);
-  glDeleteTextures(2, g_glSSAOTexture);
-  glDeleteVertexArrays(1, &g_glSSAOVertexArray);
-  glDeleteProgram(g_ssaoShader);
-  glDeleteProgram(g_ssaoBlurShader);
-  glDeleteProgram(g_ssaoCompositeShader);
 #endif
 
   GR_DestroyTexture(g_vramTexturesDouble[0]);
@@ -1628,187 +1565,6 @@ void GR_InitialisePSXShaders() {
 #endif
 }
 
-#if defined(RENDERER_OGL)
-static const char *g_ssaoShaderSource = R"(
-#ifdef VERTEX
-varying vec2 v_uv;
-void main()
-{
-	vec2 position = vec2(gl_VertexID == 1 ? 3.0 : -1.0,
-		gl_VertexID == 2 ? 3.0 : -1.0);
-	v_uv = position * 0.5 + 0.5;
-	gl_Position = vec4(position, 0.0, 1.0);
-}
-#endif
-#ifdef FRAGMENT
-varying vec2 v_uv;
-uniform sampler2D s_depth;
-uniform vec2 u_projectionScale;
-uniform vec2 u_nearFar;
-
-float linearDepth(float depth)
-{
-	return (u_nearFar.x * u_nearFar.y) /
-		(u_nearFar.x + depth * (u_nearFar.y - u_nearFar.x));
-}
-
-vec3 viewPosition(vec2 uv, float depth)
-{
-	float z = linearDepth(depth);
-	return vec3((uv * 2.0 - 1.0) * z / u_projectionScale, z);
-}
-
-float hash12(vec2 value)
-{
-	return fract(sin(dot(value, vec2(12.9898, 78.233))) * 43758.5453);
-}
-
-void main()
-{
-	float centerDepth = texture2D(s_depth, v_uv).r;
-	if (centerDepth <= 0.000001)
-	{
-		fragColor = vec4(1.0);
-		return;
-	}
-
-	vec3 center = viewPosition(v_uv, centerDepth);
-	vec3 normal = normalize(cross(dFdx(center), dFdy(center)));
-	if (dot(normal, -center) < 0.0)
-		normal = -normal;
-	vec3 helper = abs(normal.z) < 0.85 ? vec3(0.0, 0.0, 1.0)
-		: vec3(0.0, 1.0, 0.0);
-	vec3 tangent = normalize(cross(helper, normal));
-	vec3 bitangent = cross(normal, tangent);
-	float rotation = hash12(gl_FragCoord.xy) * 6.28318530718;
-	float radius = clamp(center.z * 0.018, 0.45, 7.0);
-	float bias = max(radius * 0.035, 0.025);
-	float occlusion = 0.0;
-	for (int sampleIndex = 0; sampleIndex < 8; ++sampleIndex)
-	{
-		float sequence = (float(sampleIndex) + 0.5) / 8.0;
-		float angle = float(sampleIndex) * 2.39996323 + rotation;
-		float diskRadius = sqrt(sequence);
-		vec3 hemisphere = vec3(cos(angle) * diskRadius,
-			sin(angle) * diskRadius, sqrt(max(1.0 - sequence, 0.0)));
-		vec3 direction = tangent * hemisphere.x + bitangent * hemisphere.y +
-			normal * hemisphere.z;
-		vec3 probe = center + direction * radius;
-		if (probe.z <= u_nearFar.x)
-			continue;
-		vec2 sampleUv = probe.xy * u_projectionScale / probe.z * 0.5 + 0.5;
-		if (any(lessThan(sampleUv, vec2(0.0))) ||
-			any(greaterThan(sampleUv, vec2(1.0))))
-			continue;
-		float sampleDepth = texture2D(s_depth, sampleUv).r;
-		if (sampleDepth <= 0.000001)
-			continue;
-		float sampleZ = linearDepth(sampleDepth);
-		float rangeWeight = 1.0 - smoothstep(radius, radius * 2.5,
-			abs(sampleZ - center.z));
-		occlusion += (sampleZ < probe.z - bias ? 1.0 : 0.0) * rangeWeight;
-	}
-	float ao = clamp(1.0 - occlusion * (0.68 / 8.0), 0.58, 1.0);
-	fragColor = vec4(ao, ao, ao, 1.0);
-}
-#endif
-)";
-
-static const char *g_ssaoBlurShaderSource = R"(
-#ifdef VERTEX
-varying vec2 v_uv;
-void main()
-{
-	vec2 position = vec2(gl_VertexID == 1 ? 3.0 : -1.0,
-		gl_VertexID == 2 ? 3.0 : -1.0);
-	v_uv = position * 0.5 + 0.5;
-	gl_Position = vec4(position, 0.0, 1.0);
-}
-#endif
-#ifdef FRAGMENT
-varying vec2 v_uv;
-uniform sampler2D s_ao;
-uniform sampler2D s_depth;
-uniform vec2 u_invResolution;
-uniform vec2 u_nearFar;
-
-float linearDepth(float depth)
-{
-	return (u_nearFar.x * u_nearFar.y) /
-		(u_nearFar.x + depth * (u_nearFar.y - u_nearFar.x));
-}
-
-void main()
-{
-	float centerDepth = texture2D(s_depth, v_uv).r;
-	float centerZ = linearDepth(centerDepth);
-	float depthTolerance = max(0.12, centerZ * 0.012);
-	float total = 0.0;
-	float weightTotal = 0.0;
-	for (int tap = 0; tap < 5; ++tap)
-	{
-		vec2 direction = tap == 0 ? vec2(0.0) :
-			(tap == 1 ? vec2(1.0, 0.0) :
-			(tap == 2 ? vec2(-1.0, 0.0) :
-			(tap == 3 ? vec2(0.0, 1.0) : vec2(0.0, -1.0))));
-		vec2 offset = direction * u_invResolution;
-		float tapDepth = texture2D(s_depth, v_uv + offset).r;
-		float tapZ = linearDepth(tapDepth);
-		float spatialWeight = tap == 0 ? 1.0 : 0.72;
-		float depthWeight = exp(-abs(tapZ - centerZ) / depthTolerance);
-		float weight = spatialWeight * depthWeight;
-		total += texture2D(s_ao, v_uv + offset).r * weight;
-		weightTotal += weight;
-	}
-	float ao = total / max(weightTotal, 0.0001);
-	fragColor = vec4(ao, ao, ao, 1.0);
-}
-#endif
-)";
-
-static const char *g_ssaoCompositeShaderSource = R"(
-#ifdef VERTEX
-varying vec2 v_uv;
-void main()
-{
-	vec2 position = vec2(gl_VertexID == 1 ? 3.0 : -1.0,
-		gl_VertexID == 2 ? 3.0 : -1.0);
-	v_uv = position * 0.5 + 0.5;
-	gl_Position = vec4(position, 0.0, 1.0);
-}
-#endif
-#ifdef FRAGMENT
-varying vec2 v_uv;
-uniform sampler2D s_ao;
-void main()
-{
-	float ao = texture2D(s_ao, v_uv).r;
-	fragColor = vec4(ao, ao, ao, 1.0);
-}
-#endif
-)";
-
-static void GR_InitialiseSSAOShaders() {
-  g_ssaoShader = GR_Shader_Compile(g_ssaoShaderSource, false);
-  g_ssaoBlurShader = GR_Shader_Compile(g_ssaoBlurShaderSource, false);
-  g_ssaoCompositeShader = GR_Shader_Compile(g_ssaoCompositeShaderSource, false);
-
-  glUseProgram(g_ssaoShader);
-  glUniform1i(glGetUniformLocation(g_ssaoShader, "s_depth"), 0);
-  g_ssaoProjectionScaleLoc =
-      glGetUniformLocation(g_ssaoShader, "u_projectionScale");
-  g_ssaoNearFarLoc = glGetUniformLocation(g_ssaoShader, "u_nearFar");
-
-  glUseProgram(g_ssaoBlurShader);
-  glUniform1i(glGetUniformLocation(g_ssaoBlurShader, "s_ao"), 0);
-  glUniform1i(glGetUniformLocation(g_ssaoBlurShader, "s_depth"), 1);
-  g_ssaoBlurInvResolutionLoc =
-      glGetUniformLocation(g_ssaoBlurShader, "u_invResolution");
-  g_ssaoBlurNearFarLoc = glGetUniformLocation(g_ssaoBlurShader, "u_nearFar");
-  glUseProgram(0);
-}
-#endif
-
 u_char GR_Expand5BitColor(u_char value) {
   value &= 31;
   return (u_char)((value << 3) | (value >> 2));
@@ -1836,9 +1592,6 @@ int GR_InitialisePSX() {
   GR_InitRG8LUT();
   GR_GenerateCommonTextures();
   GR_InitialisePSXShaders();
-#if defined(RENDERER_OGL)
-  GR_InitialiseSSAOShaders();
-#endif
 
 #if USE_OPENGL
   glDepthFunc(GL_GEQUAL);
@@ -1865,11 +1618,6 @@ int GR_InitialisePSX() {
   glGenFramebuffers(1, &g_glNativeMultisampleFramebuffer);
   glGenRenderbuffers(1, &g_glNativeMultisampleColorRenderbuffer);
   glGenRenderbuffers(1, &g_glNativeMultisampleDepthRenderbuffer);
-#if defined(RENDERER_OGL)
-  glGenFramebuffers(2, g_glSSAOFramebuffer);
-  glGenTextures(2, g_glSSAOTexture);
-  glGenVertexArrays(1, &g_glSSAOVertexArray);
-#endif
 
   // gen framebuffer
   {
@@ -2050,10 +1798,6 @@ void GR_Perspective3D(const float fov, const float width, const float height,
 
   float h = cosF / sinF;
   float w = (h * height) / width;
-  g_ssaoProjectionScaleX = w;
-  g_ssaoProjectionScaleY = h;
-  g_ssaoNearPlane = zNear;
-  g_ssaoFarPlane = zFar;
   float depthScale;
   float depthBias;
   GR_CalculateReversedDepthProjection(zNear, zFar, &depthScale, &depthBias);
@@ -2799,104 +2543,6 @@ void GR_SwapWindow() {
 #endif
 
   // glFinish();
-}
-
-void GR_ApplySSAO(void) {
-#if defined(RENDERER_OGL)
-  if (!g_cfg_ssao || !g_cfg_pgxpZBuffer || !g_ssaoFramebufferAvailable ||
-      g_nativeFramebufferWidth <= 0 || g_nativeFramebufferHeight <= 0 ||
-      g_ssaoProjectionScaleX <= 0.0f || g_ssaoProjectionScaleY <= 0.0f ||
-      g_ssaoNearPlane <= 0.0f || g_ssaoFarPlane <= g_ssaoNearPlane) {
-    return;
-  }
-
-  // This pass has a strict call-site contract: native world framebuffer,
-  // opaque blend state and depth/stencil enabled. Preserve only the renderer's
-  // tracked objects and restore that canonical state explicitly. Querying all
-  // OpenGL state with glGet* here serialized the CPU with the GPU every frame,
-  // turning an otherwise half-resolution effect into a major 120/240 Hz stall.
-  const GLuint nativeFramebuffer = PsyX_GetNativeDrawFramebuffer();
-  const ShaderID previousShader = g_PreviousShader;
-  const TextureID previousTexture = g_lastBoundTexture;
-  const GLuint previousVertexArray = g_boundVertexArray;
-  const int previousScissorState = g_PreviousScissorState;
-
-  glDisable(GL_BLEND);
-  glDisable(GL_DEPTH_TEST);
-  glDisable(GL_STENCIL_TEST);
-  glDisable(GL_SCISSOR_TEST);
-  glDisable(GL_CULL_FACE);
-  glDepthMask(GL_FALSE);
-  glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-
-#if USE_FRAMEBUFFER_BLIT
-  if (g_nativeFramebufferSamples > 1) {
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, g_glNativeMultisampleFramebuffer);
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, g_glNativeFramebuffer);
-    glBlitFramebuffer(0, 0, g_nativeFramebufferWidth, g_nativeFramebufferHeight,
-                      0, 0, g_nativeFramebufferWidth, g_nativeFramebufferHeight,
-                      GL_DEPTH_BUFFER_BIT, GL_NEAREST);
-  }
-#endif
-
-  glBindVertexArray(g_glSSAOVertexArray);
-  glBindFramebuffer(GL_FRAMEBUFFER, g_glSSAOFramebuffer[0]);
-  glViewport(0, 0, g_ssaoFramebufferWidth, g_ssaoFramebufferHeight);
-  glUseProgram(g_ssaoShader);
-  glActiveTexture(GL_TEXTURE0);
-  glBindTexture(GL_TEXTURE_2D, g_glNativeDepthTexture);
-  glUniform2f(g_ssaoProjectionScaleLoc, g_ssaoProjectionScaleX,
-              g_ssaoProjectionScaleY);
-  glUniform2f(g_ssaoNearFarLoc, g_ssaoNearPlane, g_ssaoFarPlane);
-  glDrawArrays(GL_TRIANGLES, 0, 3);
-
-  glBindFramebuffer(GL_FRAMEBUFFER, g_glSSAOFramebuffer[1]);
-  glUseProgram(g_ssaoBlurShader);
-  glActiveTexture(GL_TEXTURE0);
-  glBindTexture(GL_TEXTURE_2D, g_glSSAOTexture[0]);
-  glActiveTexture(GL_TEXTURE1);
-  glBindTexture(GL_TEXTURE_2D, g_glNativeDepthTexture);
-  glUniform2f(g_ssaoBlurInvResolutionLoc, 1.0f / (float)g_ssaoFramebufferWidth,
-              1.0f / (float)g_ssaoFramebufferHeight);
-  glUniform2f(g_ssaoBlurNearFarLoc, g_ssaoNearPlane, g_ssaoFarPlane);
-  glDrawArrays(GL_TRIANGLES, 0, 3);
-
-  glBindFramebuffer(GL_DRAW_FRAMEBUFFER, nativeFramebuffer);
-  glViewport(0, 0, g_nativeFramebufferWidth, g_nativeFramebufferHeight);
-  glUseProgram(g_ssaoCompositeShader);
-  glActiveTexture(GL_TEXTURE0);
-  glBindTexture(GL_TEXTURE_2D, g_glSSAOTexture[1]);
-  glEnable(GL_BLEND);
-  glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
-  glBlendFuncSeparate(GL_ZERO, GL_SRC_COLOR, GL_ZERO, GL_ONE);
-  glDrawArrays(GL_TRIANGLES, 0, 3);
-
-  // Re-establish the tracked world-render contract without querying the
-  // driver. The fire and presentation passes which follow can now use the
-  // ordinary PsyCross state cache without a forced cache invalidation.
-  glDisable(GL_BLEND);
-  glEnable(GL_DEPTH_TEST);
-  glEnable(GL_STENCIL_TEST);
-  if (previousScissorState)
-    glEnable(GL_SCISSOR_TEST);
-  else
-    glDisable(GL_SCISSOR_TEST);
-  glDisable(GL_CULL_FACE);
-  glDepthMask(GL_TRUE);
-  glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-  glDepthFunc(GL_GREATER);
-  glUseProgram(previousShader);
-  glBindVertexArray(previousVertexArray);
-  glActiveTexture(GL_TEXTURE0);
-  glBindTexture(GL_TEXTURE_2D, previousTexture);
-  glActiveTexture(GL_TEXTURE1);
-  glBindTexture(GL_TEXTURE_2D, g_rgLutTexture);
-  glActiveTexture(GL_TEXTURE2);
-  glBindTexture(GL_TEXTURE_2D, g_vramAliasTexture);
-  glActiveTexture(GL_TEXTURE0);
-  glBindFramebuffer(GL_FRAMEBUFFER, nativeFramebuffer);
-  glViewport(0, 0, g_nativeFramebufferWidth, g_nativeFramebufferHeight);
-#endif
 }
 
 void GR_SetDepthState(int testEnable, int writeEnable) {

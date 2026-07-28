@@ -50,7 +50,6 @@ void configureGraphics(const GraphicsSettings &settings) noexcept {
   g_cfg_msaaSamples = settings.msaa_samples;
   g_cfg_bilinearFiltering = settings.bilinear_filtering ? 1 : 0;
   g_cfg_anisotropicFiltering = settings.anisotropic_filtering ? 1 : 0;
-  g_cfg_ssao = settings.ambient_occlusion ? 1 : 0;
   g_cfg_aspectMode = settings.aspect_ratio == AspectRatioMode::adaptive
                          ? PSYX_ASPECT_ADAPTIVE
                          : PSYX_ASPECT_ORIGINAL_4_3;

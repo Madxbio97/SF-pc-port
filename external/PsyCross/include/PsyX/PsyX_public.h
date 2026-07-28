@@ -80,7 +80,6 @@ extern "C"
 	extern int g_cfg_pgxpZBuffer;
 	extern int g_cfg_bilinearFiltering;
 	extern int g_cfg_anisotropicFiltering;
-	extern int g_cfg_ssao;
 	extern int g_cfg_pgxpTextureCorrection;
 	extern int g_cfg_msaaSamples;
 	extern int g_cfg_aspectMode;

@@ -3,6 +3,22 @@
 All notable public-test changes are documented here. The project currently uses
 pre-release tags rather than a stable semantic-versioning promise.
 
+## 0.1.0-public-test.11 - 2026-07-28
+
+### Rendering
+
+- Removed the experimental screen-space contact-shadow/SSAO pass completely,
+  including its shaders, intermediate framebuffers, launcher option and command
+  line switches.
+- Retained the PT10 renderer hot-path optimizations and the existing
+  geometry-driven dynamic character shadows.
+
+### Release artifact
+
+- File: `SyphonFilterPC-0.1.0-public-test.11-win64.zip`
+- Checksum: supplied in the accompanying `.zip.sha256` file.
+- Supported disc: *Syphon Filter* USA v1.1 (`SCUS-94240`), BIN/CUE.
+
 ## 0.1.0-public-test.10 - 2026-07-28
 
 ### Rendering

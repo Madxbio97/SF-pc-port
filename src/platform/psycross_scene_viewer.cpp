@@ -13797,10 +13797,6 @@ SceneViewerResult PsyCrossSceneViewer::run(
     GR_SetPolygonOffset(0.0F, 0.0F);
     GR_SetDepthState(1, 1);
     GR_SetBlendMode(BM_NONE);
-    // Darken only opaque world geometry from its resolved PGXP depth. Running
-    // before additive fire and the depth-free presentation passes keeps
-    // particles, optics, interface glyphs and FMV overlays untouched.
-    GR_ApplySSAO();
     // Opaque geometry owns PGXP-Z. Fire blends additively against that
     // depth without writing it, so walls occlude particles and lightbars.
     GR_SetBlendMode(BM_ADD);

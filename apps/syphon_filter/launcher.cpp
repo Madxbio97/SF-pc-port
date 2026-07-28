@@ -52,7 +52,6 @@ constexpr int dossier_control_id = 1014;
 constexpr int language_control_id = 1015;
 constexpr int vsync_control_id = 1016;
 constexpr int frame_limit_control_id = 1017;
-constexpr int ambient_occlusion_control_id = 1018;
 constexpr int binding_list_control_id = 2001;
 constexpr int change_binding_control_id = 2002;
 constexpr int clear_binding_control_id = 2003;
@@ -254,9 +253,6 @@ void loadSettingsFile(GraphicsSettings &graphics, KeyboardMouseBindings &input,
   graphics.anisotropic_filtering =
       readProfileInteger(path, L"Graphics", L"Anisotropic",
                          graphics.anisotropic_filtering ? 1 : 0) != 0;
-  graphics.ambient_occlusion =
-      readProfileInteger(path, L"Graphics", L"SSAO",
-                         graphics.ambient_occlusion ? 1 : 0) != 0;
   graphics.vsync = readProfileInteger(path, L"Graphics", L"VSync",
                                       graphics.vsync ? 1 : 0) != 0;
   const auto frame_limit = readProfileInteger(
@@ -300,8 +296,6 @@ void saveSettingsFile(const GraphicsSettings &graphics,
                       graphics.bilinear_filtering ? 1 : 0);
   writeProfileInteger(path, L"Graphics", L"Anisotropic",
                       graphics.anisotropic_filtering ? 1 : 0);
-  writeProfileInteger(path, L"Graphics", L"SSAO",
-                      graphics.ambient_occlusion ? 1 : 0);
   writeProfileInteger(path, L"Graphics", L"VSync", graphics.vsync ? 1 : 0);
   writeProfileInteger(path, L"Graphics", L"FrameLimit",
                       static_cast<int>(graphics.frame_limit));
@@ -1717,8 +1711,6 @@ void acceptSettings(HWND window, LauncherState &state) {
       IsDlgButtonChecked(window, bilinear_control_id) == BST_CHECKED;
   state.settings.anisotropic_filtering =
       IsDlgButtonChecked(window, anisotropic_control_id) == BST_CHECKED;
-  state.settings.ambient_occlusion =
-      IsDlgButtonChecked(window, ambient_occlusion_control_id) == BST_CHECKED;
   state.settings.vsync =
       IsDlgButtonChecked(window, vsync_control_id) == BST_CHECKED;
   state.settings.fullscreen =
@@ -1909,9 +1901,6 @@ LRESULT CALLBACK launcherWindowProc(HWND window, UINT message, WPARAM w_param,
     createControl(window, L"BUTTON", L"Borderless fullscreen",
                   WS_TABSTOP | BS_AUTOCHECKBOX, 48, 444, 294, 24,
                   fullscreen_control_id, state->ui_font);
-    createControl(window, L"BUTTON", L"Screen-space ambient occlusion",
-                  WS_TABSTOP | BS_AUTOCHECKBOX, 48, 470, 294, 24,
-                  ambient_occlusion_control_id, state->ui_font);
 
     createControl(window, L"STATIC", L"MISSION CONTROL", 0, 410, 188, 286, 26,
                   0, state->heading_font);
@@ -1942,9 +1931,6 @@ LRESULT CALLBACK launcherWindowProc(HWND window, UINT message, WPARAM w_param,
     CheckDlgButton(window, anisotropic_control_id,
                    state->settings.anisotropic_filtering ? BST_CHECKED
                                                          : BST_UNCHECKED);
-    CheckDlgButton(window, ambient_occlusion_control_id,
-                   state->settings.ambient_occlusion ? BST_CHECKED
-                                                     : BST_UNCHECKED);
     CheckDlgButton(window, vsync_control_id,
                    state->settings.vsync ? BST_CHECKED : BST_UNCHECKED);
     populateResolutions(*state);
