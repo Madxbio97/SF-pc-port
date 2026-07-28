@@ -66,13 +66,11 @@ legacyPadStateFromPlayerInput(const PlayerInput &input) noexcept {
   LegacyHostPadState state;
   const auto movement_scale = input.run ? 1.0 : walking_stick_scale;
   if (input.aim) {
-    // L1 owns the original first-person controller: the left stick moves the
-    // sight horizontally/vertically while Gabe's collision root remains
-    // fixed. Feed only held directional axes here. Relative mouse motion is
-    // intentionally absent; it stays on the high-resolution host look/ray
-    // path and therefore cannot saturate or quantize the retail PAD.
-    state.left_x = padAxis(input.turn);
-    state.left_y = padAxis(-input.move);
+    // Host first-person owns both collision-resolved locomotion and sight.
+    // Keep the guest analog axes neutral so retail cannot reinterpret W/S or
+    // A/D as a second, quantized camera movement.
+    state.left_x = padAxis(0.0);
+    state.left_y = padAxis(0.0);
   } else {
     state.left_x = padAxis(input.turn);
     state.left_y = padAxis(-input.move * movement_scale);
@@ -86,8 +84,9 @@ legacyPadStateFromPlayerInput(const PlayerInput &input) noexcept {
   // Mouse wheel/middle-button weapon commands are native UI semantics, not
   // physical PSX buttons. GameplaySession routes them into FUN_800405f4,
   // while real L2/R2 remain lossless in chase and manual aim.
-  press(input.strafe < 0.0, l2);
-  press(input.strafe > 0.0, r2);
+  const auto retail_strafe = input.aim ? input.aim_peek : input.strafe;
+  press(retail_strafe < 0.0, l2);
+  press(retail_strafe > 0.0, r2);
   press(input.aim, l1);
   // R1 owns retail auto-lock and can rotate the sight independently. Keep
   // it available in chase mode, but never let it fight direct L1 aim.
@@ -227,12 +226,12 @@ void LegacyFirstMissionRuntime::setHostPadState(
 }
 
 bool LegacyFirstMissionRuntime::applyHostAimLocomotion(
-    const LegacyHostPlayerState &state) noexcept {
+    const LegacyHostPlayerLocomotion &state) noexcept {
   if (!ready_ || finished_ || faulted_ || !vm_) {
     return false;
   }
   try {
-    if (vm_->writeHostPlayerState(state)) {
+    if (vm_->writeHostPlayerLocomotion(state)) {
       return true;
     }
   } catch (...) {
@@ -287,6 +286,17 @@ bool LegacyFirstMissionRuntime::applyHostFirstPersonAim(bool active) noexcept {
     return false;
   }
   try {
+    auto transition_pad = host_pad_state_;
+    transition_pad.buttons = static_cast<std::uint16_t>(
+        transition_pad.buttons | latched_pad_buttons_);
+    // FUN_8001c7e8 consumes PAD RAM immediately rather than waiting for the
+    // next guest frame.  Publish the current neutral manual-aim axes first so
+    // stale chase movement can never be interpreted as a sight command.
+    if (!vm_->writeHostPadState(transition_pad)) {
+      fault_detail_ = "stage=host-first-person-aim stop=pad-write";
+      markFault();
+      return false;
+    }
     const auto result = vm_->invokeRetailFirstPersonAim(active);
     if (result.completed()) {
       return true;

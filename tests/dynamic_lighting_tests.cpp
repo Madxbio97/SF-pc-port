@@ -229,6 +229,96 @@ void testActorShadowBlendsSourcesAndBoundsStretch() {
           "Grazing actor shadow exceeded its bounded silhouette stretch");
 }
 
+void testActorShadowIgnoresTransientAndAnimatedLightPulses() {
+  auto lightbar = lamp(20U, -500.0);
+  lightbar.kind = sf::game::DynamicLightKind::police_lightbar;
+  const std::array persistent{lamp(19U, 500.0), lightbar};
+  const auto blue = sf::game::buildDynamicLightFrame(
+      persistent, {}, sf::game::DynamicLightPoint{}, {}, 0U);
+  const auto red = sf::game::buildDynamicLightFrame(
+      persistent, {}, sf::game::DynamicLightPoint{}, {}, 2U);
+  const auto blue_projection =
+      sf::game::selectDynamicShadowProjection(blue, {}, {0.0, 1.0, 0.0});
+  const auto red_projection =
+      sf::game::selectDynamicShadowProjection(red, {}, {0.0, 1.0, 0.0});
+  require(std::abs(blue_projection.ray_direction.x -
+                   red_projection.ray_direction.x) < 0.000001 &&
+              std::abs(blue_projection.darkness - red_projection.darkness) <
+                  0.000001,
+          "Animated lightbar pulse rotated or darkened the actor shadow");
+
+  const std::array explosion{sf::game::TransientDynamicLightState{
+      sf::game::GameplayEffectType::explosion,
+      {-400.0, -250.0, 0.0},
+      0xe11U,
+      4.0,
+      1U,
+      1U,
+      true,
+  }};
+  const std::array key{lamp(21U, 450.0)};
+  const auto without_effect =
+      sf::game::buildDynamicLightFrame(key, {}, sf::game::DynamicLightPoint{});
+  const auto with_effect = sf::game::buildDynamicLightFrame(
+      key, explosion, sf::game::DynamicLightPoint{});
+  const auto stable = sf::game::selectDynamicShadowProjection(
+      without_effect, {}, {0.0, 1.0, 0.0});
+  const auto during_explosion =
+      sf::game::selectDynamicShadowProjection(with_effect, {}, {0.0, 1.0, 0.0});
+  require(std::abs(stable.ray_direction.x - during_explosion.ray_direction.x) <
+                  0.000001 &&
+              std::abs(stable.darkness - during_explosion.darkness) < 0.000001,
+          "One-update combat light yanked the common actor-shadow ray");
+}
+
+void testActorShadowDarknessDoesNotScaleWithSourceCount() {
+  const std::array single{lamp(30U, 0.0)};
+  const std::array crowded{lamp(30U, 0.0), lamp(31U, 0.0), lamp(32U, 0.0),
+                           lamp(33U, 0.0)};
+  const auto one = sf::game::selectDynamicShadowProjection(
+      sf::game::buildDynamicLightFrame(single, {}, {}), {}, {0.0, 1.0, 0.0});
+  const auto many = sf::game::selectDynamicShadowProjection(
+      sf::game::buildDynamicLightFrame(crowded, {}, {}), {}, {0.0, 1.0, 0.0});
+  require(std::abs(one.darkness - many.darkness) < 0.000001,
+          "Resident source count amplified actor-shadow darkness");
+}
+
+void testActorShadowTemporalPolicyUsesGuestTime() {
+  using sf::game::DynamicShadowProjection;
+  using sf::game::DynamicShadowProjectionState;
+  const auto first = DynamicShadowProjection{{0.0, 1.0, 0.0}, 0.20, false};
+  const auto target = DynamicShadowProjection{{0.8, 0.6, 0.0}, 0.40, true};
+  const auto initialized = sf::game::advanceDynamicShadowProjection(
+      DynamicShadowProjectionState{}, first, 100U);
+  const auto advanced =
+      sf::game::advanceDynamicShadowProjection(initialized, target, 101U);
+  require(advanced.current.ray_direction.x > 0.0 &&
+              advanced.current.ray_direction.x < target.ray_direction.x &&
+              advanced.current.darkness > first.darkness &&
+              advanced.current.darkness < target.darkness,
+          "Actor-shadow history snapped instead of damping a key-light swap");
+
+  const auto repeated =
+      sf::game::advanceDynamicShadowProjection(advanced, first, 101U);
+  require(repeated.current.ray_direction == advanced.current.ray_direction &&
+              repeated.current.darkness == advanced.current.darkness,
+          "Actor-shadow history advanced more than once in one guest tick");
+  const auto start = sf::game::sampleDynamicShadowProjection(advanced, 0.0);
+  const auto finish = sf::game::sampleDynamicShadowProjection(advanced, 1.0);
+  require(start.ray_direction == advanced.previous.ray_direction &&
+              finish.ray_direction == advanced.current.ray_direction &&
+              start.darkness == advanced.previous.darkness &&
+              finish.darkness == advanced.current.darkness,
+          "Actor-shadow host-frame interpolation lost its endpoints");
+
+  const auto reset =
+      sf::game::advanceDynamicShadowProjection(advanced, target, 3U);
+  require(reset.previous.ray_direction == target.ray_direction &&
+              reset.current.ray_direction == target.ray_direction &&
+              reset.guest_tick == 3U,
+          "Actor-shadow history survived a mission clock rollback");
+}
+
 void testPersistentAnimationUsesGuestTime() {
   auto lightbar = lamp(0U, 0.0);
   lightbar.kind = sf::game::DynamicLightKind::police_lightbar;
@@ -629,6 +719,9 @@ int main() {
     testActorShadowTracksEligibleDynamicLight();
     testActorShadowRejectsLowLightAndMalformedPlane();
     testActorShadowBlendsSourcesAndBoundsStretch();
+    testActorShadowIgnoresTransientAndAnimatedLightPulses();
+    testActorShadowDarknessDoesNotScaleWithSourceCount();
+    testActorShadowTemporalPolicyUsesGuestTime();
     testPersistentAnimationUsesGuestTime();
     testBoundedSelectionKeepsTransientAndNearestLamps();
     testBoundedSelectionKeepsDirectionalLight();

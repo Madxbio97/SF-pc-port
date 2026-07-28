@@ -556,13 +556,22 @@ syphonFilterUsaV11GameplayBridgeProfile() noexcept {
 }
 
 // Host player state retained for isolated diagnostics. Production manual aim
-// no longer writes collision/root transforms into an animated guest frame.
-// Coordinates use the renderer convention (positive Y up).
+// uses the narrower locomotion bridge below so it cannot overwrite animated
+// pose height, rotation, or vitals. Coordinates use the renderer convention
+// (positive Y up).
 struct LegacyHostPlayerState {
   LegacyNativePoint position;
   std::int32_t yaw{};
   std::int16_t health{150};
   std::int16_t armor{600};
+  LegacyNativePoint previous_position;
+  bool has_previous_position{};
+};
+
+// Collision-resolved root written back before the next retail tick. The guest
+// motion controller owns world height; the animated MATRIX keeps its pose Y.
+struct LegacyHostPlayerLocomotion {
+  LegacyNativePoint position;
   LegacyNativePoint previous_position;
   bool has_previous_position{};
 };
@@ -1018,6 +1027,10 @@ public:
   // functions. They are deliberately absent from LegacyFirstMissionRuntime.
   [[nodiscard]] bool writeHostPlayerState(
       const LegacyHostPlayerState &state,
+      const LegacyNativeMissionBridgeProfile &profile =
+          syphonFilterUsaV11NativeMissionBridgeProfile()) noexcept;
+  [[nodiscard]] bool writeHostPlayerLocomotion(
+      const LegacyHostPlayerLocomotion &state,
       const LegacyNativeMissionBridgeProfile &profile =
           syphonFilterUsaV11NativeMissionBridgeProfile()) noexcept;
   [[nodiscard]] bool writeHostPlayerVitals(

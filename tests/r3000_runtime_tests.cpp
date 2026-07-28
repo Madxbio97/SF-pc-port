@@ -4059,6 +4059,63 @@ void testLegacyGameplayVmBoundary() {
                     yaw,
             "Host player yaw did not survive the guest matrix round trip");
   }
+  require(vm.runtime().write32(player_matrix + 0x14U, 111U) &&
+              vm.runtime().write32(player_matrix + 0x18U, 222U) &&
+              vm.runtime().write32(player_matrix + 0x1cU, 333U) &&
+              vm.runtime().write16(player_matrix, 2345U) &&
+              vm.runtime().write16(player_health + 6U, 321U) &&
+              vm.runtime().write16(player_health + 8U, 123U) &&
+              vm.runtime().write16(third_record + 0x40U, 124U) &&
+              vm.writeHostPlayerLocomotion(
+                  sf::game::LegacyHostPlayerLocomotion{
+                      .position = {101, 202, 303},
+                      .previous_position = {91, 192, 293},
+                      .has_previous_position = true,
+                  },
+                  native_bridge_profile),
+          "Narrow first-person locomotion writer rejected the retail player");
+  std::array<std::uint32_t, 9U> locomotion_words{};
+  require(vm.runtime().read32(player_motion, locomotion_words[0]) &&
+              vm.runtime().read32(player_motion + 4U, locomotion_words[1]) &&
+              vm.runtime().read32(player_motion + 8U, locomotion_words[2]) &&
+              vm.runtime().read32(player_motion + 0x40U,
+                                  locomotion_words[3]) &&
+              vm.runtime().read32(player_motion + 0x44U,
+                                  locomotion_words[4]) &&
+              vm.runtime().read32(player_motion + 0x48U,
+                                  locomotion_words[5]) &&
+              vm.runtime().read32(player_matrix + 0x14U,
+                                  locomotion_words[6]) &&
+              vm.runtime().read32(player_matrix + 0x18U,
+                                  locomotion_words[7]) &&
+              vm.runtime().read32(player_matrix + 0x1cU,
+                                  locomotion_words[8]),
+          "Could not inspect the narrow first-person locomotion write");
+  std::array<std::uint16_t, 4U> preserved_player_words{};
+  require(vm.runtime().read16(player_matrix, preserved_player_words[0]) &&
+              vm.runtime().read16(player_health + 6U,
+                                  preserved_player_words[1]) &&
+              vm.runtime().read16(player_health + 8U,
+                                  preserved_player_words[2]) &&
+              vm.runtime().read16(third_record + 0x40U,
+                                  preserved_player_words[3]),
+          "Could not inspect pose/vitals after first-person locomotion");
+  const auto signed_word = [](std::uint32_t value) {
+    return std::bit_cast<std::int32_t>(value);
+  };
+  require(signed_word(locomotion_words[0]) == 101 &&
+              signed_word(locomotion_words[1]) == -202 &&
+              signed_word(locomotion_words[2]) == 303 &&
+              signed_word(locomotion_words[3]) == 91 &&
+              signed_word(locomotion_words[4]) == -192 &&
+              signed_word(locomotion_words[5]) == 293 &&
+              signed_word(locomotion_words[6]) == 101 &&
+              signed_word(locomotion_words[7]) == 222 &&
+              signed_word(locomotion_words[8]) == 303 &&
+              preserved_player_words ==
+                  std::array<std::uint16_t, 4U>{2345U, 321U, 123U, 124U},
+          "First-person locomotion corrupted animated pose height, rotation, "
+          "or vitals");
   constexpr std::array<std::int16_t, 9U> tilted_player_rotation{
       4096, 0, 0, 0, 3547, -2048, 0, 2048, 3547,
   };
@@ -6049,6 +6106,7 @@ void testGuestPadBridge() {
   input.aim = true;
   input.next_weapon = true;
   input.strafe = -1.0;
+  input.aim_peek = -1.0;
   input.look_yaw = 96.0;
   input.look_pitch = -96.0;
   input.fire_held = true;
@@ -6062,9 +6120,9 @@ void testGuestPadBridge() {
       0x0100U | 0x0400U | 0x1000U | 0x2000U | 0x8000U;
   require(pad.buttons == expected_buttons,
           "Manual aim lost retail strafe or leaked a forbidden PAD action");
-  require(pad.left_x == 65U && pad.left_y == 1U && pad.right_x == 128U &&
+  require(pad.left_x == 128U && pad.left_y == 128U && pad.right_x == 128U &&
               pad.right_y == 128U,
-          "Retail L1 sight axes or native mouse isolation mismatch");
+          "Host first-person locomotion leaked into the retail sight axes");
 
   input = {};
   input.aim = true;
@@ -6078,8 +6136,9 @@ void testGuestPadBridge() {
   input.move = -1.0;
   const auto keyboard_aim_down = sf::game::legacyPadStateFromPlayerInput(input);
   require(native_aim_up.left_y == 0x80U && native_aim_down.left_y == 0x80U &&
-              keyboard_aim_up.left_y == 1U && keyboard_aim_down.left_y == 0xffU,
-          "Mouse leaked into PAD or vertical retail aim axis was lost");
+              keyboard_aim_up.left_y == 0x80U &&
+              keyboard_aim_down.left_y == 0x80U,
+          "Host mouse or W/S locomotion leaked into the guest PAD");
 
   input = {};
   input.aim = true;
@@ -6094,10 +6153,13 @@ void testGuestPadBridge() {
 
   input = {};
   input.aim = true;
-  input.strafe = -1.0;
+  input.aim_peek = -1.0;
   const auto aim_strafe_left = sf::game::legacyPadStateFromPlayerInput(input);
-  input.strafe = 1.0;
+  input.aim_peek = 1.0;
   const auto aim_strafe_right = sf::game::legacyPadStateFromPlayerInput(input);
+  input.aim_peek = 0.0;
+  input.strafe = 1.0;
+  const auto aim_move_right = sf::game::legacyPadStateFromPlayerInput(input);
   input.strafe = 0.0;
   input.turn = -1.0;
   const auto aim_turn_left = sf::game::legacyPadStateFromPlayerInput(input);
@@ -6109,8 +6171,10 @@ void testGuestPadBridge() {
               (aim_strafe_right.buttons & 0x0400U) != 0U &&
               (aim_turn_left.buttons & 0x0400U) != 0U &&
               (aim_turn_right.buttons & 0x0400U) != 0U &&
-              aim_turn_left.left_x == 1U && aim_turn_right.left_x == 0xffU,
-          "Manual-aim L2/R2 strafe or horizontal retail axis mismatch");
+              (aim_move_right.buttons & 0x0300U) == 0U &&
+              aim_turn_left.left_x == 0x80U &&
+              aim_turn_right.left_x == 0x80U,
+          "Manual-aim peek or host locomotion PAD isolation mismatch");
 
   input = {};
   input.target_lock_held = true;

@@ -661,9 +661,9 @@ PlayerInput PlayerInputMapper::update(const RawPlayerInput &raw) noexcept {
       deadzoneAxis(raw.controller.left_x, configuration_.movement_deadzone));
   const auto controller_strafe =
       digitalAxis(raw.controller.strafe_right, raw.controller.strafe_left);
-  // Keep locomotion/directional and dedicated strafe channels separate here.
-  // First-person routing reuses forward/lateral as the exact retail vertical
-  // and horizontal sight axes; Q/E remains the independent L2/R2 channel.
+  // Keep locomotion and the dedicated corner-peek channel separate here.
+  // First-person routing turns forward/lateral into W/S movement and A/D
+  // strafe; Q/E remains the independent retail L2/R2 channel.
   output.turn = lateral;
   output.move_strafe = digitalOrAnalog(digital_strafe, controller_strafe);
 
@@ -699,11 +699,13 @@ FirstPersonAimInput firstPersonAimInput(const PlayerInput &input) noexcept {
           finiteOrZero(input.mouse_look_pitch),
       },
       PlayerLookSample{
-          std::clamp(finiteOrZero(input.turn), -1.0, 1.0) *
+          std::clamp(finiteOrZero(input.controller_look_yaw), -1.0, 1.0) *
               retail_first_person_yaw_units_per_tick,
-          std::clamp(finiteOrZero(input.move_forward), -1.0, 1.0) *
+          std::clamp(finiteOrZero(input.controller_look_pitch), -1.0, 1.0) *
               retail_first_person_pitch_units_per_tick,
       },
+      std::clamp(finiteOrZero(input.move_forward), -1.0, 1.0),
+      std::clamp(finiteOrZero(input.turn), -1.0, 1.0),
       std::clamp(finiteOrZero(input.move_strafe), -1.0, 1.0),
   };
 }

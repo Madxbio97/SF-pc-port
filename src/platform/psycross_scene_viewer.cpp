@@ -4,7 +4,9 @@
 #include "psycross_font_texture.hpp"
 #include "psycross_movie_player.hpp"
 #include "psycross_runtime_guards.hpp"
+#if defined(SF_ENABLE_SURFACE_PICKER)
 #include "psycross_surface_picker.hpp"
+#endif
 #include "psycross_vram.hpp"
 #include "psycross_window_mode.hpp"
 
@@ -20,6 +22,8 @@
 #include "sf/game/pause_menu.hpp"
 #include "sf/game/pause_menu_data.hpp"
 #include "sf/game/retail_cheats.hpp"
+#include "sf/platform/actor_shadow_stability.hpp"
+#include "sf/platform/gameplay_message_reveal_policy.hpp"
 #include "sf/platform/player_input.hpp"
 #include "sf/platform/retail_scope_text_policy.hpp"
 #include "sf/platform/stable_frame_vector.hpp"
@@ -103,8 +107,7 @@ constexpr std::uint16_t environment_resident_clut_y = 251U;
 [[nodiscard]] bool textureDiagnosticsEnabled() noexcept {
   static const auto enabled = [] {
     const auto *value = SDL_getenv("SF_TEXTURE_DIAGNOSTICS");
-    return value != nullptr && value[0] != '\0' &&
-           std::strcmp(value, "0") != 0;
+    return value != nullptr && value[0] != '\0' && std::strcmp(value, "0") != 0;
   }();
   return enabled;
 }
@@ -212,9 +215,9 @@ private:
     const auto source_page = timTexturePage(image);
     const auto source_page_x = (source_page & 15U) * 64U;
     const auto source_page_y = source_page > 15U ? 256U : 0U;
-    uploadTexturePageBlockAt(
-        physical_page, image.pixels(), image.pixels().x - source_page_x,
-        image.pixels().y - source_page_y);
+    uploadTexturePageBlockAt(physical_page, image.pixels(),
+                             image.pixels().x - source_page_x,
+                             image.pixels().y - source_page_y);
   }
 
   assets::TimImage trim_;
@@ -536,8 +539,7 @@ public:
     }
     for (const auto &entry : entries_) {
       uploadTexturePageBlockAt(physical_page, entry.image.pixels(),
-                               entry.destination_u / 2U,
-                               entry.destination_v);
+                               entry.destination_u / 2U, entry.destination_v);
     }
     uploadTimBlockAt(*entries_.front().image.clut(), effect_resident_clut_x,
                      environment_resident_clut_y);
@@ -779,9 +781,9 @@ public:
     const auto camera = gameplay.camera();
     const auto guest_sprite_bank =
         static_cast<int>(gameplay.textureBankAt(camera.x, camera.z));
-    const auto requirements_rebuilt = requirementsChanged(
-        gameplay, object_bank, guest_sprite_bank, retained_sprites,
-        glass_shards);
+    const auto requirements_rebuilt =
+        requirementsChanged(gameplay, object_bank, guest_sprite_bank,
+                            retained_sprites, glass_shards);
     if (requirements_rebuilt) {
       required_pages_.fill(unused_bank);
       required_banks_.fill(-1);
@@ -811,9 +813,8 @@ public:
       const auto alias_pages = [] {
         std::array<unsigned int, resident_texture_page_count - 6U> result{};
         constexpr std::array native_order{
-            16U, 17U, 18U, 19U, 20U, 21U, 6U,  7U,  8U,
-            9U,  10U, 11U, 12U, 13U, 14U, 15U, 22U, 23U,
-            24U, 25U, 26U, 27U, 28U, 29U, 30U, 31U,
+            16U, 17U, 18U, 19U, 20U, 21U, 6U,  7U,  8U,  9U,  10U, 11U, 12U,
+            13U, 14U, 15U, 22U, 23U, 24U, 25U, 26U, 27U, 28U, 29U, 30U, 31U,
         };
         std::ranges::copy(native_order, result.begin());
         for (auto extension = 0U; extension < extended_texture_page_count;
@@ -889,8 +890,8 @@ public:
           } else {
             // A bank conflict may use any currently free mission-safe page.
             // Pages 0..5 remain exact PS1 presentation/effect storage.
-            slot = allocate_free_page(static_cast<int>(source_page),
-                                      source_bank);
+            slot =
+                allocate_free_page(static_cast<int>(source_page), source_bank);
           }
         }
         required_page_remap_[static_cast<std::size_t>(bank)][source_page] =
@@ -1038,8 +1039,7 @@ public:
             "object-" + std::to_string(object_index) + "-geometry";
         const auto *object_model = gameplay.displayedObjectModel(object_index);
         if (object_model != nullptr) {
-          const auto bank =
-              gameplay.displayedObjectTextureBank(object_index);
+          const auto bank = gameplay.displayedObjectTextureBank(object_index);
           if (object_index < gameplay.objects().size()) {
             const auto class_id = gameplay.objects()[object_index].class_id;
             const auto weapon_crate = object_model->name == "WEPCRATE.GMD" ||
@@ -1355,9 +1355,9 @@ public:
       const auto room = gameplay.currentRoom();
       if (textureDiagnosticsEnabled() &&
           (required_pages_ != logged_required_pages_ ||
-          required_banks_ != logged_required_banks_ || room != logged_room_ ||
-          object_bank != logged_object_bank_ ||
-          guest_sprite_bank != logged_guest_sprite_bank_)) {
+           required_banks_ != logged_required_banks_ || room != logged_room_ ||
+           object_bank != logged_object_bank_ ||
+           guest_sprite_bank != logged_guest_sprite_bank_)) {
         ++texture_diagnostic_sequence_;
         const auto frame = gameplay.legacyPresentationFrame();
         PsyX_Log_Info(
@@ -1487,6 +1487,11 @@ public:
   void invalidate() noexcept {
     // Only resident VRAM ownership is lost here. Source requirements remain
     // valid until requirementsChanged observes an exact gameplay input change.
+    // Force one exact rescan after a reset/room reload even when the guest
+    // presentation sequence happens to restart at the same numeric value.
+    requirement_presentation_sequence_ =
+        std::numeric_limits<std::uint64_t>::max();
+    transient_requirement_inputs_.clear();
     loaded_pages_.fill(PageState{});
     scrim_dirty_pages_.fill(false);
     crate_overlay_pages_.fill(false);
@@ -1545,6 +1550,7 @@ public:
     return residency_revision_;
   }
 
+#if defined(SF_ENABLE_SURFACE_PICKER)
   [[nodiscard]] SurfacePickerResidency
   surfacePickerResidency(unsigned int logical_page,
                          unsigned int texture_bank) const {
@@ -1585,6 +1591,7 @@ public:
     }
     return result;
   }
+#endif
 
   [[nodiscard]] std::uint8_t
   residentTextureBankMask(unsigned int logical_page) const noexcept {
@@ -1606,8 +1613,7 @@ public:
       throw core::Error{core::ErrorCode::invalid_argument,
                         "Authored texture-page request is invalid"};
     }
-    const auto source_bank =
-        texturePageSourceBank(logical_page, texture_bank);
+    const auto source_bank = texturePageSourceBank(logical_page, texture_bank);
     if (source_bank == shared_bank) {
       const auto vlf = mission_.archive().file("VLF.RFF");
       return vlfPage(vlf, page_mask_, logical_page);
@@ -1759,8 +1765,8 @@ private:
 
   [[nodiscard]] int texturePageSourceBank(unsigned int logical_page,
                                           int texture_bank) const noexcept {
-    texture_bank = canonicalMissionTextureBank(
-        texture_bank, mission_.textureBankCount());
+    texture_bank =
+        canonicalMissionTextureBank(texture_bank, mission_.textureBankCount());
     if (logical_page < 32U && texture_bank >= 0 && texture_bank < 2 &&
         vlf_compatible_pages_[static_cast<std::size_t>(texture_bank)]
                              [logical_page]) {
@@ -1797,6 +1803,7 @@ private:
     guest_sprite_material,
     guest_sprite_rectangle,
     guest_sprite_effect,
+    guest_sprite_state,
     glass_shard_material,
     retail_scrim,
     retail_scrim_model,
@@ -1858,8 +1865,7 @@ private:
               : mission_.textureBank(static_cast<std::size_t>(bank))
                     .file(texturePageName(
                         static_cast<unsigned int>(logical_page)));
-      readTexturePageAt(static_cast<unsigned int>(slot),
-                        shared_page_readback_);
+      readTexturePageAt(static_cast<unsigned int>(slot), shared_page_readback_);
       const auto resident = std::as_bytes(std::span{shared_page_readback_});
       if (std::equal(resident.begin(), resident.end(), expected.begin(),
                      expected.end())) {
@@ -1966,13 +1972,75 @@ private:
                });
   }
 
-  [[nodiscard]] bool
-  requirementsChanged(const game::GameplaySession &gameplay, int object_bank,
-                      int guest_sprite_bank,
-                      std::span<const game::LegacyGuestSpritePresentationState>
-                          retained_sprites,
-                      std::span<const GlassShardPresentationState>
-                          glass_shards) {
+  [[nodiscard]] bool requirementsChanged(
+      const game::GameplaySession &gameplay, int object_bank,
+      int guest_sprite_bank,
+      std::span<const game::LegacyGuestSpritePresentationState>
+          retained_sprites,
+      std::span<const GlassShardPresentationState> glass_shards) {
+    scratch_transient_requirement_inputs_.clear();
+    const auto append_transient = [this](RequirementInputKind kind,
+                                         std::uintptr_t value) {
+      scratch_transient_requirement_inputs_.push_back(
+          RequirementInput{kind, value});
+    };
+    // These scalar selectors are cheap and also protect out-of-band UI or
+    // reset transitions which may alter presentation state before the next
+    // 20 Hz guest sequence is published.
+    append_transient(RequirementInputKind::room, gameplay.currentRoom());
+    append_transient(RequirementInputKind::object_bank,
+                     static_cast<std::uintptr_t>(object_bank));
+    append_transient(RequirementInputKind::guest_sprite_bank,
+                     static_cast<std::uintptr_t>(guest_sprite_bank));
+    append_transient(RequirementInputKind::active_model,
+                     gameplay.activeModels().size());
+    append_transient(RequirementInputKind::active_object,
+                     gameplay.activeObjects().size());
+    append_transient(
+        RequirementInputKind::player_weapon,
+        static_cast<std::uintptr_t>(gameplay.hud().inventory().current()));
+    for (const auto &shard : glass_shards) {
+      const auto material =
+          static_cast<std::uintptr_t>(shard.texture_page) |
+          (static_cast<std::uintptr_t>(shard.clut) << 16U) |
+          (static_cast<std::uintptr_t>(shard.texture_bank) << 32U);
+      append_transient(RequirementInputKind::glass_shard_material, material);
+    }
+    const auto append_transient_sprite = [&](const auto &sprite) {
+      append_transient(
+          RequirementInputKind::guest_sprite_material,
+          static_cast<std::uintptr_t>(sprite.tpage) |
+              (static_cast<std::uintptr_t>(sprite.center_x) << 16U) |
+              (static_cast<std::uintptr_t>(sprite.center_y) << 32U));
+      append_transient(RequirementInputKind::guest_sprite_rectangle,
+                       static_cast<std::uintptr_t>(sprite.u) |
+                           (static_cast<std::uintptr_t>(sprite.v) << 8U) |
+                           (static_cast<std::uintptr_t>(sprite.width) << 16U) |
+                           (static_cast<std::uintptr_t>(sprite.height) << 32U));
+      append_transient(
+          RequirementInputKind::guest_sprite_effect,
+          static_cast<std::uintptr_t>(sprite.effect_family) |
+              (static_cast<std::uintptr_t>(sprite.effect_frame) << 8U));
+      append_transient(RequirementInputKind::guest_sprite_state,
+                       (sprite.attribute & 0x80000000U) != 0U ? 1U : 0U);
+    };
+    for (const auto &entry : retained_sprites) {
+      append_transient_sprite(entry.sprite);
+    }
+    const auto presentation_sequence = gameplay.legacyPresentationSequence();
+    // A legacy presentation sequence is the atomic 20 Hz publication of all
+    // room/model/object/resource selectors below. Host-retained sprites and
+    // glass are the only resource users which can change between those guest
+    // publications, so compare their exact selector tuples independently.
+    // This keeps 240 Hz presentation from rescanning the complete scene while
+    // preserving the full exact-key rebuild at every guest state transition.
+    if (requirements_valid_ &&
+        requirement_presentation_sequence_ == presentation_sequence &&
+        scratch_transient_requirement_inputs_ ==
+            transient_requirement_inputs_) {
+      return false;
+    }
+
     scratch_requirement_inputs_.clear();
     const auto append = [this](RequirementInputKind kind,
                                std::uintptr_t value) {
@@ -2075,6 +2143,8 @@ private:
         append(RequirementInputKind::guest_sprite_effect,
                static_cast<std::uintptr_t>(sprite.effect_family) |
                    (static_cast<std::uintptr_t>(sprite.effect_frame) << 8U));
+        append(RequirementInputKind::guest_sprite_state,
+               (sprite.attribute & 0x80000000U) != 0U ? 1U : 0U);
       };
       for (const auto &sprite : frame->renderer->state.guest_sprites) {
         append_guest_sprite(sprite);
@@ -2089,8 +2159,12 @@ private:
     // displayed object/model identity, every actor/player/projectile weapon,
     // the dynamic-fire need and every field which selects a guest-sprite TIM.
     // Camera/animation and reset-to-an-equivalent state safely reuse the key.
-    if (requirements_valid_ &&
-        scratch_requirement_inputs_ == requirement_inputs_) {
+    const auto requirements_match =
+        requirements_valid_ &&
+        scratch_requirement_inputs_ == requirement_inputs_;
+    requirement_presentation_sequence_ = presentation_sequence;
+    transient_requirement_inputs_.swap(scratch_transient_requirement_inputs_);
+    if (requirements_match) {
       return false;
     }
     requirement_inputs_.swap(scratch_requirement_inputs_);
@@ -2113,11 +2187,14 @@ private:
   std::vector<std::byte> required_clut_;
   std::vector<RequirementInput> requirement_inputs_;
   std::vector<RequirementInput> scratch_requirement_inputs_;
+  std::vector<RequirementInput> transient_requirement_inputs_;
+  std::vector<RequirementInput> scratch_transient_requirement_inputs_;
+  std::uint64_t requirement_presentation_sequence_{
+      std::numeric_limits<std::uint64_t>::max()};
   const game::ObjectFireEmitter *required_active_fire_{};
   std::optional<unsigned int> required_environment_page_;
   std::array<bool, 2U> required_crate_banks_{};
-  std::array<bool, resident_texture_page_count>
-      required_crate_overlay_pages_{};
+  std::array<bool, resident_texture_page_count> required_crate_overlay_pages_{};
   std::array<bool, resident_texture_page_count>
       required_scrim_destination_pages_{};
   bool requirements_valid_{};
@@ -2126,8 +2203,7 @@ private:
   std::array<bool, resident_texture_page_count> crate_overlay_pages_{};
   std::array<std::uint64_t, resident_texture_page_count>
       runtime_expected_hash_{};
-  std::array<bool, resident_texture_page_count>
-      runtime_expected_hash_valid_{};
+  std::array<bool, resident_texture_page_count> runtime_expected_hash_valid_{};
   std::array<std::uint64_t, resident_texture_page_count> page_generations_{};
   std::array<std::uint64_t, resident_texture_page_count>
       page_upload_write_sequences_{};
@@ -2332,12 +2408,11 @@ public:
     if (game::russianLanguageActive()) {
       native_font_ = std::make_unique<PsyCrossFontTexture>(
           image("FONTA.TIM"), image("FONTB.TIM"), image("FONTC.TIM"));
-      const auto retail_font = [&](std::string_view name)
-          -> const assets::TimImage & {
+      const auto retail_font =
+          [&](std::string_view name) -> const assets::TimImage & {
         const auto match = std::ranges::find_if(
-            retail_fonts, [&](const HudTextureAsset &asset) {
-              return asset.name == name;
-            });
+            retail_fonts,
+            [&](const HudTextureAsset &asset) { return asset.name == name; });
         if (match == retail_fonts.end()) {
           throw core::Error{
               core::ErrorCode::not_found,
@@ -2356,8 +2431,7 @@ public:
     return native_font_.get();
   }
 
-  [[nodiscard]] const PsyCrossFontTexture *
-  retailEnglishFont() const noexcept {
+  [[nodiscard]] const PsyCrossFontTexture *retailEnglishFont() const noexcept {
     return retail_english_font_.get();
   }
 
@@ -3120,11 +3194,12 @@ private:
           page_state.uploaded_residency = token;
           reset = true;
           if (textureDiagnosticsEnabled()) {
-            PsyX_Log_Info("[TextureDiag][scrim-room-restore] logical=%u bank=%d "
-                          "room=%zu token=%llu phase=%llu\n",
-                          page_state.logical_page, texture_bank_, *scene_room_,
-                          static_cast<unsigned long long>(*token),
-                          static_cast<unsigned long long>(executed_copy_count_));
+            PsyX_Log_Info(
+                "[TextureDiag][scrim-room-restore] logical=%u bank=%d "
+                "room=%zu token=%llu phase=%llu\n",
+                page_state.logical_page, texture_bank_, *scene_room_,
+                static_cast<unsigned long long>(*token),
+                static_cast<unsigned long long>(executed_copy_count_));
           }
         }
       }
@@ -3674,19 +3749,9 @@ void interpolateRenderPresentation(const RenderPresentationSnapshot &previous,
   // Chase/manual-aim transitions are camera cuts in retail. Interpolating
   // across the cut moves the eye through Gabe while visibility has already
   // switched, producing a frame of his head/weapon inside the view.
-  if (!aim_transition && !current.first_person_aim) {
-    result.camera.x = component(previous.camera.x, current.camera.x);
-    result.camera.y = component(previous.camera.y, current.camera.y);
-    result.camera.z = component(previous.camera.z, current.camera.z);
-    result.camera.target_x =
-        component(previous.camera.target_x, current.camera.target_x);
-    result.camera.target_y =
-        component(previous.camera.target_y, current.camera.target_y);
-    result.camera.target_z =
-        component(previous.camera.target_z, current.camera.target_z);
-    result.camera.projection = static_cast<std::int32_t>(std::llround(
-        component(previous.camera.projection, current.camera.projection)));
-  }
+  result.camera = game::interpolateCameraPresentation(
+      previous.camera, current.camera, amount, current.first_person_aim,
+      aim_transition);
 
   const auto shared_objects =
       std::min(previous.objects.size(), current.objects.size());
@@ -3811,14 +3876,85 @@ struct ActorShadowReceiverVertex {
   bool wall{};
 };
 
+struct ActorShadowPresentationState {
+  std::uint64_t actor{};
+  std::uint64_t last_seen_guest_frame{};
+  std::uint64_t receiver_guest_frame{std::numeric_limits<std::uint64_t>::max()};
+  ActorShadowSupportState support;
+  game::DynamicShadowProjectionState projection;
+  std::vector<ActorShadowCachedReceiver> receivers;
+  std::vector<ActorShadowCachedReceiver> edge_receivers;
+};
+
+class ActorShadowPresentationCache {
+public:
+  void beginFrame(std::uint64_t guest_frame) {
+    constexpr auto retention_guest_frames = std::uint64_t{40U};
+    if (guest_frame < last_guest_frame_) {
+      reset();
+    } else if (guest_frame != last_guest_frame_) {
+      std::erase_if(states_, [&](const auto &state) {
+        return guest_frame > state.last_seen_guest_frame &&
+               guest_frame - state.last_seen_guest_frame >
+                   retention_guest_frames;
+      });
+    }
+    last_guest_frame_ = guest_frame;
+  }
+
+  [[nodiscard]] ActorShadowPresentationState &state(std::uint64_t actor,
+                                                    std::uint64_t guest_frame,
+                                                    std::size_t vertex_count,
+                                                    std::size_t edge_count) {
+    auto found =
+        std::ranges::find(states_, actor, &ActorShadowPresentationState::actor);
+    if (found == states_.end()) {
+      // Mission object slots are stable, but a long session can stream many
+      // actor identities through one room. Bound retained pose-sized arrays
+      // and evict the least recently used shadow only; actor rendering itself
+      // is never coupled to this enhancement cache.
+      constexpr auto maximum_cached_actor_shadows = std::size_t{256U};
+      if (states_.size() >= maximum_cached_actor_shadows) {
+        const auto oldest = std::ranges::min_element(
+            states_, {}, &ActorShadowPresentationState::last_seen_guest_frame);
+        states_.erase(oldest);
+      }
+      states_.push_back(ActorShadowPresentationState{
+          .actor = actor, .last_seen_guest_frame = guest_frame});
+      found = std::prev(states_.end());
+    }
+    found->last_seen_guest_frame = guest_frame;
+    if (found->receivers.size() != vertex_count ||
+        found->edge_receivers.size() != edge_count) {
+      found->receiver_guest_frame = std::numeric_limits<std::uint64_t>::max();
+      found->support = {};
+      found->projection = {};
+      found->receivers.assign(vertex_count, ActorShadowCachedReceiver{});
+      found->edge_receivers.assign(edge_count, ActorShadowCachedReceiver{});
+    }
+    return *found;
+  }
+
+  void reset() noexcept {
+    states_.clear();
+    last_guest_frame_ = 0U;
+  }
+
+private:
+  std::vector<ActorShadowPresentationState> states_;
+  std::uint64_t last_guest_frame_{};
+};
+
 struct PrimitiveBuffer {
   StableFrameVector<POLY_GT3> triangles{"Terrain triangles"};
   StableFrameVector<POLY_GT4> quads{"Terrain quads"};
   StableFrameVector<POLY_GT3> objects{"Object triangles"};
   StableFrameVector<POLY_GT4> object_quads{"Object quads"};
+#if defined(SF_ENABLE_SURFACE_PICKER)
   StableFrameVector<POLY_F3> surface_picker_triangles{
       "Surface picker triangles"};
   StableFrameVector<POLY_F4> surface_picker_quads{"Surface picker quads"};
+#endif
   StableFrameVector<POLY_F3> actor_shadows{"Dynamic actor shadows"};
   StableFrameVector<POLY_F3> player{"Fallback player triangles"};
   StableFrameVector<LINE_G2> effects{"Effect lines"};
@@ -3854,8 +3990,10 @@ struct PrimitiveBuffer {
     quads.reset();
     objects.reset();
     object_quads.reset();
+#if defined(SF_ENABLE_SURFACE_PICKER)
     surface_picker_triangles.reset();
     surface_picker_quads.reset();
+#endif
     actor_shadows.reset();
     player.reset();
     effects.reset();
@@ -3885,8 +4023,10 @@ struct PrimitiveBuffer {
     quads.lockStorage();
     objects.lockStorage();
     object_quads.lockStorage();
+#if defined(SF_ENABLE_SURFACE_PICKER)
     surface_picker_triangles.lockStorage();
     surface_picker_quads.lockStorage();
+#endif
     actor_shadows.lockStorage();
     player.lockStorage();
     effects.lockStorage();
@@ -3912,8 +4052,10 @@ struct PrimitiveBuffer {
   [[nodiscard]] bool storageStable() const noexcept {
     return triangles.storageStable() && quads.storageStable() &&
            objects.storageStable() && object_quads.storageStable() &&
+#if defined(SF_ENABLE_SURFACE_PICKER)
            surface_picker_triangles.storageStable() &&
            surface_picker_quads.storageStable() &&
+#endif
            actor_shadows.storageStable() && player.storageStable() &&
            effects.storageStable() && combat_effect_lines.storageStable() &&
            combat_effect_triangles.storageStable() &&
@@ -3970,6 +4112,7 @@ SVECTOR makeVertex(double x, double y, double z) {
   return result;
 }
 
+#if defined(SF_ENABLE_SURFACE_PICKER)
 template <std::size_t VertexCount>
 SurfacePickerSurface makeSurfacePickerSurface(
     SurfacePickerId id, std::string label, std::uint16_t room,
@@ -4036,6 +4179,7 @@ void submitSurfacePickerHighlight(
             &primitive);
   }
 }
+#endif
 
 int cameraDepth(const MATRIX &view, const SVECTOR &vertex) {
   return static_cast<int>(
@@ -4784,11 +4928,11 @@ private:
       for (std::size_t fragment = 0U;
            fragment < fragments.size() && emitted < maximum_shards_per_break;
            ++fragment) {
-        appendShard(
-            fragments[fragment], triangle,
-            gameplay.displayedObjectTextureBank(object_index),
-            presentation.camera,
-            base_seed ^ static_cast<std::uint32_t>(fragment * 0x85ebca6bU));
+        appendShard(fragments[fragment], triangle,
+                    gameplay.displayedObjectTextureBank(object_index),
+                    presentation.camera,
+                    base_seed ^
+                        static_cast<std::uint32_t>(fragment * 0x85ebca6bU));
         ++emitted;
       }
     }
@@ -4971,11 +5115,23 @@ struct ResolvedHmdPose {
   double ground_y{};
 };
 
-ResolvedHmdPose resolveHmdPose(const assets::HmdModel &model,
-                               const game::ActorPose *animation_pose) {
-  ResolvedHmdPose result;
+// HMD pose resolution runs for every visible actor on every presentation
+// frame. Keep its transient tables alive across calls: at 240 Hz the former
+// local vectors otherwise allocated and freed several times per actor even
+// though gameplay animation advances at only 20 Hz.
+struct HmdPoseScratch {
+  ResolvedHmdPose pose;
+  std::vector<std::uint8_t> resolved;
+  std::vector<std::uint8_t> referenced;
+};
+
+const ResolvedHmdPose &resolveHmdPose(const assets::HmdModel &model,
+                                      const game::ActorPose *animation_pose,
+                                      HmdPoseScratch &scratch) {
+  auto &result = scratch.pose;
   result.parts.resize(model.parts().size());
-  std::vector<std::uint8_t> resolved(model.parts().size());
+  scratch.resolved.assign(model.parts().size(), 0U);
+  auto &resolved = scratch.resolved;
   auto resolved_count = std::size_t{};
   while (resolved_count < model.parts().size()) {
     auto made_progress = false;
@@ -5008,7 +5164,8 @@ ResolvedHmdPose resolveHmdPose(const assets::HmdModel &model,
     }
   }
 
-  std::vector<std::uint8_t> referenced(model.vertices().size());
+  scratch.referenced.assign(model.vertices().size(), 0U);
+  auto &referenced = scratch.referenced;
   for (const auto &triangle : model.triangles()) {
     for (const auto index : triangle.vertex_indices) {
       referenced[index] = 1U;
@@ -5035,28 +5192,6 @@ ResolvedHmdPose resolveHmdPose(const assets::HmdModel &model,
   return result;
 }
 
-std::vector<Vector3> poseHmdVertices(const assets::HmdModel &model,
-                                     const game::ActorPose *animation_pose,
-                                     bool preserve_ground_offset) {
-  const auto pose = resolveHmdPose(model, animation_pose);
-  std::vector<Vector3> result;
-  result.reserve(model.vertices().size());
-  for (std::size_t index = 0; index < model.vertices().size(); ++index) {
-    const auto &vertex = model.vertices()[index];
-    auto posed = applyHmdPose(pose.parts[model.vertexParts()[index]],
-                              Vector3{
-                                  static_cast<double>(vertex.x),
-                                  static_cast<double>(vertex.y),
-                                  static_cast<double>(vertex.z),
-                              });
-    if (!preserve_ground_offset) {
-      posed.y -= pose.ground_y;
-    }
-    result.push_back(posed);
-  }
-  return result;
-}
-
 bool hasLegacyHmdBones(const assets::HmdModel &model,
                        const game::SceneObject &object) noexcept {
   return !model.parts().empty() &&
@@ -5073,7 +5208,8 @@ std::uint64_t npcAnimationPhase(const game::SceneObject &object,
 
 std::optional<assets::MissionTransform> posedActorPartTransform(
     const assets::HmdModel &model, const game::SceneObject &object,
-    const game::ActorPose &animation_pose, std::string_view part_prefix) {
+    const game::ActorPose &animation_pose, HmdPoseScratch &pose_scratch,
+    std::string_view part_prefix) {
   const auto part = std::ranges::find_if(
       model.parts(), [part_prefix](const assets::HmdPart &candidate) {
         return candidate.name.starts_with(part_prefix);
@@ -5086,7 +5222,7 @@ std::optional<assets::MissionTransform> posedActorPartTransform(
   if (hasLegacyHmdBones(model, object)) {
     return object.legacy_hmd_bones[part_index];
   }
-  const auto pose = resolveHmdPose(model, &animation_pose);
+  const auto &pose = resolveHmdPose(model, &animation_pose, pose_scratch);
   const auto &local = pose.parts[part_index];
   std::array<double, 9> actor_rotation{};
   for (std::size_t index = 0; index < actor_rotation.size(); ++index) {
@@ -5118,6 +5254,17 @@ std::optional<assets::MissionTransform> posedActorPartTransform(
   };
 }
 
+std::optional<assets::MissionTransform> posedActorPartTransform(
+    const assets::HmdModel &model, const game::SceneObject &object,
+    const game::ActorPose &animation_pose, std::string_view part_prefix) {
+  // Effect and muzzle paths do not own the frame renderer's scratch object.
+  // Keep one fallback per render thread instead of reintroducing three heap
+  // allocations for every attachment lookup.
+  static thread_local HmdPoseScratch pose_scratch;
+  return posedActorPartTransform(model, object, animation_pose, pose_scratch,
+                                 part_prefix);
+}
+
 SVECTOR transformHmdVertex(const Vector3 &vertex,
                            const assets::MissionTransform &transform) {
   const auto point = transformPoint(vertex.x, vertex.y, vertex.z, transform);
@@ -5127,6 +5274,7 @@ SVECTOR transformHmdVertex(const Vector3 &vertex,
 std::optional<Vector3> posedActorPartAnchor(const assets::HmdModel &model,
                                             const game::SceneObject &object,
                                             const game::ActorPose &pose,
+                                            HmdPoseScratch &pose_scratch,
                                             std::string_view part_prefix) {
   const auto part = std::ranges::find_if(
       model.parts(), [part_prefix](const assets::HmdPart &candidate) {
@@ -5138,10 +5286,9 @@ std::optional<Vector3> posedActorPartAnchor(const assets::HmdModel &model,
   const auto part_index =
       static_cast<std::uint16_t>(std::distance(model.parts().begin(), part));
   const auto direct_legacy_pose = hasLegacyHmdBones(model, object);
-  const auto vertices =
-      direct_legacy_pose
-          ? std::vector<Vector3>{}
-          : poseHmdVertices(model, &pose, object.legacy_hmd_root_space);
+  const auto *resolved_pose = direct_legacy_pose
+                                  ? nullptr
+                                  : &resolveHmdPose(model, &pose, pose_scratch);
   auto minimum = Vector3{
       std::numeric_limits<double>::max(),
       std::numeric_limits<double>::max(),
@@ -5158,12 +5305,19 @@ std::optional<Vector3> posedActorPartAnchor(const assets::HmdModel &model,
       continue;
     }
     const auto &source = model.vertices()[index];
-    const auto vertex =
-        direct_legacy_pose ? transformPoint(static_cast<double>(source.x),
-                                            static_cast<double>(source.y),
-                                            static_cast<double>(source.z),
-                                            object.legacy_hmd_bones[part_index])
-                           : vertices[index];
+    auto vertex =
+        direct_legacy_pose
+            ? transformPoint(static_cast<double>(source.x),
+                             static_cast<double>(source.y),
+                             static_cast<double>(source.z),
+                             object.legacy_hmd_bones[part_index])
+            : applyHmdPose(resolved_pose->parts[model.vertexParts()[index]],
+                           Vector3{static_cast<double>(source.x),
+                                   static_cast<double>(source.y),
+                                   static_cast<double>(source.z)});
+    if (!direct_legacy_pose && !object.legacy_hmd_root_space) {
+      vertex.y -= resolved_pose->ground_y;
+    }
     minimum.x = std::min(minimum.x, vertex.x);
     minimum.y = std::min(minimum.y, vertex.y);
     minimum.z = std::min(minimum.z, vertex.z);
@@ -5189,7 +5343,7 @@ std::optional<Vector3> sceneObjectCalloutAnchor(
     const game::GameplaySession &gameplay,
     const game::ActorAnimationBank &actor_animations, std::uint64_t actor_tick,
     std::span<const game::SceneObject> presentation_objects,
-    std::uint16_t scene_object, bool headshot) {
+    std::uint16_t scene_object, bool headshot, HmdPoseScratch &pose_scratch) {
   if (scene_object >= presentation_objects.size()) {
     return std::nullopt;
   }
@@ -5211,7 +5365,7 @@ std::optional<Vector3> sceneObjectCalloutAnchor(
                                        state->animation_tick,
                                        npcAnimationPhase(object, scene_object));
     if (const auto anchor = posedActorPartAnchor(
-            *model, object, pose,
+            *model, object, pose, pose_scratch,
             headshot ? std::string_view{"Head"} : std::string_view{"Chest"})) {
       return anchor;
     }
@@ -5231,11 +5385,13 @@ std::optional<Vector3>
 aimTargetAnchor(const game::GameplaySession &gameplay,
                 const game::ActorAnimationBank &actor_animations,
                 std::uint64_t actor_tick,
-                std::span<const game::SceneObject> presentation_objects) {
+                std::span<const game::SceneObject> presentation_objects,
+                HmdPoseScratch &pose_scratch) {
   const auto target = gameplay.aimTarget();
   return target ? sceneObjectCalloutAnchor(gameplay, actor_animations,
                                            actor_tick, presentation_objects,
-                                           *target, gameplay.headshotTargeted())
+                                           *target, gameplay.headshotTargeted(),
+                                           pose_scratch)
                 : std::nullopt;
 }
 
@@ -5243,13 +5399,14 @@ std::vector<WorldCalloutAnchor>
 worldCalloutAnchors(const game::GameplaySession &gameplay,
                     const game::ActorAnimationBank &actor_animations,
                     std::uint64_t actor_tick,
-                    std::span<const game::SceneObject> presentation_objects) {
+                    std::span<const game::SceneObject> presentation_objects,
+                    HmdPoseScratch &pose_scratch) {
   std::vector<WorldCalloutAnchor> result;
   result.reserve(gameplay.legacyWorldCallouts().size());
   for (const auto &callout : gameplay.legacyWorldCallouts()) {
     const auto anchor = sceneObjectCalloutAnchor(
         gameplay, actor_animations, actor_tick, presentation_objects,
-        callout.object, callout.headshot);
+        callout.object, callout.headshot, pose_scratch);
     if (!anchor || callout.text.empty()) {
       continue;
     }
@@ -5709,6 +5866,7 @@ void renderGlassShards(std::span<const GlassShardPresentationState> shards,
   }
 }
 
+#if defined(SF_ENABLE_SURFACE_PICKER)
 struct SurfacePickerObjectContext {
   PsyCrossSurfacePicker *picker{};
   const TextureStreamer *textures{};
@@ -5719,6 +5877,7 @@ struct SurfacePickerObjectContext {
   std::uint16_t room{};
   std::uint64_t guest_frame{};
 };
+#endif
 
 void renderGmdObject(
     const assets::GmdModel &model, const game::SceneObject &object,
@@ -5726,8 +5885,13 @@ void renderGmdObject(
     const game::CameraState &camera, const MATRIX &view,
     std::vector<OT_TAG> &ordering_table, PrimitiveBuffer &primitives,
     RenderStats &stats, VertexColor back_color = {128U, 128U, 128U},
-    bool force_two_sided = false,
+    bool force_two_sided = false
+#if defined(SF_ENABLE_SURFACE_PICKER)
+    ,
     const SurfacePickerObjectContext *picker_context = nullptr) {
+#else
+) {
+#endif
   const auto reverse_winding = reversesWinding(object.transform);
   for (auto triangle_index = std::size_t{};
        triangle_index < model.triangles().size(); ++triangle_index) {
@@ -5801,6 +5965,7 @@ void renderGmdObject(
     addPrim(&ordering_table[std::clamp(depth, 1, ordering_table_size - 1)],
             &primitive);
     const std::array projected{xy0, xy1, xy2};
+#if defined(SF_ENABLE_SURFACE_PICKER)
     if (picker_context != nullptr && picker_context->picker != nullptr &&
         picker_context->textures != nullptr &&
         picker_context->ordering_table != nullptr) {
@@ -5817,6 +5982,7 @@ void renderGmdObject(
             projected, depth, *picker_context->ordering_table, primitives);
       }
     }
+#endif
     submitStats(stats, depth, projected);
   }
 }
@@ -5825,7 +5991,7 @@ void renderActorWeapon(const game::GameplaySession &gameplay,
                        const assets::HmdModel &actor_model,
                        const game::SceneObject &actor_object,
                        const game::ActorPose &actor_pose, game::WeaponId weapon,
-                       unsigned int texture_bank,
+                       unsigned int texture_bank, HmdPoseScratch &pose_scratch,
                        const game::CameraState &camera, const MATRIX &view,
                        std::vector<OT_TAG> &ordering_table,
                        PrimitiveBuffer &primitives, RenderStats &stats) {
@@ -5837,8 +6003,8 @@ void renderActorWeapon(const game::GameplaySession &gameplay,
   if (geometry == nullptr) {
     return;
   }
-  const auto transform = posedActorPartTransform(actor_model, actor_object,
-                                                 actor_pose, "RightHan");
+  const auto transform = posedActorPartTransform(
+      actor_model, actor_object, actor_pose, pose_scratch, "RightHan");
   if (!transform) {
     return;
   }
@@ -5855,17 +6021,24 @@ void renderActorWeapon(const game::GameplaySession &gameplay,
 void prepareHmdWorldVertices(const assets::HmdModel &model,
                              const game::SceneObject &object,
                              const game::ActorPose *animation_pose,
+                             HmdPoseScratch &pose_scratch,
                              std::vector<Vector3> &result) {
   const auto direct_legacy_pose = hasLegacyHmdBones(model, object);
-  const auto posed_vertices =
-      direct_legacy_pose ? std::vector<Vector3>{}
-                         : poseHmdVertices(model, animation_pose,
-                                           object.legacy_hmd_root_space);
+  const auto *resolved_pose =
+      direct_legacy_pose ? nullptr
+                         : &resolveHmdPose(model, animation_pose, pose_scratch);
   result.clear();
   result.reserve(model.vertices().size());
   for (std::size_t index = 0U; index < model.vertices().size(); ++index) {
     if (!direct_legacy_pose) {
-      const auto &vertex = posed_vertices[index];
+      const auto &source = model.vertices()[index];
+      auto vertex = applyHmdPose(
+          resolved_pose->parts[model.vertexParts()[index]],
+          Vector3{static_cast<double>(source.x), static_cast<double>(source.y),
+                  static_cast<double>(source.z)});
+      if (!object.legacy_hmd_root_space) {
+        vertex.y -= resolved_pose->ground_y;
+      }
       result.push_back(
           transformPoint(vertex.x, vertex.y, vertex.z, object.transform));
       continue;
@@ -5881,12 +6054,12 @@ void prepareHmdWorldVertices(const assets::HmdModel &model,
 void renderHmdObject(const assets::HmdModel &model,
                      const game::SceneObject &object,
                      const game::ActorPose *animation_pose,
-                     unsigned int texture_bank, const MATRIX &view,
-                     std::vector<OT_TAG> &ordering_table,
+                     unsigned int texture_bank, HmdPoseScratch &pose_scratch,
+                     const MATRIX &view, std::vector<OT_TAG> &ordering_table,
                      PrimitiveBuffer &primitives, RenderStats &stats,
                      std::span<const Vector3> prepared_world_vertices = {}) {
   if (prepared_world_vertices.empty()) {
-    prepareHmdWorldVertices(model, object, animation_pose,
+    prepareHmdWorldVertices(model, object, animation_pose, pose_scratch,
                             primitives.hmd_world_vertex_scratch);
     prepared_world_vertices = primitives.hmd_world_vertex_scratch;
   }
@@ -5948,13 +6121,14 @@ void renderHmdObject(const assets::HmdModel &model,
   }
 }
 
-void renderActorShadow(const game::GameplaySession &gameplay,
-                       const assets::HmdModel &model,
-                       const game::SceneObject &object,
-                       std::span<const Vector3> world_vertices,
-                       const MATRIX &view,
-                       std::vector<OT_TAG> &shadow_ordering_table,
-                       PrimitiveBuffer &primitives, RenderStats &stats) {
+void renderActorShadow(
+    const game::GameplaySession &gameplay, const assets::HmdModel &model,
+    const game::SceneObject &object, std::span<const Vector3> world_vertices,
+    game::DynamicLightPoint support_root, std::uint64_t actor_shadow_key,
+    std::uint64_t guest_frame, double interpolation_amount,
+    ActorShadowPresentationCache &shadow_cache, const MATRIX &view,
+    std::vector<OT_TAG> &shadow_ordering_table, PrimitiveBuffer &primitives,
+    RenderStats &stats) {
   if (world_vertices.size() != model.vertices().size() ||
       model.triangles().empty()) {
     return;
@@ -5971,45 +6145,93 @@ void renderActorShadow(const game::GameplaySession &gameplay,
     return;
   }
   const auto root = transformPoint(0.0, 0.0, 0.0, object.transform);
-  const auto surface = gameplay.actorGroundSurface(root.x, root.z, contact_y);
-  if (!surface || std::abs(surface->y - contact_y) > 1200.0) {
-    return;
-  }
-  const auto ground_point = game::DynamicLightPoint{root.x, surface->y, root.z};
-  const auto ground_normal = game::DynamicLightPoint{
-      surface->normal_x, surface->normal_y, surface->normal_z};
   const auto actor_anchor =
       game::DynamicLightPoint{root.x, (minimum_y + contact_y) * 0.5, root.z};
-  const auto projection = game::selectDynamicShadowProjection(
-      active_dynamic_lights, actor_anchor, ground_normal);
-  const auto receiver_for = [&](game::DynamicLightPoint source)
+  auto &shadow_state =
+      shadow_cache.state(actor_shadow_key, guest_frame, world_vertices.size(),
+                         model.triangles().size() * 3U);
+  const auto refresh_shadow_tick =
+      !shadow_state.support.initialized ||
+      shadow_state.support.guest_tick != guest_frame;
+  if (refresh_shadow_tick) {
+    auto target_support = std::optional<ActorShadowReceiverPlane>{};
+    if (const auto surface = gameplay.actorGroundSurface(
+            support_root.x, support_root.z, support_root.y);
+        surface && std::abs(surface->y - support_root.y) <= 1200.0) {
+      target_support = ActorShadowReceiverPlane{
+          {support_root.x, surface->y, support_root.z},
+          {surface->normal_x, surface->normal_y, surface->normal_z},
+          false};
+    }
+    shadow_state.support = advanceActorShadowSupport(
+        shadow_state.support, target_support, guest_frame);
+    if (shadow_state.support.initialized) {
+      const auto authoritative_anchor = game::DynamicLightPoint{
+          support_root.x, support_root.y + (actor_anchor.y - root.y),
+          support_root.z};
+      const auto target_projection = game::selectDynamicShadowProjection(
+          active_dynamic_lights, authoritative_anchor,
+          shadow_state.support.current.normal);
+      shadow_state.projection = game::advanceDynamicShadowProjection(
+          shadow_state.projection, target_projection, guest_frame);
+    }
+  }
+  const auto support =
+      sampleActorShadowSupport(shadow_state.support, interpolation_amount);
+  if (!support) {
+    return;
+  }
+  const auto ground_point = support->point;
+  const auto ground_normal = support->normal;
+  const auto projection = game::sampleDynamicShadowProjection(
+      shadow_state.projection, interpolation_amount);
+  const auto refresh_receivers =
+      shadow_state.receiver_guest_frame != guest_frame;
+  const auto receiver_for = [&](game::DynamicLightPoint source,
+                                ActorShadowCachedReceiver &history)
       -> std::optional<ActorShadowReceiverVertex> {
     const auto floor = game::projectDynamicShadowPoint(
         source, ground_point, ground_normal, projection);
     if (!floor) {
       return std::nullopt;
     }
-    const auto receiver = gameplay.actorShadowSurface(
-        source.x, source.y, source.z, floor->x, floor->y, floor->z);
-    if (!receiver) {
-      return ActorShadowReceiverVertex{*floor, ground_normal, false};
+    if (refresh_receivers) {
+      const auto query_floor = game::projectDynamicShadowPoint(
+          source, shadow_state.support.current.point,
+          shadow_state.support.current.normal, shadow_state.projection.current);
+      const auto receiver = gameplay.actorShadowSurface(
+          source.x, source.y, source.z, query_floor ? query_floor->x : floor->x,
+          query_floor ? query_floor->y : floor->y,
+          query_floor ? query_floor->z : floor->z);
+      auto candidate = std::optional<ActorShadowReceiverPlane>{};
+      if (receiver) {
+        const auto receiver_normal = game::DynamicLightPoint{
+            receiver->normal_x, receiver->normal_y, receiver->normal_z};
+        if (actorShadowReceiverIsWall(receiver_normal, ground_normal)) {
+          candidate = ActorShadowReceiverPlane{
+              {receiver->x, receiver->y, receiver->z}, receiver_normal, true};
+        }
+      }
+      updateActorShadowReceiver(history, candidate);
     }
-    // The hit normal faces back toward the caster. A small receiver-relative
-    // offset keeps both wall and floor portions clear of coplanar Z fighting.
-    constexpr auto surface_bias = 4.0;
-    return ActorShadowReceiverVertex{
-        {receiver->x + receiver->normal_x * surface_bias,
-         receiver->y + receiver->normal_y * surface_bias,
-         receiver->z + receiver->normal_z * surface_bias},
-        {receiver->normal_x, receiver->normal_y, receiver->normal_z},
-        true};
+    if (history.stable) {
+      if (const auto point = projectActorShadowOntoCachedPlane(
+              source, *floor, *history.stable)) {
+        return ActorShadowReceiverVertex{*point, history.stable->normal,
+                                         history.stable->wall};
+      }
+    }
+    return ActorShadowReceiverVertex{*floor, ground_normal, false};
   };
   auto &receivers = primitives.actor_shadow_receiver_scratch;
   receivers.clear();
   receivers.reserve(world_vertices.size());
-  for (const auto &vertex : world_vertices) {
-    receivers.push_back(receiver_for({vertex.x, vertex.y, vertex.z}));
+  for (auto index = std::size_t{}; index < world_vertices.size(); ++index) {
+    const auto &vertex = world_vertices[index];
+    receivers.push_back(receiver_for({vertex.x, vertex.y, vertex.z},
+                                     shadow_state.receivers[index]));
   }
+  shadow_state.receiver_guest_frame = guest_frame;
   const auto shade = static_cast<std::uint8_t>(std::clamp<long>(
       std::lround(18.0 + projection.darkness * 58.0), 20L, 44L));
   const auto projected_valid = [](long packed) {
@@ -6069,7 +6291,9 @@ void renderActorShadow(const game::GameplaySession &gameplay,
     return first.normal.x * second.normal.x + first.normal.y * second.normal.y +
            first.normal.z * second.normal.z;
   };
-  for (const auto &triangle : model.triangles()) {
+  for (auto triangle_index = std::size_t{};
+       triangle_index < model.triangles().size(); ++triangle_index) {
+    const auto &triangle = model.triangles()[triangle_index];
     if (std::ranges::any_of(triangle.vertex_indices, [&](std::uint16_t index) {
           return index >= world_vertices.size() || !receivers[index];
         })) {
@@ -6104,11 +6328,16 @@ void renderActorShadow(const game::GameplaySession &gameplay,
     const auto third_source = game::DynamicLightPoint{
         world_vertices[third_index].x, world_vertices[third_index].y,
         world_vertices[third_index].z};
+    const auto edge_offset = triangle_index * 3U;
     const auto first_second =
-        receiver_for(midpoint(first_source, second_source));
+        receiver_for(midpoint(first_source, second_source),
+                     shadow_state.edge_receivers[edge_offset]);
     const auto second_third =
-        receiver_for(midpoint(second_source, third_source));
-    const auto third_first = receiver_for(midpoint(third_source, first_source));
+        receiver_for(midpoint(second_source, third_source),
+                     shadow_state.edge_receivers[edge_offset + 1U]);
+    const auto third_first =
+        receiver_for(midpoint(third_source, first_source),
+                     shadow_state.edge_receivers[edge_offset + 2U]);
     if (!first_second || !second_third || !third_first) {
       submit_shadow_triangle(first.point, second.point, third.point);
       continue;
@@ -7329,8 +7558,13 @@ void renderWeaponEffects(
 void renderEmdObject(
     const assets::EmdScene &scene, const game::SceneObject &object,
     const MATRIX &view, std::vector<OT_TAG> &ordering_table,
-    PrimitiveBuffer &primitives, RenderStats &stats, bool retail_scrim = false,
+    PrimitiveBuffer &primitives, RenderStats &stats, bool retail_scrim = false
+#if defined(SF_ENABLE_SURFACE_PICKER)
+    ,
     const SurfacePickerObjectContext *picker_context = nullptr) {
+#else
+) {
+#endif
   const auto reverse_winding = reversesWinding(object.transform);
   const auto texture_bank = scene.textureBank();
   for (auto section_index = std::size_t{};
@@ -7421,6 +7655,7 @@ void renderEmdObject(
         addPrim(&ordering_table[std::clamp(depth, 1, ordering_table_size - 1)],
                 &primitive);
         const std::array projected{xy0, xy1, xy2, xy3};
+#if defined(SF_ENABLE_SURFACE_PICKER)
         if (picker_context != nullptr && picker_context->picker != nullptr &&
             picker_context->textures != nullptr &&
             picker_context->ordering_table != nullptr) {
@@ -7437,6 +7672,7 @@ void renderEmdObject(
                 projected, depth, *picker_context->ordering_table, primitives);
           }
         }
+#endif
         submitStats(stats, depth, projected);
       } else {
         const std::array positions{v0, v1, v2};
@@ -7484,6 +7720,7 @@ void renderEmdObject(
         addPrim(&ordering_table[std::clamp(depth, 1, ordering_table_size - 1)],
                 &primitive);
         const std::array projected{xy0, xy1, xy2};
+#if defined(SF_ENABLE_SURFACE_PICKER)
         if (picker_context != nullptr && picker_context->picker != nullptr &&
             picker_context->textures != nullptr &&
             picker_context->ordering_table != nullptr) {
@@ -7501,6 +7738,7 @@ void renderEmdObject(
                 projected, depth, *picker_context->ordering_table, primitives);
           }
         }
+#endif
         submitStats(stats, depth, projected);
       }
     }
@@ -7581,18 +7819,29 @@ VertexColor localSceneBackColor(const game::GameplaySession &gameplay,
 }
 
 void renderObjects(const game::GameplaySession &gameplay,
+#if defined(SF_ENABLE_SURFACE_PICKER)
                    const TextureStreamer &textures,
+#endif
                    const FireAnimation &fire_animation,
                    const FireTexturePlacement &fire_texture_placement,
                    const game::ActorAnimationBank &actor_animations,
-                   std::uint64_t actor_tick,
+                   std::uint64_t actor_tick, double interpolation_amount,
                    const RenderPresentationSnapshot &presentation,
                    const MATRIX &view, std::vector<OT_TAG> &ordering_table,
                    std::vector<OT_TAG> &shadow_ordering_table,
+#if defined(SF_ENABLE_SURFACE_PICKER)
                    std::vector<OT_TAG> &surface_picker_ordering_table,
+#endif
                    std::vector<OT_TAG> &fire_ordering_table,
-                   PrimitiveBuffer &primitives, RenderStats &stats,
+                   ActorShadowPresentationCache &shadow_cache,
+                   HmdPoseScratch &pose_scratch, PrimitiveBuffer &primitives,
+                   RenderStats &stats
+#if defined(SF_ENABLE_SURFACE_PICKER)
+                   ,
                    PsyCrossSurfacePicker &surface_picker) {
+#else
+) {
+#endif
   for (const auto object_index : gameplay.activeObjects()) {
     if (object_index >= presentation.objects.size()) {
       continue;
@@ -7604,6 +7853,7 @@ void renderObjects(const game::GameplaySession &gameplay,
     }
     const auto &object_model = *displayed_model;
     const auto &geometry = object_model.geometry;
+#if defined(SF_ENABLE_SURFACE_PICKER)
     const auto model_index = static_cast<std::uint32_t>(
         displayed_model - gameplay.objectModels().data());
     auto picker_context = SurfacePickerObjectContext{
@@ -7618,8 +7868,8 @@ void renderObjects(const game::GameplaySession &gameplay,
     };
     const auto *active_picker_context =
         surface_picker.active() ? &picker_context : nullptr;
-    const auto texture_bank =
-        gameplay.displayedObjectTextureBank(object_index);
+#endif
+    const auto texture_bank = gameplay.displayedObjectTextureBank(object_index);
     if (const auto *model = std::get_if<assets::GmdModel>(&geometry)) {
       // The guest display-light pointer is reliable for the two weapon-crate
       // classes. Several flat GMD signs reuse that field for material state;
@@ -7635,7 +7885,12 @@ void renderObjects(const game::GameplaySession &gameplay,
                        : guest_back_color;
       renderGmdObject(*model, object, object_model.visual_effect, texture_bank,
                       presentation.camera, view, ordering_table, primitives,
-                      stats, back_color, false, active_picker_context);
+                      stats, back_color, false
+#if defined(SF_ENABLE_SURFACE_PICKER)
+                      ,
+                      active_picker_context
+#endif
+      );
     } else if (const auto *hmd_model =
                    std::get_if<assets::HmdModel>(&geometry)) {
       const auto *state = gameplay.npcState(object_index);
@@ -7659,23 +7914,32 @@ void renderObjects(const game::GameplaySession &gameplay,
                     npcAnimationPhase(object, object_index));
       const auto *render_pose =
           dedicated_presentation && !exact_guest_pose ? nullptr : &pose;
-      prepareHmdWorldVertices(*hmd_model, object, render_pose,
+      prepareHmdWorldVertices(*hmd_model, object, render_pose, pose_scratch,
                               primitives.hmd_world_vertex_scratch);
       const auto world_vertices =
           std::span<const Vector3>{primitives.hmd_world_vertex_scratch};
       if (state != nullptr || dedicated_presentation) {
-        renderActorShadow(gameplay, *hmd_model, object, world_vertices, view,
-                          shadow_ordering_table, primitives, stats);
+        const auto &support_object = object_index < gameplay.objects().size()
+                                         ? gameplay.objects()[object_index]
+                                         : object;
+        const auto support_origin =
+            transformPoint(0.0, 0.0, 0.0, support_object.transform);
+        renderActorShadow(
+            gameplay, *hmd_model, object, world_vertices,
+            {support_origin.x, support_origin.y, support_origin.z},
+            object_index, presentation.guest_frame, interpolation_amount,
+            shadow_cache, view, shadow_ordering_table, primitives, stats);
       }
-      renderHmdObject(*hmd_model, object, render_pose, texture_bank, view,
-                      ordering_table, primitives, stats, world_vertices);
+      renderHmdObject(*hmd_model, object, render_pose, texture_bank,
+                      pose_scratch, view, ordering_table, primitives, stats,
+                      world_vertices);
       auto weapon = gameplay.legacyDedicatedActorWeapon(object_index);
       if (!weapon && state != nullptr && state->health != 0U) {
         weapon = state->weapon;
       }
       if (weapon) {
         renderActorWeapon(gameplay, *hmd_model, object, pose, *weapon,
-                          game::resident_weapon_texture_bank,
+                          game::resident_weapon_texture_bank, pose_scratch,
                           presentation.camera, view, ordering_table, primitives,
                           stats);
       }
@@ -7689,10 +7953,17 @@ void renderObjects(const game::GameplaySession &gameplay,
                          primitives, stats);
       }
     } else {
+#if defined(SF_ENABLE_SURFACE_PICKER)
       picker_context.kind = SurfacePickerKind::emd_object;
+#endif
       renderEmdObject(std::get<assets::EmdScene>(geometry), object, view,
-                      ordering_table, primitives, stats, false,
+                      ordering_table, primitives, stats, false
+#if defined(SF_ENABLE_SURFACE_PICKER)
+                      ,
                       active_picker_context);
+#else
+      );
+#endif
     }
   }
 }
@@ -7991,15 +8262,15 @@ assets::MissionTransform playerTransform(const game::PlayerState &player,
   };
 }
 
-void renderPresentedPlayer(const game::GameplaySession &gameplay,
-                           const game::ActorAnimationBank &actor_animations,
-                           std::uint64_t player_animation_tick,
-                           game::WeaponId presented_weapon,
-                           const RenderPresentationSnapshot &presentation,
-                           const MATRIX &view,
-                           std::vector<OT_TAG> &ordering_table,
-                           std::vector<OT_TAG> &shadow_ordering_table,
-                           PrimitiveBuffer &primitives, RenderStats &stats) {
+void renderPresentedPlayer(
+    const game::GameplaySession &gameplay,
+    const game::ActorAnimationBank &actor_animations,
+    std::uint64_t player_animation_tick, game::WeaponId presented_weapon,
+    double interpolation_amount, const RenderPresentationSnapshot &presentation,
+    const MATRIX &view, std::vector<OT_TAG> &ordering_table,
+    std::vector<OT_TAG> &shadow_ordering_table,
+    ActorShadowPresentationCache &shadow_cache, HmdPoseScratch &pose_scratch,
+    PrimitiveBuffer &primitives, RenderStats &stats) {
   if (gameplay.playerAlive() && presentation.first_person_aim) {
     return;
   }
@@ -8028,20 +8299,33 @@ void renderPresentedPlayer(const game::GameplaySession &gameplay,
           gameplay.playerAnimation(), player_animation_tick,
           gameplay.playerPresentationAnimationTick());
     }();
-    prepareHmdWorldVertices(*player_model, player_object, &pose,
+    prepareHmdWorldVertices(*player_model, player_object, &pose, pose_scratch,
                             primitives.hmd_world_vertex_scratch);
     const auto world_vertices =
         std::span<const Vector3>{primitives.hmd_world_vertex_scratch};
+    auto support_player_object = game::SceneObject{
+        0, playerTransform(gameplay.player(), gameplay.playerModelHeading())};
+    if (const auto *authoritative_guest_player =
+            gameplay.legacyPlayerPresentation()) {
+      support_player_object = *authoritative_guest_player;
+    }
+    const auto support_origin =
+        transformPoint(0.0, 0.0, 0.0, support_player_object.transform);
+    constexpr auto player_shadow_key =
+        std::numeric_limits<std::uint64_t>::max();
     renderActorShadow(gameplay, *player_model, player_object, world_vertices,
-                      view, shadow_ordering_table, primitives, stats);
+                      {support_origin.x, support_origin.y, support_origin.z},
+                      player_shadow_key, presentation.guest_frame,
+                      interpolation_amount, shadow_cache, view,
+                      shadow_ordering_table, primitives, stats);
     renderHmdObject(*player_model, player_object, &pose,
-                    game::resident_hmd_texture_bank, view, ordering_table,
-                    primitives, stats, world_vertices);
+                    game::resident_hmd_texture_bank, pose_scratch, view,
+                    ordering_table, primitives, stats, world_vertices);
     if (gameplay.playerAlive()) {
       renderActorWeapon(gameplay, *player_model, player_object, pose,
                         presented_weapon, game::resident_weapon_texture_bank,
-                        presentation.camera, view, ordering_table, primitives,
-                        stats);
+                        pose_scratch, presentation.camera, view, ordering_table,
+                        primitives, stats);
     }
   } else if (!gameplay.legacyRenderCommandsAuthoritative()) {
     renderPlayer(presentation.player, view, ordering_table, primitives, stats);
@@ -8270,8 +8554,7 @@ void renderGuestCameraLists(
       material_v1 =
           static_cast<std::uint8_t>(static_cast<int>(material_v1) + v_delta);
       primitive.tpage = static_cast<std::uint16_t>(
-          (environment->texture_page & 0xfc1fU) |
-          (retail_tpage & 0x03e0U));
+          (environment->texture_page & 0xfc1fU) | (retail_tpage & 0x03e0U));
       primitive.clut = environment->clut;
     } else {
       primitive.tpage =
@@ -9325,8 +9608,17 @@ RenderStats renderWorld(
     std::vector<OT_TAG> &scrim_ordering_table,
     std::vector<OT_TAG> &guest_overlay_ordering_table,
     std::vector<OT_TAG> &fire_ordering_table,
+#if defined(SF_ENABLE_SURFACE_PICKER)
     std::vector<OT_TAG> &surface_picker_ordering_table,
-    PrimitiveBuffer &primitives, PsyCrossSurfacePicker &surface_picker) {
+#endif
+    ActorShadowPresentationCache &shadow_cache, HmdPoseScratch &pose_scratch,
+    PrimitiveBuffer &primitives
+#if defined(SF_ENABLE_SURFACE_PICKER)
+    ,
+    PsyCrossSurfacePicker &surface_picker) {
+#else
+) {
+#endif
   ClearOTagR(reinterpret_cast<u_long *>(ordering_table.data()),
              ordering_table_size);
   ClearOTagR(reinterpret_cast<u_long *>(shadow_ordering_table.data()),
@@ -9337,9 +9629,12 @@ RenderStats renderWorld(
              ordering_table_size);
   ClearOTagR(reinterpret_cast<u_long *>(fire_ordering_table.data()),
              ordering_table_size);
+#if defined(SF_ENABLE_SURFACE_PICKER)
   ClearOTagR(reinterpret_cast<u_long *>(surface_picker_ordering_table.data()),
              ordering_table_size);
+#endif
   primitives.reset();
+  shadow_cache.beginFrame(presentation.guest_frame);
   updateDynamicLightFrame(gameplay, actor_animations, presentation,
                           weapon_edges, retail_muzzle_flashes,
                           native_muzzle_flashes);
@@ -9487,8 +9782,10 @@ RenderStats renderWorld(
   }
   primitives.objects.reserve(object_polygon_count * maximum_clipped_triangles);
   primitives.object_quads.reserve(object_quad_count);
+#if defined(SF_ENABLE_SURFACE_PICKER)
   primitives.surface_picker_triangles.reserve(1U);
   primitives.surface_picker_quads.reserve(1U);
+#endif
   primitives.actor_shadows.reserve(actor_shadow_triangle_count);
   primitives.player.reserve(72U);
   // OT entries hold raw primitive addresses. Reserve the full worst-case
@@ -9628,6 +9925,7 @@ RenderStats renderWorld(
               &ordering_table[std::clamp(depth, 1, ordering_table_size - 1)],
               &primitive);
           const std::array projected{xy0, xy1, xy2, xy3};
+#if defined(SF_ENABLE_SURFACE_PICKER)
           if (surface_picker.active() &&
               surface_picker.observe(makeSurfacePickerSurface(
                   SurfacePickerId{SurfacePickerKind::world, model_index,
@@ -9641,6 +9939,7 @@ RenderStats renderWorld(
             submitSurfacePickerHighlight(
                 projected, depth, surface_picker_ordering_table, primitives);
           }
+#endif
           submitStats(stats, depth, projected);
         } else {
           const std::array positions{v0, v1, v2};
@@ -9690,6 +9989,7 @@ RenderStats renderWorld(
               &ordering_table[std::clamp(depth, 1, ordering_table_size - 1)],
               &primitive);
           const std::array projected{xy0, xy1, xy2};
+#if defined(SF_ENABLE_SURFACE_PICKER)
           const std::array uv{polygon.uv[0], polygon.uv[1], polygon.uv[2]};
           if (surface_picker.active() &&
               surface_picker.observe(makeSurfacePickerSurface(
@@ -9704,6 +10004,7 @@ RenderStats renderWorld(
             submitSurfacePickerHighlight(
                 projected, depth, surface_picker_ordering_table, primitives);
           }
+#endif
           submitStats(stats, depth, projected);
         }
       }
@@ -9721,6 +10022,7 @@ RenderStats renderWorld(
     object.transform.x = source.translation.x;
     object.transform.y = -source.translation.y;
     object.transform.z = source.translation.z;
+#if defined(SF_ENABLE_SURFACE_PICKER)
     const auto picker_context = SurfacePickerObjectContext{
         .picker = &surface_picker,
         .textures = &textures,
@@ -9731,19 +10033,36 @@ RenderStats renderWorld(
         .room = gameplay.currentRoom(),
         .guest_frame = presentation.guest_frame,
     };
+#endif
     // Retail flag 0x00200000 disables distance fade/culling and 0x00100000
     // excludes SCRIM from local vertex lights. Native presentation also gives
     // this semantic background its own non-depth-writing pass: the sky keeps
     // its retail painter order but can never compete with level geometry in Z.
     renderEmdObject(*scrim, object, view, scrim_ordering_table, primitives,
-                    stats, true,
-                    surface_picker.active() ? &picker_context : nullptr);
+                    stats, true
+#if defined(SF_ENABLE_SURFACE_PICKER)
+                    ,
+                    surface_picker.active() ? &picker_context : nullptr
+#endif
+    );
   }
-  renderObjects(gameplay, textures, fire_animation, fire_texture_placement,
-                actor_animations, actor_tick, presentation, view,
+  renderObjects(gameplay,
+#if defined(SF_ENABLE_SURFACE_PICKER)
+                textures,
+#endif
+                fire_animation, fire_texture_placement, actor_animations,
+                actor_tick, interpolation_amount, presentation, view,
                 ordering_table, shadow_ordering_table,
-                surface_picker_ordering_table, fire_ordering_table, primitives,
-                stats, surface_picker);
+#if defined(SF_ENABLE_SURFACE_PICKER)
+                surface_picker_ordering_table,
+#endif
+                fire_ordering_table, shadow_cache, pose_scratch, primitives,
+                stats
+#if defined(SF_ENABLE_SURFACE_PICKER)
+                ,
+                surface_picker
+#endif
+  );
   renderDroppedItemSprites(hud_textures, gameplay, presentation, view,
                            ordering_table, primitives, stats);
   renderProjectileSprites(hud_textures, gameplay, presentation, view,
@@ -9759,9 +10078,10 @@ RenderStats renderWorld(
                          retained_raw_packets, view, ordering_table,
                          guest_overlay_ordering_table, primitives, stats);
   renderPresentedPlayer(gameplay, actor_animations, player_animation_tick,
-                        presented_player_weapon, presentation, view,
-                        ordering_table, shadow_ordering_table, primitives,
-                        stats);
+                        presented_player_weapon, interpolation_amount,
+                        presentation, view, ordering_table,
+                        shadow_ordering_table, shadow_cache, pose_scratch,
+                        primitives, stats);
   if (!primitives.storageStable()) {
     throw core::Error{core::ErrorCode::invalid_format,
                       "Primitive storage moved while building the OT"};
@@ -10244,6 +10564,28 @@ void drawOriginalHudText(const HudTextureAtlas &textures, std::string_view text,
   }
 }
 
+void drawOriginalHudTextSubpixel(const HudTextureAtlas &textures,
+                                 std::string_view text, float x, float y,
+                                 std::uint8_t brightness = 208U) {
+  const auto &font_page = textures.image("FONTA.TIM");
+  const ScopedPsyCrossFontTexture font_binding{textures.nativeFont()};
+  const auto color =
+      game::LegacyRgbBridgeState{brightness, brightness, brightness};
+  for (const auto character : text) {
+    if (character == ' ') {
+      x += 4.0F;
+      continue;
+    }
+    const auto glyph = game::originalHudGlyph(character);
+    if (!glyph) {
+      continue;
+    }
+    drawHudSpriteRegionTintScaled(font_page, x, y, glyph->u, glyph->v,
+                                  glyph->width, glyph->height(), 1.0F, color);
+    x += static_cast<float>(glyph->advance());
+  }
+}
+
 std::size_t originalHudDrawableGlyphCount(std::string_view text) noexcept {
   return static_cast<std::size_t>(
       std::ranges::count_if(text, [](char character) {
@@ -10400,8 +10742,8 @@ bool drawBoundKeyboardMousePrompt(
     return false;
   }
 
-  const auto retail_glyph_count = originalHudSourceGlyphCount(
-      prompt->retail_text, reconstructed_source);
+  const auto retail_glyph_count =
+      originalHudSourceGlyphCount(prompt->retail_text, reconstructed_source);
   const auto bound_glyph_count =
       originalHudDrawableGlyphCount(prompt->bound_text);
   if (retail_glyph_count == 0U || bound_glyph_count == 0U) {
@@ -10442,11 +10784,10 @@ bool drawBoundKeyboardMousePrompt(
   return true;
 }
 
-struct LocalizedGameplayMessageLayout final {
-  std::string source;
+struct GameplayMessageLayout final {
   std::string wrapped_text;
   std::size_t source_glyph_count{};
-  std::size_t localized_glyph_count{};
+  std::size_t presentation_glyph_count{};
   std::size_t visible_glyph_count{};
   float left{};
   float top{};
@@ -10461,23 +10802,24 @@ std::size_t originalHudLineCount(std::string_view text) noexcept {
              : static_cast<std::size_t>(std::ranges::count(text, '\n')) + 1U;
 }
 
-std::optional<LocalizedGameplayMessageLayout>
-buildLocalizedGameplayMessageLayout(
-    const game::LegacyUiMessageBridgeState &message, int offset_y,
-    const KeyboardMouseBindings &bindings) {
-  if (message.glyphs.empty() || !game::russianLanguageActive()) {
+std::optional<GameplayMessageLayout>
+buildGameplayMessageLayout(const game::LegacyUiMessageBridgeState &message,
+                           int offset_x, int offset_y,
+                           const KeyboardMouseBindings &bindings) {
+  if (message.glyphs.empty()) {
     return std::nullopt;
   }
+  const auto russian_language = game::russianLanguageActive();
   std::string source;
-  std::string localized;
+  std::string presented;
   auto reconstructed_source = false;
   const auto resolve = [&](std::string_view observed, bool reconstructed) {
     if (observed.empty()) {
       return false;
     }
     source = std::string{observed};
-    localized = game::localizeTextCopy(source);
-    if (localized != source) {
+    presented = game::localizeTextCopy(source);
+    if (!russian_language || presented != source) {
       reconstructed_source = reconstructed;
       return true;
     }
@@ -10486,8 +10828,8 @@ buildLocalizedGameplayMessageLayout(
       return false;
     }
     source = std::string{*completed};
-    localized = game::localizeTextCopy(source);
-    if (localized == source) {
+    presented = game::localizeTextCopy(source);
+    if (russian_language && presented == source) {
       return false;
     }
     reconstructed_source = reconstructed;
@@ -10500,48 +10842,66 @@ buildLocalizedGameplayMessageLayout(
   // The retail contact template uses printf's first %s for the controller
   // icon. Preserve the second, already-authored contact name, but convert the
   // semantic button slot before the common native-token resolver runs.
-  if (keyboardMousePromptText(source, bindings)) {
-    if (const auto slot = localized.find("%s"); slot != std::string::npos) {
-      localized.replace(slot, 2U, "%x");
+  const auto prompt = keyboardMousePromptText(source, bindings);
+  if (prompt) {
+    if (!russian_language) {
+      presented = prompt->bound_text;
+    } else if (const auto slot = presented.find("%s");
+               slot != std::string::npos) {
+      presented.replace(slot, 2U, "%x");
     }
   }
-  localized = keyboardMouseHintText(localized, bindings);
+  presented = keyboardMouseHintText(presented, bindings);
 
   const auto source_glyph_count =
       std::max(std::size_t{1U},
                originalHudSourceGlyphCount(source, reconstructed_source));
-  const auto localized_glyph_count = originalHudDrawableGlyphCount(localized);
-  if (source_glyph_count == 0U || localized_glyph_count == 0U) {
+  const auto presentation_glyph_count =
+      originalHudDrawableGlyphCount(presented);
+  if (source_glyph_count == 0U || presentation_glyph_count == 0U) {
     return std::nullopt;
   }
   const auto presented_source_glyphs =
       std::min(source_glyph_count, message.glyphs.size());
-  const auto visible_localized_glyphs = std::min(
-      localized_glyph_count, (message.glyphs.size() * localized_glyph_count +
-                              source_glyph_count - 1U) /
-                                 source_glyph_count);
 
   const auto top = std::ranges::min_element(message.glyphs, {},
                                             &game::LegacyUiGlyphBridgeState::y);
-  LocalizedGameplayMessageLayout layout;
-  layout.source = std::move(source);
+  GameplayMessageLayout layout;
   layout.source_glyph_count = source_glyph_count;
-  layout.localized_glyph_count = localized_glyph_count;
-  layout.visible_glyph_count =
-      std::min(visible_localized_glyphs,
-               (presented_source_glyphs * localized_glyph_count +
-                source_glyph_count - 1U) /
-                   source_glyph_count);
+  layout.presentation_glyph_count = presentation_glyph_count;
+  layout.visible_glyph_count = gameplayMessageVisibleGlyphCount(
+      source_glyph_count, presented_source_glyphs, presentation_glyph_count);
 
-  // Native Russian notifications share one readable 8-pixel font size.
-  // Long prose wraps inside a screen-safe column instead of shrinking into
-  // an inconsistent, blurry one-line substitute.
-  constexpr int horizontal_margin = 16;
-  constexpr int text_width = screen_width - horizontal_margin * 2;
-  layout.wrapped_text = game::originalHudWrapText(localized, text_width);
-  layout.available_width = static_cast<float>(text_width);
-  layout.scale = 1.0F;
-  layout.left = static_cast<float>(horizontal_margin);
+  if (russian_language) {
+    // Native Russian notifications share one readable 8-pixel font size.
+    // Long prose wraps inside a screen-safe column instead of shrinking into
+    // an inconsistent, blurry one-line substitute.
+    constexpr int horizontal_margin = 16;
+    constexpr int text_width = screen_width - horizontal_margin * 2;
+    layout.wrapped_text = game::originalHudWrapText(presented, text_width);
+    layout.available_width = static_cast<float>(text_width);
+    layout.scale = 1.0F;
+    layout.left = static_cast<float>(horizontal_margin);
+  } else {
+    // English wording already fits the authored packet. Preserve its origin
+    // and footprint while replacing only the number of glyphs the guest has
+    // revealed. Dynamic PC binding names may be wider, so fit those into the
+    // same backdrop instead of changing the original composition.
+    const auto left = std::ranges::min_element(
+        message.glyphs, {}, &game::LegacyUiGlyphBridgeState::x);
+    const auto absolute_left = screen_width / 2 + offset_x + left->x;
+    const auto source_width = std::max(1, originalHudMaximumLineWidth(source));
+    const auto presentation_width =
+        std::max(1, originalHudMaximumLineWidth(presented));
+    const auto screen_width_available =
+        std::max(1, screen_width - 4 - absolute_left);
+    const auto width_available = std::min(source_width, screen_width_available);
+    layout.wrapped_text = std::move(presented);
+    layout.available_width = static_cast<float>(width_available);
+    layout.scale = std::min(1.0F, static_cast<float>(width_available) /
+                                      static_cast<float>(presentation_width));
+    layout.left = static_cast<float>(absolute_left);
+  }
 
   const auto line_count = originalHudLineCount(layout.wrapped_text);
   if (line_count == 0U) {
@@ -10559,13 +10919,12 @@ buildLocalizedGameplayMessageLayout(
   return layout;
 }
 
-void drawLocalizedGameplayMessage(
-    const HudTextureAtlas &textures,
-    const game::LegacyUiMessageBridgeState &message,
-    const LocalizedGameplayMessageLayout &layout) {
+void drawGameplayMessage(const HudTextureAtlas &textures,
+                         const game::LegacyUiMessageBridgeState &message,
+                         const GameplayMessageLayout &layout) {
   const auto &font_page = textures.image("FONTA.TIM");
   const ScopedPsyCrossFontTexture font_binding{textures.nativeFont()};
-  auto localized_glyph = std::size_t{};
+  auto presentation_glyph = std::size_t{};
   auto line = std::size_t{};
   for (auto cursor = std::size_t{}; cursor <= layout.wrapped_text.size();
        ++line) {
@@ -10589,18 +10948,18 @@ void drawLocalizedGameplayMessage(
       if (!glyph) {
         continue;
       }
-      if (localized_glyph >= layout.visible_glyph_count) {
+      if (presentation_glyph >= layout.visible_glyph_count) {
         return;
       }
       const auto source_glyph =
           std::min(message.glyphs.size() - 1U,
-                   localized_glyph * layout.source_glyph_count /
-                       layout.localized_glyph_count);
+                   presentation_glyph * layout.source_glyph_count /
+                       layout.presentation_glyph_count);
       drawHudSpriteRegionTintScaled(font_page, x, y, glyph->u, glyph->v,
                                     glyph->width, glyph->height(), layout.scale,
                                     message.glyphs[source_glyph].color);
       x += static_cast<float>(glyph->advance()) * layout.scale;
-      ++localized_glyph;
+      ++presentation_glyph;
     }
     if (newline == std::string_view::npos) {
       break;
@@ -10609,9 +10968,9 @@ void drawLocalizedGameplayMessage(
   }
 }
 
-void arrangeLocalizedStatusMessages(
+void arrangeStatusMessages(
     std::span<const game::LegacyUiMessageBridgeState> messages,
-    std::span<std::optional<LocalizedGameplayMessageLayout>> layouts) {
+    std::span<std::optional<GameplayMessageLayout>> layouts) {
   std::vector<std::size_t> status_indices;
   status_indices.reserve(layouts.size());
   for (auto index = std::size_t{}; index < layouts.size(); ++index) {
@@ -10642,9 +11001,9 @@ void arrangeLocalizedStatusMessages(
   }
 }
 
-bool drawLocalizedStatusBackdrop(
+bool drawStatusBackdrop(
     std::span<const game::LegacyUiMessageBridgeState> messages,
-    std::span<const std::optional<LocalizedGameplayMessageLayout>> layouts,
+    std::span<const std::optional<GameplayMessageLayout>> layouts,
     const game::LegacyUiBackdropBridgeState &retail_backdrop, int offset_x,
     int offset_y) {
   auto any = false;
@@ -11394,7 +11753,8 @@ void drawGameplayHud(const HudTextureAtlas &textures,
                      std::span<const WorldCalloutAnchor> world_callouts,
                      const KeyboardMouseBindings &bindings,
                      bool first_person_aim, std::int32_t aim_heading,
-                     int offset_x, int offset_y) {
+                     double presented_weapon_switch_frames, int offset_x,
+                     int offset_y) {
   const auto &hud = gameplay.hud();
   const auto target_locked = gameplay.targetLocked();
   const auto project_anchor =
@@ -11492,10 +11852,16 @@ void drawGameplayHud(const HudTextureAtlas &textures,
   const auto reveal_slide =
       reveal_remaining * 271 /
       static_cast<int>(game::GameplayHud::reveal_duration);
+  // The authoritative countdown advances at the retail 20 Hz. Its native
+  // slide is presentation-only, so retain fractional frames and sub-pixel
+  // coordinates between guest updates instead of snapping by five pixels.
   const auto switch_slide =
-      static_cast<int>(hud.weaponSwitchFrames()) * 98 /
-      static_cast<int>(game::GameplayHud::weapon_switch_duration);
-  const auto horizontal_slide = reveal_slide + switch_slide;
+      std::clamp(
+          presented_weapon_switch_frames, 0.0,
+          static_cast<double>(game::GameplayHud::weapon_switch_duration)) *
+      98.0 / static_cast<double>(game::GameplayHud::weapon_switch_duration);
+  const auto horizontal_slide =
+      static_cast<float>(static_cast<double>(reveal_slide) + switch_slide);
   const auto icon_layers = definition.icon.layers();
   if (!icon_layers.empty()) {
     std::array<int, game::maximum_weapon_icon_layers> widths{};
@@ -11511,23 +11877,30 @@ void drawGameplayHud(const HudTextureAtlas &textures,
     // ammunition line and restores the intended negative space around it.
     const auto icon_offsets = game::originalWeaponIconOffsets(
         std::span<const int>{widths.data(), icon_layers.size()});
-    constexpr int icon_origin_x = screen_width / 2 + 133;
-    constexpr int icon_origin_y = screen_height / 2 + 91;
+    constexpr float icon_origin_x = static_cast<float>(screen_width / 2 + 133);
+    constexpr float icon_origin_y = static_cast<float>(screen_height / 2 + 91);
     for (std::size_t index = 0; index < icon_layers.size(); ++index) {
-      drawHudSprite(textures.image(icon_layers[index]),
-                    icon_origin_x + offset_x + horizontal_slide +
-                        icon_offsets[index],
-                    icon_origin_y + offset_y - heights[index] / 2);
+      const auto &image = textures.image(icon_layers[index]);
+      drawHudSpriteScaled(image,
+                          icon_origin_x + static_cast<float>(offset_x) +
+                              horizontal_slide +
+                              static_cast<float>(icon_offsets[index]),
+                          icon_origin_y + static_cast<float>(offset_y) -
+                              static_cast<float>(heights[index]) * 0.5F,
+                          static_cast<float>(widths[index]),
+                          static_cast<float>(heights[index]));
     }
   }
   if (definition.shows_ammo) {
     const auto &weapon = hud.inventory().currentState();
     const auto ammo = game::originalAmmoText(definition, weapon);
     // FUN_800410d0 supplies a left text origin, not a centre point.
-    constexpr int ammo_x = screen_width / 2 + 118;
-    constexpr int ammo_y = screen_height / 2 + 94;
-    drawOriginalHudText(textures, ammo, ammo_x + offset_x + horizontal_slide,
-                        ammo_y + offset_y);
+    constexpr float ammo_x = static_cast<float>(screen_width / 2 + 118);
+    constexpr float ammo_y = static_cast<float>(screen_height / 2 + 94);
+    drawOriginalHudTextSubpixel(textures, ammo,
+                                ammo_x + static_cast<float>(offset_x) +
+                                    horizontal_slide,
+                                ammo_y + static_cast<float>(offset_y));
   }
   const auto weapon = hud.inventory().current();
   const auto thrown = weapon == game::WeaponId::fragmentation_grenade ||
@@ -11555,7 +11928,11 @@ void drawGameplayHud(const HudTextureAtlas &textures,
         center_y += static_cast<int>(
             std::lround(gameplay.manualAimReticleVerticalOffset()));
       }
-      if (target_locked) {
+      // First-person sight is owned exclusively by the host look stream and
+      // must remain screen-centred while Gabe moves.  A chase-mode lock may
+      // follow the projected actor anchor, but reusing that 20 Hz anchor in
+      // first person makes held W/A/S/D visibly jump the reticle.
+      if (!first_person_aim && target_locked) {
         reticle_visible = false;
         if (target_anchor) {
           // Follow the animated HMD Head/Chest part. A fixed world height
@@ -11612,37 +11989,43 @@ void drawGameplayHud(const HudTextureAtlas &textures,
     }
   }
 
-  // English uses the completed retail FONT/TEXT packets verbatim. Russian
-  // retains their lifetime, type-on colors and slide timing, while native
-  // layout reflows the translated prose at the same 8-pixel font size.
+  // All locales retain the guest's lifetime, type-on colors and slide timing.
+  // Native layout changes only wording/reflow and maps the live retail glyph
+  // count onto the presented string, so English and translated text reveal
+  // identically.
   const auto messages = gameplay.legacyUiMessages();
   const auto status_backdrop =
       std::ranges::find_if(messages, [](const auto &message) {
         return message.channel == game::LegacyUiMessageChannel::status &&
                message.backdrop.has_value();
       });
-  std::vector<std::optional<LocalizedGameplayMessageLayout>> message_layouts;
+  std::vector<std::optional<GameplayMessageLayout>> message_layouts;
   message_layouts.reserve(messages.size());
   std::vector<bool> retail_scope_messages;
   retail_scope_messages.reserve(messages.size());
   for (const auto &message : messages) {
+    const auto scope_message = isRetailScopeMessage(
+        scoped, message.channel, message.backdrop.has_value(),
+        message.glyphs.size());
     const auto retail_scope_message = useRetailEnglishScopeFont(
         scoped, game::russianLanguageActive(), message.channel,
         message.backdrop.has_value(), message.glyphs.size());
     retail_scope_messages.push_back(retail_scope_message);
-    message_layouts.push_back(
-        retail_scope_message
-            ? std::nullopt
-            : buildLocalizedGameplayMessageLayout(message, offset_y,
-                                                   bindings));
+    message_layouts.push_back(scope_message
+                                  ? std::nullopt
+                                  : buildGameplayMessageLayout(
+                                        message, offset_x, offset_y, bindings));
   }
-  arrangeLocalizedStatusMessages(messages, message_layouts);
+  const auto russian_language = game::russianLanguageActive();
+  if (russian_language) {
+    arrangeStatusMessages(messages, message_layouts);
+  }
 
   auto localized_status_backdrop = false;
-  if (status_backdrop != messages.end()) {
-    localized_status_backdrop = drawLocalizedStatusBackdrop(
-        messages, message_layouts, *status_backdrop->backdrop, offset_x,
-        offset_y);
+  if (russian_language && status_backdrop != messages.end()) {
+    localized_status_backdrop =
+        drawStatusBackdrop(messages, message_layouts,
+                           *status_backdrop->backdrop, offset_x, offset_y);
   }
   for (const auto &message : messages) {
     if (!message.backdrop ||
@@ -11664,7 +12047,7 @@ void drawGameplayHud(const HudTextureAtlas &textures,
       drawRetailUiGlyphs(textures, message.glyphs, offset_x, offset_y,
                          textures.retailEnglishFont());
     } else if (message_layouts[index]) {
-      drawLocalizedGameplayMessage(textures, message, *message_layouts[index]);
+      drawGameplayMessage(textures, message, *message_layouts[index]);
     } else if (!drawBoundKeyboardMousePrompt(textures, message, bindings,
                                              offset_x, offset_y)) {
       drawRetailUiGlyphs(textures, message.glyphs, offset_x, offset_y);
@@ -11823,8 +12206,7 @@ int menuLineDrawExtent(std::string_view text, int scale,
     if (!glyph) {
       continue;
     }
-    right =
-        std::max(right, x + scaled(static_cast<int>(glyph->width)));
+    right = std::max(right, x + scaled(static_cast<int>(glyph->width)));
     x += scaled(originalHudGlyphAdvance(*glyph));
   }
   return right;
@@ -12960,7 +13342,9 @@ SceneViewerResult PsyCrossSceneViewer::run(
   CombatEffectTextureAtlas effect_textures{mission};
   PoliceLightbarAnimation police_lightbar_animation;
   RetailScrimAnimation retail_scrim_animation;
+#if defined(SF_ENABLE_SURFACE_PICKER)
   PsyCrossSurfacePicker surface_picker;
+#endif
   // TextureStreamer already uploaded VLF and the effect atlas occupies a
   // reserved page. Reconcile only bank-specific scene data here; invalidating
   // and restoring both atlases doubled the synchronous startup transfer.
@@ -12983,8 +13367,12 @@ SceneViewerResult PsyCrossSceneViewer::run(
   std::vector<OT_TAG> scrim_ordering_table(ordering_table_size);
   std::vector<OT_TAG> guest_overlay_ordering_table(ordering_table_size);
   std::vector<OT_TAG> fire_ordering_table(ordering_table_size);
+#if defined(SF_ENABLE_SURFACE_PICKER)
   std::vector<OT_TAG> surface_picker_ordering_table(ordering_table_size);
+#endif
   PrimitiveBuffer primitives;
+  ActorShadowPresentationCache actor_shadow_cache;
+  HmdPoseScratch hmd_pose_scratch;
   constexpr std::uint16_t pause_button = 0x08U;
   constexpr std::uint16_t cancel_button = 0x1000U | 0x2000U;
   constexpr std::uint16_t confirm_button = 0x4000U | 0x8000U;
@@ -13043,6 +13431,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
     latched_gameplay_input.run = input.run;
     latched_gameplay_input.aim = input.aim;
     latched_gameplay_input.strafe = input.strafe;
+    latched_gameplay_input.aim_peek = input.aim_peek;
     latched_gameplay_input.fire_held = input.fire_held;
     latched_gameplay_input.target_lock_held = input.target_lock_held;
     latched_gameplay_input.next_weapon =
@@ -13087,6 +13476,8 @@ SceneViewerResult PsyCrossSceneViewer::run(
   glass_shatter.reset(gameplay);
   RenderPresentationSnapshot current_render_presentation;
   captureRenderPresentation(gameplay, current_render_presentation);
+  auto current_weapon_switch_countdown = gameplay.hud().weaponSwitchFrames();
+  auto previous_weapon_switch_countdown = current_weapon_switch_countdown;
   weapon_presentation_edges.observe(gameplay.legacyPresentationFrame());
   muzzle_flash_edges.observe(gameplay.effects());
   scrim_copy_edges.observe(gameplay.legacyPresentationFrame());
@@ -13096,9 +13487,12 @@ SceneViewerResult PsyCrossSceneViewer::run(
     captureRenderPresentation(gameplay, current_render_presentation);
     previous_render_presentation = current_render_presentation;
     interpolated_render_presentation = current_render_presentation;
+    current_weapon_switch_countdown = gameplay.hud().weaponSwitchFrames();
+    previous_weapon_switch_countdown = current_weapon_switch_countdown;
     weapon_presentation_edges.reset();
     muzzle_flash_edges.reset();
     glass_shatter.reset(gameplay);
+    actor_shadow_cache.reset();
     weapon_presentation_edges.observe(gameplay.legacyPresentationFrame());
     muzzle_flash_edges.observe(gameplay.effects());
     simulation_accumulator_seconds = 0.0;
@@ -13220,6 +13614,9 @@ SceneViewerResult PsyCrossSceneViewer::run(
     const auto interpolation_amount = std::clamp(
         simulation_accumulator_seconds / retail_simulation_step_seconds, 0.0,
         1.0);
+    const auto presented_weapon_switch_frames = game::interpolateHudCountdown(
+        previous_weapon_switch_countdown, current_weapon_switch_countdown,
+        interpolation_amount);
     interpolateRenderPresentation(
         previous_render_presentation, current_render_presentation,
         interpolation_amount, interpolated_render_presentation);
@@ -13236,20 +13633,24 @@ SceneViewerResult PsyCrossSceneViewer::run(
                                  ? first_person_near_clip_depth
                                  : near_clip_depth;
     const auto &camera = presentation.camera;
+#if defined(SF_ENABLE_SURFACE_PICKER)
     surface_picker.beginFrame(SurfacePickerFrameContext{
         .mission = std::string{mission.definition().resource_name},
         .guest_frame = presentation.guest_frame,
         .room = gameplay.currentRoom(),
         .camera = SurfacePickerPoint3{camera.x, camera.y, camera.z},
     });
+#endif
     applyRetailEnvironment(presentation.environment, camera.projection,
                            presentation.retail_environment_active,
                            retail_blackout_mission);
     SetGeomScreen(camera.projection);
-    const auto target_anchor = aimTargetAnchor(
-        gameplay, actor_animations, actor_tick, presentation.objects);
-    const auto world_callouts = worldCalloutAnchors(
-        gameplay, actor_animations, actor_tick, presentation.objects);
+    const auto target_anchor =
+        aimTargetAnchor(gameplay, actor_animations, actor_tick,
+                        presentation.objects, hmd_pose_scratch);
+    const auto world_callouts =
+        worldCalloutAnchors(gameplay, actor_animations, actor_tick,
+                            presentation.objects, hmd_pose_scratch);
     auto view = makeViewMatrix(camera);
     registerPreciseViewMatrix(view, camera);
     // Retail pickups and flying grenade billboards use interface art but are
@@ -13270,8 +13671,18 @@ SceneViewerResult PsyCrossSceneViewer::run(
         interpolation_amount, presentation, view, ordering_table,
         shadow_ordering_table, scrim_ordering_table,
         guest_overlay_ordering_table, fire_ordering_table,
-        surface_picker_ordering_table, primitives, surface_picker);
+#if defined(SF_ENABLE_SURFACE_PICKER)
+        surface_picker_ordering_table,
+#endif
+        actor_shadow_cache, hmd_pose_scratch, primitives
+#if defined(SF_ENABLE_SURFACE_PICKER)
+        ,
+        surface_picker
+#endif
+    );
+#if defined(SF_ENABLE_SURFACE_PICKER)
     surface_picker.finishFrame();
+#endif
     if (advance_effects) {
       fire_animation.update();
       glass_shatter.advance();
@@ -13287,6 +13698,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
     GR_EnableDepth(1);
     GR_SetDepthState(1, 1);
     DrawOTag(reinterpret_cast<u_long *>(&ordering_table.back()));
+#if defined(SF_ENABLE_SURFACE_PICKER)
     // Picker tint is a diagnostic overlay over the exact selected model
     // surface. It writes no depth and a small offset prevents z-fighting while
     // preserving ordinary world occlusion.
@@ -13298,6 +13710,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
       GR_SetPolygonOffset(0.0F, 0.0F);
       GR_SetDepthState(1, 1);
     }
+#endif
     // Posed silhouettes are projected onto exact gameplay receiver surfaces.
     // First union their model triangles into a dedicated stencil bit, then
     // shade that union once. This preserves limbs and equipment detail without
@@ -13359,7 +13772,8 @@ SceneViewerResult PsyCrossSceneViewer::run(
     if (!gameplay.cinematic() && !gameplay.missionComplete()) {
       drawGameplayHud(hud_textures, gameplay, camera, target_anchor,
                       world_callouts, input_, presentation.first_person_aim,
-                      aim_heading, pause_settings.screen_center_x,
+                      aim_heading, presented_weapon_switch_frames,
+                      pause_settings.screen_center_x,
                       pause_settings.screen_center_y);
       drawRetailGrenadeTrajectory(presentation, pause_settings.screen_center_x,
                                   pause_settings.screen_center_y);
@@ -13533,7 +13947,9 @@ SceneViewerResult PsyCrossSceneViewer::run(
             ? std::span<const std::uint8_t>{keyboard, static_cast<std::size_t>(
                                                           keyboard_count)}
             : std::span<const std::uint8_t>{};
+#if defined(SF_ENABLE_SURFACE_PICKER)
     surface_picker.handleInput(keyboard_state);
+#endif
     const auto bound_actions = sampleKeyboardMouseActions(
         input_, KeyboardMouseDeviceState{
                     .keyboard = keyboard_state,
@@ -13547,10 +13963,9 @@ SceneViewerResult PsyCrossSceneViewer::run(
     const auto pause_down = bound_actions[KeyboardMouseAction::pause];
     const auto pause_pressed =
         input_settle_seconds <= 0.0 && pause_down && !pause_was_down;
-    const auto interact_down =
-        bound_actions[KeyboardMouseAction::interact];
-    const auto interact_pressed = input_settle_seconds <= 0.0 &&
-                                  interact_down && !interact_was_down;
+    const auto interact_down = bound_actions[KeyboardMouseAction::interact];
+    const auto interact_pressed =
+        input_settle_seconds <= 0.0 && interact_down && !interact_was_down;
     const auto manual_aim_down = bound_actions[KeyboardMouseAction::aim];
     mouse_capture.set(!paused && manual_aim_down);
     int mouse_delta_x{};
@@ -13742,9 +14157,9 @@ SceneViewerResult PsyCrossSceneViewer::run(
                     ((pressed & cancel_button) != 0 ||
                      (pause_pressed &&
                       pause_menu.screen() != game::PauseScreen::root)),
-          .pause = controller_pause_pressed ||
-                   (pause_pressed &&
-                    pause_menu.screen() == game::PauseScreen::root),
+          .pause =
+              controller_pause_pressed ||
+              (pause_pressed && pause_menu.screen() == game::PauseScreen::root),
       };
 
       const auto cheat_context = [&] {
@@ -14017,20 +14432,22 @@ SceneViewerResult PsyCrossSceneViewer::run(
     const auto first_person_input =
         sf::platform::firstPersonAimInput(mapped_input);
     auto sampled_input = game::GameplayInput{
-        // In chase these are locomotion axes. Under L1 the guest interprets
-        // the same exact PS1 channels as vertical/horizontal sight motion and
-        // keeps Gabe's root fixed.
-        .move = movement_armed ? mapped_input.move_forward : 0.0,
-        .turn = movement_armed ? mapped_input.turn : 0.0,
+        // Chase keeps the original tank controls. First-person uses a modern
+        // split: W/S moves, A/D strafes, mouse/right-stick controls sight.
+        .move = movement_armed
+                    ? (manual_aim ? first_person_input.move
+                                  : mapped_input.move_forward)
+                    : 0.0,
+        .turn = movement_armed && !manual_aim ? mapped_input.turn : 0.0,
         .run = movement_armed && mapped_input.run.held,
         .aim = manual_aim,
         .next_weapon = mapped_input.next_weapon.pressed,
         .previous_weapon = mapped_input.previous_weapon.pressed,
         .quick_weapon = mapped_input.quick_weapon.pressed,
-        // Q/E or physical L2/R2 retain the original manual-aim corner strafe.
-        .strafe = movement_armed ? (manual_aim ? first_person_input.strafe
-                                               : mapped_input.move_strafe)
-                                 : 0.0,
+        .strafe = movement_armed
+                      ? (manual_aim ? first_person_input.strafe
+                                    : mapped_input.move_strafe)
+                      : 0.0,
         // Directional look is a held rate and is safe on every catch-up tick.
         // Relative mouse motion is accumulated separately below and consumed
         // exactly once.
@@ -14055,6 +14472,10 @@ SceneViewerResult PsyCrossSceneViewer::run(
         .quick_turn = mapped_input.quick_turn.pressed,
         .weapon_menu_delta = mapped_input.weapon_menu_delta,
         .direct_weapon = direct_weapon,
+        // Q/E or physical L2/R2 retain the original camera-only corner peek
+        // without being confused with first-person A/D locomotion.
+        .aim_peek = movement_armed && manual_aim ? first_person_input.peek
+                                                 : 0.0,
     };
     if (manual_aim) {
       sf::platform::PlayerInput relative_look;
@@ -14092,7 +14513,9 @@ SceneViewerResult PsyCrossSceneViewer::run(
       latched_player_look.reset();
       display_player_look.reset();
       std::swap(previous_render_presentation, current_render_presentation);
+      previous_weapon_switch_countdown = current_weapon_switch_countdown;
       gameplay.update(simulation_input);
+      current_weapon_switch_countdown = gameplay.hud().weaponSwitchFrames();
       if (auto carry = gameplay.campaignCarryState()) {
         latest_campaign_carry = std::move(carry);
       }
@@ -14290,6 +14713,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
     }
     if (gameplay.currentRoom() != previous_room) {
       previous_room = gameplay.currentRoom();
+      actor_shadow_cache.reset();
       textures.ensure(gameplay);
       log_next_frame = true;
     }
@@ -14338,7 +14762,6 @@ SceneViewerResult PsyCrossSceneViewer::run(
     }
     end_presented_frame();
   }
-  return SceneViewerResult{previous_buttons, SceneExitReason::exit_application};
 }
 
 } // namespace sf::platform::detail

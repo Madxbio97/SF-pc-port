@@ -9,6 +9,7 @@
 #include <limits>
 #include <optional>
 #include <ranges>
+#include <utility>
 
 namespace sf::game {
 namespace {
@@ -723,20 +724,29 @@ selectDynamicShadowProjection(const DynamicLightFrame &frame,
   const auto normal = DynamicLightPoint{ground_normal.x / normal_length,
                                         ground_normal.y / normal_length,
                                         ground_normal.z / normal_length};
-  // A low-weight key ray keeps the transition continuous as a local source
-  // enters or leaves its radius/cone instead of snapping to a new winner.
-  constexpr auto key_weight = 0.035;
-  auto weighted_ray = DynamicLightPoint{
-      result.ray_direction.x * key_weight,
-      result.ray_direction.y * key_weight,
-      result.ray_direction.z * key_weight,
+
+  struct ShadowInfluence {
+    DynamicLightPoint ray;
+    double score{};
+    std::uint32_t source_id{};
+    DynamicLightKind kind{DynamicLightKind::street_lamp};
   };
-  auto total_weight = key_weight;
-  auto source_weight = 0.0;
+  std::array<ShadowInfluence, maximum_dynamic_lights> influences{};
+  auto influence_count = std::size_t{};
+  auto strongest_score = 0.0;
   for (const auto &light : frame.active()) {
-    if (!finite(light.position) || !finite(light.direction) ||
-        !std::isfinite(light.radius) || !std::isfinite(light.intensity) ||
-        light.radius <= 0.0 || light.intensity <= 0.0) {
+    // A single projected silhouette cannot represent several short-lived
+    // combat shadows. Muzzle flashes/explosions and the actor-owned
+    // flashlight used to yank the common ray by tens of degrees for one 20 Hz
+    // update. Keep them in illumination, but let only persistent radial scene
+    // sources participate in the stable key-light solution.
+    if (light.transient || light.directional || !finite(light.position)) {
+      continue;
+    }
+    const auto stable_profile = profile(light.kind);
+    if (!std::isfinite(stable_profile.radius) ||
+        !std::isfinite(stable_profile.intensity) ||
+        stable_profile.radius <= 0.0 || stable_profile.intensity <= 0.0) {
       continue;
     }
     const auto delta = DynamicLightPoint{actor_anchor.x - light.position.x,
@@ -745,62 +755,69 @@ selectDynamicShadowProjection(const DynamicLightFrame &frame,
     const auto distance_squared =
         delta.x * delta.x + delta.y * delta.y + delta.z * delta.z;
     if (!std::isfinite(distance_squared) ||
-        distance_squared >= light.radius * light.radius) {
+        distance_squared >= stable_profile.radius * stable_profile.radius) {
       continue;
     }
     const auto distance = std::sqrt(distance_squared);
     if (distance <= 0.000001) {
       continue;
     }
-    auto ray = light.directional
-                   ? light.direction
-                   : DynamicLightPoint{delta.x / distance, delta.y / distance,
+    const auto ray = DynamicLightPoint{delta.x / distance, delta.y / distance,
                                        delta.z / distance};
-    const auto ray_length =
-        std::sqrt(ray.x * ray.x + ray.y * ray.y + ray.z * ray.z);
-    if (!std::isfinite(ray_length) || ray_length <= 0.000001) {
-      continue;
-    }
-    ray = {ray.x / ray_length, ray.y / ray_length, ray.z / ray_length};
-    auto attenuation = 1.0 - distance_squared / (light.radius * light.radius);
-    attenuation = attenuation * attenuation * light.intensity;
-    if (light.directional) {
-      if (light.inner_cone_cosine <= light.outer_cone_cosine) {
-        continue;
-      }
-      const auto to_point = DynamicLightPoint{
-          delta.x / distance, delta.y / distance, delta.z / distance};
-      const auto cosine = light.direction.x * to_point.x +
-                          light.direction.y * to_point.y +
-                          light.direction.z * to_point.z;
-      if (cosine <= light.outer_cone_cosine) {
-        continue;
-      }
-      const auto cone =
-          std::clamp((cosine - light.outer_cone_cosine) /
-                         (light.inner_cone_cosine - light.outer_cone_cosine),
-                     0.0, 1.0);
-      attenuation *= cone * cone;
-    }
+    auto attenuation = 1.0 - distance_squared / (stable_profile.radius *
+                                                 stable_profile.radius);
+    attenuation = attenuation * attenuation * stable_profile.intensity;
     const auto ground_alignment =
         ray.x * normal.x + ray.y * normal.y + ray.z * normal.z;
     constexpr auto minimum_ground_alignment = 0.16;
     if (ground_alignment <= minimum_ground_alignment) {
       continue;
     }
-    const auto luminance = light.color.red * 0.2126 +
-                           light.color.green * 0.7152 +
-                           light.color.blue * 0.0722;
+    // Shadow weight deliberately uses the non-animated profile. Police and
+    // fire color/intensity animation remains visible on geometry without
+    // rotating or pulsing the actor silhouette every other guest update.
+    const auto luminance = stable_profile.color.red * 0.2126 +
+                           stable_profile.color.green * 0.7152 +
+                           stable_profile.color.blue * 0.0722;
     const auto score = attenuation * std::max(luminance, 0.0) *
                        (0.35 + ground_alignment * 0.65);
     if (!std::isfinite(score) || score <= 0.0) {
       continue;
     }
-    weighted_ray.x += ray.x * score;
-    weighted_ray.y += ray.y * score;
-    weighted_ray.z += ray.z * score;
-    total_weight += score;
-    source_weight += score;
+    influences[influence_count++] =
+        ShadowInfluence{ray, score, light.source_id, light.kind};
+    strongest_score = std::max(strongest_score, score);
+  }
+
+  if (influence_count == 0U || !std::isfinite(strongest_score) ||
+      strongest_score <= 0.000001) {
+    return result;
+  }
+
+  // Sort before accumulation so the result is bit-stable even if resident
+  // object enumeration changes. A soft relative-score gate prevents dozens
+  // of barely relevant lamps from washing out the local key direction while
+  // avoiding a hard top-N boundary when two sources exchange dominance.
+  std::ranges::sort(std::span{influences}.first(influence_count), {},
+                    [](const ShadowInfluence &influence) {
+                      return std::pair{influence.source_id, influence.kind};
+                    });
+  constexpr auto key_weight = 0.05;
+  auto weighted_ray = DynamicLightPoint{
+      result.ray_direction.x * key_weight,
+      result.ray_direction.y * key_weight,
+      result.ray_direction.z * key_weight,
+  };
+  auto total_weight = key_weight;
+  for (const auto &influence : std::span{influences}.first(influence_count)) {
+    const auto relative = influence.score / strongest_score;
+    const auto gate = std::clamp((relative - 0.08) / 0.22, 0.0, 1.0);
+    const auto smooth_gate = gate * gate * (3.0 - 2.0 * gate);
+    const auto weight = influence.score * smooth_gate;
+    weighted_ray.x += influence.ray.x * weight;
+    weighted_ray.y += influence.ray.y * weight;
+    weighted_ray.z += influence.ray.z * weight;
+    total_weight += weight;
   }
   if (!std::isfinite(total_weight) || total_weight <= 0.000001) {
     return result;
@@ -841,9 +858,103 @@ selectDynamicShadowProjection(const DynamicLightFrame &frame,
   result.ray_direction = {bounded_ray.x / bounded_length,
                           bounded_ray.y / bounded_length,
                           bounded_ray.z / bounded_length};
-  result.darkness = std::clamp(0.18 + source_weight * 0.85, 0.18, 0.42);
-  result.source_driven = source_weight > 0.000001;
+  // Darkness follows the strongest local key rather than the number of
+  // resident sources. Walking into a room containing many lamps no longer
+  // makes the silhouette abruptly darker or amplifies light flicker.
+  result.darkness = std::clamp(0.18 + strongest_score * 0.85, 0.18, 0.42);
+  result.source_driven = true;
   return result;
+}
+
+DynamicShadowProjectionState
+advanceDynamicShadowProjection(const DynamicShadowProjectionState &state,
+                               const DynamicShadowProjection &target,
+                               std::uint64_t guest_tick) noexcept {
+  const auto valid_projection = [](const DynamicShadowProjection &projection) {
+    const auto length_squared =
+        projection.ray_direction.x * projection.ray_direction.x +
+        projection.ray_direction.y * projection.ray_direction.y +
+        projection.ray_direction.z * projection.ray_direction.z;
+    return finite(projection.ray_direction) &&
+           std::isfinite(projection.darkness) &&
+           std::isfinite(length_squared) && length_squared > 0.000001;
+  };
+  auto stable_target =
+      valid_projection(target) ? target : DynamicShadowProjection{};
+  if (!state.initialized || guest_tick < state.guest_tick ||
+      !valid_projection(state.current)) {
+    return DynamicShadowProjectionState{stable_target, stable_target,
+                                        guest_tick, true};
+  }
+  if (guest_tick == state.guest_tick) {
+    return state;
+  }
+
+  const auto elapsed =
+      std::min<std::uint64_t>(guest_tick - state.guest_tick, 20U);
+  constexpr auto direction_response_per_update = 0.32;
+  constexpr auto darkness_response_per_update = 0.40;
+  const auto direction_response =
+      1.0 - std::pow(1.0 - direction_response_per_update,
+                     static_cast<double>(elapsed));
+  const auto darkness_response =
+      1.0 - std::pow(1.0 - darkness_response_per_update,
+                     static_cast<double>(elapsed));
+  auto direction = DynamicLightPoint{
+      std::lerp(state.current.ray_direction.x, stable_target.ray_direction.x,
+                direction_response),
+      std::lerp(state.current.ray_direction.y, stable_target.ray_direction.y,
+                direction_response),
+      std::lerp(state.current.ray_direction.z, stable_target.ray_direction.z,
+                direction_response),
+  };
+  const auto direction_length =
+      std::sqrt(direction.x * direction.x + direction.y * direction.y +
+                direction.z * direction.z);
+  if (!std::isfinite(direction_length) || direction_length <= 0.000001) {
+    direction = stable_target.ray_direction;
+  } else {
+    direction = {direction.x / direction_length, direction.y / direction_length,
+                 direction.z / direction_length};
+  }
+  const auto current = DynamicShadowProjection{
+      direction,
+      std::lerp(state.current.darkness, stable_target.darkness,
+                darkness_response),
+      stable_target.source_driven,
+  };
+  return DynamicShadowProjectionState{state.current, current, guest_tick, true};
+}
+
+DynamicShadowProjection
+sampleDynamicShadowProjection(const DynamicShadowProjectionState &state,
+                              double amount) noexcept {
+  if (!state.initialized || !std::isfinite(amount)) {
+    return DynamicShadowProjection{};
+  }
+  const auto interpolation = std::clamp(amount, 0.0, 1.0);
+  auto direction = DynamicLightPoint{
+      std::lerp(state.previous.ray_direction.x, state.current.ray_direction.x,
+                interpolation),
+      std::lerp(state.previous.ray_direction.y, state.current.ray_direction.y,
+                interpolation),
+      std::lerp(state.previous.ray_direction.z, state.current.ray_direction.z,
+                interpolation),
+  };
+  const auto direction_length =
+      std::sqrt(direction.x * direction.x + direction.y * direction.y +
+                direction.z * direction.z);
+  if (!std::isfinite(direction_length) || direction_length <= 0.000001) {
+    return DynamicShadowProjection{};
+  }
+  direction = {direction.x / direction_length, direction.y / direction_length,
+               direction.z / direction_length};
+  return DynamicShadowProjection{
+      direction,
+      std::lerp(state.previous.darkness, state.current.darkness, interpolation),
+      interpolation < 1.0 ? state.previous.source_driven
+                          : state.current.source_driven,
+  };
 }
 
 std::optional<DynamicLightPoint>

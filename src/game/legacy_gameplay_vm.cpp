@@ -5362,6 +5362,55 @@ bool LegacyGameplayVm::writeHostPlayerState(
                           guestHalf(state.health));
 }
 
+bool LegacyGameplayVm::writeHostPlayerLocomotion(
+    const LegacyHostPlayerLocomotion &state,
+    const LegacyNativeMissionBridgeProfile &profile) noexcept {
+  constexpr std::uint32_t matrix_translation_x_offset = 0x14U;
+  constexpr std::uint32_t matrix_translation_z_offset = 0x1cU;
+  constexpr std::uint32_t motion_position_x_offset = 0U;
+  constexpr std::uint32_t motion_position_y_offset = 4U;
+  constexpr std::uint32_t motion_position_z_offset = 8U;
+  constexpr std::uint32_t motion_cached_position_offset = 0x40U;
+
+  const auto &cached_position =
+      state.has_previous_position ? state.previous_position : state.position;
+  if (state.position.y == std::numeric_limits<std::int32_t>::min() ||
+      cached_position.y == std::numeric_limits<std::int32_t>::min()) {
+    return false;
+  }
+  const auto player = resolveLegacyPlayer(runtime_, profile);
+  if (!player) {
+    return false;
+  }
+
+  // Motion coordinates drive collision and the immutable presentation bridge.
+  // MATRIX X/Z must follow immediately so the rendered actor cannot lag one
+  // retail tick behind. MATRIX Y is deliberately pose-owned: replacing it
+  // with the collision root makes first-person Gabe/camera fall below ground.
+  const auto guest_y = -state.position.y;
+  const auto cached_guest_y = -cached_position.y;
+  const std::array motion_positions{
+      std::pair{motion_position_x_offset, state.position.x},
+      std::pair{motion_position_y_offset, guest_y},
+      std::pair{motion_position_z_offset, state.position.z},
+      std::pair{motion_cached_position_offset + motion_position_x_offset,
+                cached_position.x},
+      std::pair{motion_cached_position_offset + motion_position_y_offset,
+                cached_guest_y},
+      std::pair{motion_cached_position_offset + motion_position_z_offset,
+                cached_position.z},
+  };
+  for (const auto [offset, value] : motion_positions) {
+    if (!runtime_.write32(player->motion + offset, guestWord(value))) {
+      return false;
+    }
+  }
+  return runtime_.write32(player->matrix + matrix_translation_x_offset,
+                          guestWord(state.position.x)) &&
+         runtime_.write32(player->matrix + matrix_translation_z_offset,
+                          guestWord(state.position.z));
+}
+
 bool LegacyGameplayVm::writeHostPlayerVitals(
     std::int16_t health, std::int16_t armor,
     const LegacyNativeMissionBridgeProfile &profile) noexcept {

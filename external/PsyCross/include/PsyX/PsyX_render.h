@@ -254,6 +254,7 @@ extern void			GR_EndShadowMask(void);
 extern void			GR_EnableDepth(int enable);
 extern void			GR_SetDepthState(int testEnable, int writeEnable);
 extern void			GR_ClearDepthBuffer(void);
+extern int			GR_UsesWorldDepth(const GrVertex* triangle, int depthRequested);
 extern void			GR_SetScissorState(int enable);
 extern void			GR_SetOffscreenState(const RECT16* offscreenRect, int enable);
 extern void			GR_SetupClipMode(const RECT16* clipRect, int enable);

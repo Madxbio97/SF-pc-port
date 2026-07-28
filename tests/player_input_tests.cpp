@@ -418,8 +418,9 @@ void testFirstPersonMousePrecisionTuning() {
               near(input.mouse_look.pitch, 2.75) &&
               near(input.directional_look_per_guest_tick.yaw, 0.0) &&
               near(input.directional_look_per_guest_tick.pitch, 0.0) &&
-              near(input.strafe, -1.0),
-          "First-person mouse gain or retail strafe routing is incorrect");
+              near(input.move, 0.0) && near(input.strafe, 0.0) &&
+              near(input.peek, -1.0),
+          "First-person mouse gain or retail peek routing is incorrect");
 }
 
 void testTurnControllerLookAndInvert() {
@@ -752,23 +753,23 @@ void testPcAimAndOpposingControlConflicts() {
   const auto first_person = sf::platform::firstPersonAimInput(aiming);
   require(near(first_person.mouse_look.yaw, 4.0) &&
               near(first_person.mouse_look.pitch, 1.0) &&
-              near(first_person.directional_look_per_guest_tick.yaw,
-                   -sf::platform::retail_first_person_yaw_units_per_tick) &&
-              near(first_person.directional_look_per_guest_tick.pitch,
-                   sf::platform::retail_first_person_pitch_units_per_tick) &&
-              near(first_person.strafe, 0.0),
-          "First-person routing lost mouse or four-way retail sight input");
+              near(first_person.directional_look_per_guest_tick.yaw, 0.0) &&
+              near(first_person.directional_look_per_guest_tick.pitch, 0.0) &&
+              near(first_person.move, 1.0) &&
+              near(first_person.strafe, -1.0) && near(first_person.peek, 0.0),
+          "First-person routing lost WASD locomotion or mouse sight input");
 
   raw.pc.strafe_right = true;
   const auto corner_peek =
       sf::platform::firstPersonAimInput(mapper.update(raw));
-  require(near(corner_peek.strafe, 1.0) &&
+  require(near(corner_peek.move, 1.0) && near(corner_peek.strafe, -1.0) &&
+              near(corner_peek.peek, 1.0) &&
               near(corner_peek.mouse_look.yaw, 4.0) &&
               near(corner_peek.mouse_look.pitch, 1.0) &&
               corner_peek.directional_look_per_guest_tick ==
                   first_person.directional_look_per_guest_tick,
-          "Dedicated first-person strafe was not retained independently of "
-          "the mouse sight");
+          "Dedicated first-person peek was not retained independently of "
+          "locomotion and mouse sight");
   raw.pc.strafe_right = false;
 
   raw.controller.right_x = 1.0;
@@ -781,13 +782,14 @@ void testPcAimAndOpposingControlConflicts() {
   require(near(neutral_first_person.mouse_look.yaw, 0.0) &&
               near(neutral_first_person.mouse_look.pitch, 0.0) &&
               near(neutral_first_person.directional_look_per_guest_tick.yaw,
-                   -sf::platform::retail_first_person_yaw_units_per_tick) &&
+                   sf::platform::retail_first_person_yaw_units_per_tick) &&
               near(neutral_first_person.directional_look_per_guest_tick.pitch,
-                   sf::platform::retail_first_person_pitch_units_per_tick) &&
+                   -sf::platform::retail_first_person_pitch_units_per_tick) &&
+              near(neutral_first_person.move, 1.0) &&
+              near(neutral_first_person.strafe, -1.0) &&
               !near(neutral_mouse.controller_look_yaw, 0.0) &&
               !near(neutral_mouse.controller_look_pitch, 0.0),
-          "First-person directional sight or independent mouse channel was "
-          "lost");
+          "First-person right-stick sight or WASD movement channel was lost");
 
   mapper.reset();
   raw = {};

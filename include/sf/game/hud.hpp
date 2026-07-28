@@ -271,6 +271,14 @@ struct OriginalWeaponMenuGeometry {
 // to the retail HUD's 192x120 centre.
 [[nodiscard]] OriginalWeaponMenuGeometry originalWeaponMenuGeometry() noexcept;
 
+// Interpolates presentation-only HUD countdowns between immutable 20 Hz
+// gameplay samples. A newly armed countdown is an event and therefore starts
+// immediately at its current value; ordinary decay is smoothed at the display
+// refresh rate.
+[[nodiscard]] double interpolateHudCountdown(std::uint8_t previous,
+                                             std::uint8_t current,
+                                             double amount) noexcept;
+
 [[nodiscard]] constexpr std::string_view
 originalPrimaryStatusLabel(PrimaryStatus status) noexcept {
   return status == PrimaryStatus::armor ? "ARMOR" : "HEALTH";

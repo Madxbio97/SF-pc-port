@@ -3755,26 +3755,52 @@ void GameplaySession::stageNativeFirstPersonAim(const GameplayInput &input) {
     return;
   }
 
-  // The native camera consumes the composed high-resolution look stream.
-  // Never write the host collision root back into the animated guest MATRIX:
-  // that matrix's first-person vertical translation is pose data and caused
-  // Gabe/camera to jump below the floor when aim started.
+  // The native camera consumes the composed high-resolution look stream. The
+  // native movement resolver owns first-person locomotion; when it accepts a
+  // step, mirror both current and cached collision roots into the guest before
+  // its next retail tick so bridge synchronization cannot snap Gabe back.
   if (playerAim() != PlayerAimState::first_person ||
       !host_manual_aim_body_heading_) {
     host_manual_aim_body_heading_ = player_controller_.state().yaw;
   }
+  const auto previous = player_controller_.state();
   player_controller_.update(
       PlayerInput{
+          .move = input.move,
+          .run = input.run,
           .aim = input.aim,
+          .strafe = input.strafe,
           .look_yaw = input.aim ? input.look_yaw : 0.0,
           .look_pitch = input.aim ? input.look_pitch : 0.0,
       },
       *this);
+  const auto &current = player_controller_.state();
+  const auto root_moved = std::abs(current.x - previous.x) > 0.0001 ||
+                          std::abs(current.y - previous.y) > 0.0001 ||
+                          std::abs(current.z - previous.z) > 0.0001;
+  if (root_moved) {
+    const auto native_point = [](const PlayerState &state) {
+      return LegacyNativePoint{
+          static_cast<std::int32_t>(std::lround(state.x)),
+          static_cast<std::int32_t>(std::lround(state.y)),
+          static_cast<std::int32_t>(std::lround(state.z)),
+      };
+    };
+    if (!legacy_first_mission_->applyHostAimLocomotion(
+            LegacyHostPlayerLocomotion{
+                .position = native_point(current),
+                .previous_position = native_point(previous),
+                .has_previous_position = true,
+            })) {
+      legacy_runtime_faulted_ = true;
+      mission_failed_ = true;
+    }
+  }
 }
 
 void GameplaySession::stageLegacyHostState(const GameplayInput &input) {
   host_manual_aim_ = input.aim;
-  host_manual_aim_strafe_ = input.aim ? input.strafe : 0.0;
+  host_manual_aim_strafe_ = input.aim ? input.aim_peek : 0.0;
   if (!input.aim) {
     legacy_manual_aim_neutral_camera_.reset();
     legacy_manual_aim_neutral_player_root_ = {};
@@ -3783,6 +3809,11 @@ void GameplaySession::stageLegacyHostState(const GameplayInput &input) {
     retail_host_aim_active_ = false;
     return;
   }
+  const auto pad = legacyPadStateFromPlayerInput(input);
+  // Stage this frame's PAD before invoking the retail L1 transition.  The
+  // transition handler reads PAD RAM synchronously; leaving the previous
+  // chase-frame axes there lets W/A/S/D kick the sight once as aim opens.
+  legacy_first_mission_->setHostPadState(pad);
   const auto *aim_bridge = legacy_first_mission_->bridge();
   const auto retail_aim_requested =
       input.aim && playerAim() == PlayerAimState::first_person &&
@@ -3810,7 +3841,6 @@ void GameplaySession::stageLegacyHostState(const GameplayInput &input) {
   } else {
     legacy_first_mission_->setHostAimRay(std::nullopt);
   }
-  auto pad = legacyPadStateFromPlayerInput(input);
   const auto clear_pending_weapon = [this] {
     pending_guest_weapon_.reset();
     pending_guest_weapon_steps_.clear();
@@ -3996,11 +4026,9 @@ void GameplaySession::stageLegacyHostState(const GameplayInput &input) {
 
   if (pending_guest_weapon_) {
     if (!menu_closed || !menu_prerequisites_ready) {
-      legacy_first_mission_->setHostPadState(pad);
       return;
     }
     if (guest_weapon_in_flight_direction_ != 0) {
-      legacy_first_mission_->setHostPadState(pad);
       return;
     }
     if (!pending_guest_weapon_steps_.empty()) {
@@ -4011,7 +4039,6 @@ void GameplaySession::stageLegacyHostState(const GameplayInput &input) {
                                 : hud_.inventory().nextAvailable(current);
       if (expected == current) {
         clear_pending_weapon();
-        legacy_first_mission_->setHostPadState(pad);
         return;
       }
       guest_weapon_in_flight_direction_ = direction;
@@ -4052,7 +4079,6 @@ void GameplaySession::stageLegacyHostState(const GameplayInput &input) {
       guest_quick_weapon_pending_ = false;
     }
   }
-  legacy_first_mission_->setHostPadState(pad);
 }
 
 void GameplaySession::syncLegacyActorCombatPresentation(
@@ -5053,11 +5079,11 @@ void GameplaySession::syncLegacyGameplayBridge() {
         player_controller_.synchronizeScriptedPose(scripted_player);
       } else if (host_manual_aim_ && !bridge.camera.scripted &&
                  !bridge.camera.locked) {
-        // Retail L2/R2 owns exact collision and lateral root motion. This is
-        // the motion-controller position (not the pose-space HMD root which
-        // caused the old floor drop); body_heading_override above preserves
-        // the independent mouse-aim heading.
-        player_controller_.synchronizeScriptedPose(scripted_player);
+        // Keep the retail collision root, but do not use the full scripted
+        // sync here: it clears motion_strafe_ every 20 Hz guest tick. That
+        // restarted held A on every tick while held D advanced normally,
+        // making first-person WASD asymmetric and visibly jerky.
+        player_controller_.synchronizeFirstPersonRoot(scripted_player);
       } else {
         // The final 1->0 sample is still guest-owned; reset the native
         // action state at that exact root before returning control.

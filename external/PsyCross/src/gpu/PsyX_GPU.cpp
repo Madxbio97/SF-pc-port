@@ -856,6 +856,33 @@ AddSplit(bool semiTrans, bool textured,
 	split.numVerts	  = 0;
 }
 
+int GR_UsesWorldDepth(const GrVertex* triangle, int depthRequested)
+{
+	if(!depthRequested || triangle == nullptr)
+		return 0;
+
+	// scr_h is populated by GTE/PGXP projection for world geometry. Native
+	// screen-space primitives deliberately keep it at zero. Do not infer 3D
+	// from vertex-Z variation: a camera-facing world plane has equal Z at all
+	// vertices and otherwise flips depth testing as the camera turns.
+	return triangle[0].scr_h > 0.0f && triangle[1].scr_h > 0.0f &&
+		triangle[2].scr_h > 0.0f;
+}
+
+static bool SplitUsesOnlyWorldDepth(const GPUDrawSplit& split)
+{
+	if(split.numVerts == 0 || split.numVerts % 3 != 0)
+		return false;
+
+	for(int vertexIndex = split.startVertex;
+		vertexIndex < split.startVertex + split.numVerts; vertexIndex += 3)
+	{
+		if(!GR_UsesWorldDepth(&g_vertexBuffer[vertexIndex], 1))
+			return false;
+	}
+	return true;
+}
+
 void DrawSplit(const GPUDrawSplit& split)
 {
 	if(split.debugText)
@@ -896,16 +923,13 @@ void DrawSplit(const GPUDrawSplit& split)
 		vertexIndex < split.startVertex + split.numVerts; vertexIndex += 3)
 	{
 		const GrVertex* triangle = &g_vertexBuffer[vertexIndex];
-		const bool precise = triangle[0].scr_h > 0.0f &&
-			triangle[1].scr_h > 0.0f && triangle[2].scr_h > 0.0f;
-		// Like the reference PGXP implementation, screen-aligned/2D polygons do
-		// not participate in world depth. Their authored OT order is definitive.
-		const bool is3D = precise &&
-			(triangle[0].z != triangle[1].z || triangle[0].z != triangle[2].z);
-		const bool usesDepth = depthRequested && is3D;
+		const bool usesDepth =
+			GR_UsesWorldDepth(triangle, depthRequested) != 0;
 		const float averageDepth =
 			(triangle[0].z + triangle[1].z + triangle[2].z) / 3.0f;
-		const bool clearDepth = usesDepth &&
+		// Transparent geometry consumes the completed opaque depth buffer. It
+		// must never clear that buffer before its test-only draw.
+		const bool clearDepth = depthWrite && usesDepth &&
 			averageDepth - g_lastPolygonDepth >= PGXP_DEPTH_CLEAR_THRESHOLD;
 
 		if(runVertices != 0 && (runUsesDepth != usesDepth || clearDepth))
@@ -966,8 +990,43 @@ void DrawAllSplits()
 	// next code ideally should be called before EndScene
 	GR_UpdateVertexBuffer(g_vertexBuffer, g_vertexIndex);
 
-	for(int i = 1; i <= g_splitIndex; i++)
-		DrawSplit(g_splits[i]);
+	if(g_RequestedDepthMode)
+	{
+		// OT bins prepend packets. A transparent object submitted after its
+		// opaque receiver can therefore execute first when both quantize to the
+		// same bin, then be overwritten because transparent draws do not write Z.
+		// Populate opaque world depth before transparent world geometry, but
+		// never move either across a native screen-space/UI or mixed split. Those
+		// boundaries retain exact PS1 painter order.
+		for(int i = 1; i <= g_splitIndex;)
+		{
+			if(!SplitUsesOnlyWorldDepth(g_splits[i]))
+			{
+				DrawSplit(g_splits[i++]);
+				continue;
+			}
+
+			const int worldBegin = i;
+			while(i <= g_splitIndex && SplitUsesOnlyWorldDepth(g_splits[i]))
+				++i;
+
+			for(int splitIndex = worldBegin; splitIndex < i; ++splitIndex)
+			{
+				if(g_splits[splitIndex].blendMode == BM_NONE)
+					DrawSplit(g_splits[splitIndex]);
+			}
+			for(int splitIndex = worldBegin; splitIndex < i; ++splitIndex)
+			{
+				if(g_splits[splitIndex].blendMode != BM_NONE)
+					DrawSplit(g_splits[splitIndex]);
+			}
+		}
+	}
+	else
+	{
+		for(int i = 1; i <= g_splitIndex; i++)
+			DrawSplit(g_splits[i]);
+	}
 
 	ClearSplits();
 }

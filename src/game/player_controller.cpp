@@ -118,16 +118,25 @@ void PlayerController::synchronizeScriptedPose(
   updateCamera();
 }
 
+void PlayerController::synchronizeFirstPersonRoot(
+    const PlayerState &pose) noexcept {
+  state_ = pose;
+  state_.yaw = normalizeHeading(state_.yaw);
+  updateCamera();
+}
+
 bool PlayerController::tryMove(PlayerMovementResolver &movement,
                                double direction_x, double direction_z,
                                double distance) {
   const auto delta_x = direction_x * distance;
   const auto delta_z = direction_z * distance;
   auto moved = movement.tryMove(state_, state_.x + delta_x, state_.z + delta_z);
-  if (!moved) {
+  const auto diagonal = std::abs(delta_x) > input_dead_zone &&
+                        std::abs(delta_z) > input_dead_zone;
+  if (!moved && diagonal) {
     moved = movement.tryMove(state_, state_.x + delta_x, state_.z);
   }
-  if (!moved) {
+  if (!moved && diagonal) {
     moved = movement.tryMove(state_, state_.x, state_.z + delta_z);
   }
   return moved;
@@ -241,8 +250,8 @@ void PlayerController::update(const PlayerInput &input,
     aim_heading_ = state_.yaw;
   }
   // First-person aim receives one already-composed look stream (lossless
-  // relative mouse plus the retail directional rate). Locomotion remains
-  // disabled until the first chase-camera update after aim is released.
+  // relative mouse plus right-stick rate). Body yaw remains independent, but
+  // locomotion is allowed and follows the sight heading.
   const auto turn = manual_aim ? 0.0 : std::clamp(input.turn, -1.0, 1.0);
   const auto look_turn = std::clamp(
       input.look_yaw / static_cast<double>(turn_units_per_update), -1.0, 1.0);
@@ -262,7 +271,7 @@ void PlayerController::update(const PlayerInput &input,
         static_cast<std::int64_t>(std::lround(input.look_yaw)));
   }
 
-  const auto movement_allowed = !movement_locked && !manual_aim;
+  const auto movement_allowed = !movement_locked;
   const auto move = movement_allowed ? std::clamp(input.move, -1.0, 1.0) : 0.0;
   const auto strafe =
       movement_allowed ? std::clamp(input.strafe, -1.0, 1.0) : 0.0;
@@ -274,6 +283,11 @@ void PlayerController::update(const PlayerInput &input,
   if (has_forward_motion || has_strafe_motion) {
     if (stance_ == PlayerStanceState::kneeling) {
       requested_locomotion = PlayerLocomotionState::crouch_walking;
+    } else if (manual_aim) {
+      // First-person WASD is one camera-relative planar walk. A single
+      // locomotion state and root-motion scalar keep W/A/S/D and diagonals at
+      // the same cadence instead of switching between WK0 and STEPL/STEPR.
+      requested_locomotion = PlayerLocomotionState::walking;
     } else if (has_strafe_motion && !has_forward_motion) {
       requested_locomotion = PlayerLocomotionState::strafing;
     } else if (input.run && move > 0.0 && !input.aim) {
@@ -301,7 +315,8 @@ void PlayerController::update(const PlayerInput &input,
                                        updates_per_animation_frame)
             : rootMotionForwardDistance(root_motion, animation_tick_,
                                         updates_per_animation_frame);
-    const auto basis = headingBasis(state_.yaw);
+    const auto movement_heading = manual_aim ? aim_heading_ : state_.yaw;
+    const auto basis = headingBasis(movement_heading);
     auto direction_x = basis.forward.x * move + basis.right.x * strafe;
     auto direction_z = basis.forward.z * move + basis.right.z * strafe;
     const auto direction_length = std::hypot(direction_x, direction_z);

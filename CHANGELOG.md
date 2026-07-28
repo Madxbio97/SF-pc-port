@@ -3,6 +3,40 @@
 All notable public-test changes are documented here. The project currently uses
 pre-release tags rather than a stable semantic-versioning promise.
 
+## 0.1.0-public-test.9 - 2026-07-28
+
+### Gameplay and input
+
+- Separated first-person WASD locomotion from mouse/right-stick sight input;
+  stale guest PAD axes and chase-mode target anchors can no longer kick the
+  first-person reticle.
+- Smoothed high-refresh first-person camera presentation, lateral movement and
+  weapon-switch animation while retaining the original 20 Hz game simulation.
+- Restored consistent typewriter animation, wrapping and backdrop bounds for
+  gameplay notifications in both English and Russian.
+
+### Rendering
+
+- Stabilized geometry-driven character shadows across ledges, walls and scenes
+  with multiple light sources while reducing redundant projection work.
+- Corrected depth classification and opaque/transparent submission ordering for
+  glass and other translucent world polygons without applying world depth to
+  screen-space UI.
+- Removed the Surface Picker and its diagnostic payload from public builds.
+
+### Localization and presentation
+
+- Kept original English scope captions for sniper and night-vision weapons and
+  hardened partial typewriter packets against accidental Cyrillic remapping.
+- Extended regression coverage for first-person input, reticles, message reveal,
+  transparent depth and shadow stability.
+
+### Release artifact
+
+- File: `SyphonFilterPC-0.1.0-public-test.9-win64.zip`
+- Checksum: supplied in the accompanying `.zip.sha256` file.
+- Supported disc: *Syphon Filter* USA v1.1 (`SCUS-94240`), BIN/CUE.
+
 ## 0.1.0-public-test.8 - 2026-07-27
 
 ### Gameplay and presentation

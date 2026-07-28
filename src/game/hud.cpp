@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
@@ -678,6 +679,15 @@ const WeaponState &PlayerInventory::state(WeaponId id) const {
     throw std::out_of_range{"WeaponId is outside the inventory table"};
   }
   return *item;
+}
+
+double interpolateHudCountdown(std::uint8_t previous, std::uint8_t current,
+                               double amount) noexcept {
+  if (current >= previous) {
+    return static_cast<double>(current);
+  }
+  return std::lerp(static_cast<double>(previous), static_cast<double>(current),
+                   std::clamp(amount, 0.0, 1.0));
 }
 
 GameplayHud::GameplayHud() { reset(); }

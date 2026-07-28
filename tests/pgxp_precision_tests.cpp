@@ -322,6 +322,29 @@ void testReversedDepthProjection() {
           "Reversed depth is not monotonic towards the camera");
 }
 
+void testWorldDepthClassificationIsCameraStable() {
+  std::array<GrVertex, 3> triangle{};
+  for (auto &vertex : triangle) {
+    vertex.scr_h = 1.0F;
+    vertex.z = 1000.0F;
+  }
+
+  require(GR_UsesWorldDepth(triangle.data(), 1) != 0,
+          "Camera-facing world triangle lost depth testing");
+
+  triangle[0].z = 999.0F;
+  triangle[2].z = 1001.0F;
+  require(GR_UsesWorldDepth(triangle.data(), 1) != 0,
+          "Turning a world triangle changed depth classification");
+
+  triangle[1].scr_h = 0.0F;
+  require(GR_UsesWorldDepth(triangle.data(), 1) == 0,
+          "Screen-space triangle entered the world depth buffer");
+  triangle[1].scr_h = 1.0F;
+  require(GR_UsesWorldDepth(triangle.data(), 0) == 0,
+          "Disabled world depth was ignored");
+}
+
 } // namespace
 
 int main() {
@@ -336,6 +359,7 @@ int main() {
     testTextureFilterSelection();
     testTrueColorExpansion();
     testReversedDepthProjection();
+    testWorldDepthClassificationIsCameraStable();
     std::cout << "PGXP precision tests passed\n";
     return 0;
   } catch (const std::exception &error) {

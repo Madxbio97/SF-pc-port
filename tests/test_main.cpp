@@ -26,6 +26,8 @@
 #include "sf/game/state_stack.hpp"
 #include "sf/game/system.hpp"
 #include "sf/game/title.hpp"
+#include "sf/platform/actor_shadow_stability.hpp"
+#include "sf/platform/gameplay_message_reveal_policy.hpp"
 #include "sf/platform/retail_scope_text_policy.hpp"
 #include "sf/psx/executable.hpp"
 #include "sf/psx/function_map.hpp"
@@ -639,7 +641,7 @@ void testLegacyDynamicPresentationPolicy() {
   auto second_lifetime = first_lifetime;
   second_lifetime.instance = 0x801b1800U;
   require(sf::game::legacyGuestIdentity(first_lifetime) ==
-              sf::game::legacyGuestIdentity(first_lifetime) &&
+                  sf::game::legacyGuestIdentity(first_lifetime) &&
               sf::game::legacyGuestIdentity(first_lifetime) !=
                   sf::game::legacyGuestIdentity(second_lifetime),
           "Recycled guest instances collided in actor lifetime identity");
@@ -737,12 +739,11 @@ void testLegacyDynamicPresentationPolicy() {
               sf::game::resolveDisplayedObjectTextureBank(1U, false) == 1U,
           "Displayed HMD inherited a streamed room texture bank");
   const auto object_texture_bank = sf::game::resolveAuthoredObjectTextureBank;
-  require(
-      object_texture_bank(1U, false, false, 0x00U, 0x01U) == 0U &&
-          object_texture_bank(0U, false, false, 0x00U, 0x02U) == 1U &&
-          object_texture_bank(1U, false, false, 0x01U, 0x03U) == 0U &&
-          object_texture_bank(0U, true, true, 0x03U, 0x03U) == 0U,
-      "Retained objects lost authored texture ownership across a portal");
+  require(object_texture_bank(1U, false, false, 0x00U, 0x01U) == 0U &&
+              object_texture_bank(0U, false, false, 0x00U, 0x02U) == 1U &&
+              object_texture_bank(1U, false, false, 0x01U, 0x03U) == 0U &&
+              object_texture_bank(0U, true, true, 0x03U, 0x03U) == 0U,
+          "Retained objects lost authored texture ownership across a portal");
 }
 
 void testGameplayCheckpointRestorePolicy() {
@@ -1301,6 +1302,35 @@ void testChaseCamera() {
           "First-person aiming camera is no longer at the lowered requested "
           "height");
 
+  const sf::game::CameraState previous_peek{100.0, 150.0,  334.0, 100.0,
+                                            150.0, 1934.0, 320};
+  const sf::game::CameraState current_peek{164.0, 148.0,  350.0, 364.0,
+                                           248.0, 1938.0, 400};
+  const auto presented_peek = sf::game::interpolateCameraPresentation(
+      previous_peek, current_peek, 0.25, true, false);
+  require(std::abs(presented_peek.x - 116.0) < epsilon &&
+              std::abs(presented_peek.y - 149.5) < epsilon &&
+              std::abs(presented_peek.z - 338.0) < epsilon &&
+              std::abs((presented_peek.target_x - presented_peek.x) - 200.0) <
+                  epsilon &&
+              std::abs((presented_peek.target_y - presented_peek.y) - 100.0) <
+                  epsilon &&
+              std::abs((presented_peek.target_z - presented_peek.z) - 1588.0) <
+                  epsilon &&
+              presented_peek.projection == 340,
+          "First-person presentation did not smooth the collision-limited "
+          "peek while retaining the current sight vector");
+
+  const auto aim_cut = sf::game::interpolateCameraPresentation(
+      previous_peek, current_peek, 0.25, true, true);
+  require(aim_cut.x == current_peek.x && aim_cut.y == current_peek.y &&
+              aim_cut.z == current_peek.z &&
+              aim_cut.target_x == current_peek.target_x &&
+              aim_cut.target_y == current_peek.target_y &&
+              aim_cut.target_z == current_peek.target_z &&
+              aim_cut.projection == current_peek.projection,
+          "Aim entry/exit camera cut was accidentally interpolated");
+
   const auto lowered_sight = sf::game::cameraRayAtProjectionOffset(
       level_aim, 0.0, sf::game::manual_aim_reticle_vertical_offset);
   const auto lowered_screen_y =
@@ -1334,12 +1364,16 @@ void testChaseCamera() {
 class TestPlayerMovement final : public sf::game::PlayerMovementResolver {
 public:
   bool allow{true};
+  unsigned int failures_before_accept{};
   unsigned int attempts{};
 
   bool tryMove(sf::game::PlayerState &player, double desired_x,
                double desired_z) override {
     ++attempts;
-    if (!allow) {
+    if (!allow || failures_before_accept > 0U) {
+      if (failures_before_accept > 0U) {
+        --failures_before_accept;
+      }
       return false;
     }
     player.x = desired_x;
@@ -1395,6 +1429,104 @@ void testPlayerController() {
       player_camera_delta > 0.0 && player_camera_delta < 10.0,
       "Chase camera remained rigidly attached instead of following smoothly");
 
+  const auto first_person_step = [&](double move, double strafe) {
+    controller.reset(spawn);
+    controller.update(
+        sf::game::PlayerInput{
+            .move = move,
+            .aim = true,
+            .strafe = strafe,
+        },
+        movement);
+    return controller.state();
+  };
+  const auto forward = first_person_step(1.0, 0.0);
+  const auto left = first_person_step(0.0, -1.0);
+  const auto backward = first_person_step(-1.0, 0.0);
+  const auto right = first_person_step(0.0, 1.0);
+  require(std::abs(forward.x - spawn.x) < 0.0001 &&
+              std::abs(forward.z - (spawn.z + 10.0)) < 0.0001 &&
+              std::abs(left.x - (spawn.x - 10.0)) < 0.0001 &&
+              std::abs(left.z - spawn.z) < 0.0001 &&
+              std::abs(backward.x - spawn.x) < 0.0001 &&
+              std::abs(backward.z - (spawn.z - 10.0)) < 0.0001 &&
+              std::abs(right.x - (spawn.x + 10.0)) < 0.0001 &&
+              std::abs(right.z - spawn.z) < 0.0001,
+          "First-person W/A/S/D directions or their common speed diverged");
+
+  controller.reset(spawn);
+  controller.update(
+      sf::game::PlayerInput{
+          .move = 1.0,
+          .aim = true,
+          .look_yaw = 1024.0,
+      },
+      movement);
+  require(std::abs(controller.state().x - (spawn.x + 10.0)) < 0.0001 &&
+              std::abs(controller.state().z - spawn.z) < 0.0001 &&
+              controller.state().yaw == spawn.yaw,
+          "First-person W did not follow the sight heading independently of "
+          "Gabe's body yaw");
+
+  controller.reset(spawn);
+  controller.update(
+      sf::game::PlayerInput{
+          .aim = true,
+          .strafe = -1.0,
+      },
+      movement);
+  controller.advanceAnimationClock();
+  const auto accepted_left_root = controller.state();
+  const auto accepted_left_tick = controller.animationTick();
+  const auto accepted_left_heading = controller.aimHeading();
+  controller.synchronizeFirstPersonRoot(accepted_left_root);
+  require(controller.animationTick() == accepted_left_tick &&
+              controller.aimHeading() == accepted_left_heading &&
+              controller.aim() == sf::game::PlayerAimState::first_person,
+          "Retail root synchronization reset first-person movement state");
+  controller.update(
+      sf::game::PlayerInput{
+          .aim = true,
+          .strafe = -1.0,
+      },
+      movement);
+  require(std::abs(controller.state().x - (spawn.x - 20.0)) < 0.0001 &&
+              std::abs(controller.state().z - spawn.z) < 0.0001 &&
+              controller.animationTick() == accepted_left_tick,
+          "Held A restarted or lost first-person locomotion after a guest "
+          "tick");
+
+  controller.reset(spawn);
+  movement.allow = false;
+  const auto blocked_attempt = movement.attempts;
+  controller.update(
+      sf::game::PlayerInput{
+          .move = 1.0,
+          .aim = true,
+      },
+      movement);
+  require(controller.state().x == spawn.x && controller.state().z == spawn.z &&
+              controller.locomotion() ==
+                  sf::game::PlayerLocomotionState::idle &&
+              movement.attempts == blocked_attempt + 1U,
+          "Blocked first-person W used a zero-distance collision fallback");
+  movement.allow = true;
+
+  controller.reset(spawn);
+  movement.failures_before_accept = 1U;
+  const auto slide_attempt = movement.attempts;
+  controller.update(
+      sf::game::PlayerInput{
+          .move = 1.0,
+          .aim = true,
+          .strafe = 1.0,
+      },
+      movement);
+  require(controller.state().x > spawn.x &&
+              std::abs(controller.state().z - spawn.z) < 0.0001 &&
+              movement.attempts == slide_attempt + 2U,
+          "Blocked first-person diagonal did not slide along its free axis");
+
   controller.reset(spawn);
   const auto attempts_before_aim = movement.attempts;
   controller.update(
@@ -1405,15 +1537,15 @@ void testPlayerController() {
           .strafe = 1.0,
       },
       movement);
-  require(controller.locomotion() == sf::game::PlayerLocomotionState::idle &&
+  require(controller.locomotion() == sf::game::PlayerLocomotionState::walking &&
               controller.aim() == sf::game::PlayerAimState::first_person &&
-              controller.state().x == spawn.x &&
               controller.state().y == spawn.y &&
-              controller.state().z == spawn.z && controller.state().grounded &&
+              controller.state().x > spawn.x &&
+              controller.state().z > spawn.z && controller.state().grounded &&
               controller.state().yaw == spawn.yaw &&
-              movement.attempts == attempts_before_aim,
-          "Mouse-only aiming accepted movement/turn input or changed the "
-          "collision root");
+              movement.attempts == attempts_before_aim + 1U,
+          "First-person movement did not use collision-resolved WASD while "
+          "keeping body yaw independent");
 
   controller.reset(spawn);
   controller.update(sf::game::PlayerInput{.turn = 1.0}, movement);
@@ -1443,8 +1575,8 @@ void testPlayerController() {
       movement);
   require(controller.state().yaw == spawn.yaw &&
               controller.locomotion() ==
-                  sf::game::PlayerLocomotionState::idle &&
-              controller.actorMotion() == sf::game::ActorMotion::idle &&
+                  sf::game::PlayerLocomotionState::walking &&
+              controller.actorMotion() == sf::game::ActorMotion::walk &&
               controller.aim() == sf::game::PlayerAimState::first_person &&
               controller.weaponSwitch() ==
                   sf::game::PlayerWeaponSwitchState::next &&
@@ -1452,7 +1584,7 @@ void testPlayerController() {
                   sf::game::PlayerActionState::weapon_switching &&
               controller.cameraIntent().mode ==
                   sf::game::PlayerCameraMode::first_person_aim,
-          "First-person aim accepted non-mouse movement/turn input");
+          "First-person movement or weapon-switch state was not retained");
 
   controller.update(
       sf::game::PlayerInput{
@@ -1483,18 +1615,19 @@ void testPlayerController() {
           .fire_pressed = true,
       },
       movement);
-  require(controller.locomotion() == sf::game::PlayerLocomotionState::idle &&
-              controller.actorMotion() == sf::game::ActorMotion::idle &&
+  const auto aimed_strafe_root = controller.state();
+  require(controller.locomotion() == sf::game::PlayerLocomotionState::walking &&
+              controller.actorMotion() == sf::game::ActorMotion::walk &&
               controller.aimHeading() == 1024 &&
               controller.state().yaw == spawn.yaw &&
-              controller.state().x == spawn.x &&
               controller.state().y == spawn.y &&
-              controller.state().z == spawn.z && controller.state().grounded &&
+              std::abs(controller.state().x - spawn.x) < 0.0001 &&
+              std::abs(controller.state().z - (spawn.z - 10.0)) < 0.0001 &&
+              controller.state().grounded &&
               controller.action() == sf::game::PlayerActionState::firing &&
               controller.cameraIntent().pitch == 1000.0 &&
               controller.camera().x > controller.state().x,
-          "Mouse aim moved Gabe's body or lost its independent yaw/pitch/fire "
-          "state");
+          "Mouse aim lost independent yaw/pitch/fire or first-person movement");
 
   controller.update(
       sf::game::PlayerInput{
@@ -1503,22 +1636,25 @@ void testPlayerController() {
           .look_pitch = -2000.0,
       },
       movement);
-  require(
-      controller.aimHeading() == 3072 && controller.state().x == spawn.x &&
-          controller.state().y == spawn.y && controller.state().z == spawn.z &&
-          controller.state().yaw == spawn.yaw && controller.state().grounded &&
-          controller.cameraIntent().heading == controller.aimHeading() &&
-          controller.cameraIntent().pitch == -1000.0 &&
-          controller.camera().x < controller.state().x,
-      "Reverse mouse aim changed Gabe's body instead of the independent sight");
+  require(controller.aimHeading() == 3072 &&
+              controller.state().x == aimed_strafe_root.x &&
+              controller.state().y == aimed_strafe_root.y &&
+              controller.state().z == aimed_strafe_root.z &&
+              controller.state().yaw == spawn.yaw &&
+              controller.state().grounded &&
+              controller.cameraIntent().heading == controller.aimHeading() &&
+              controller.cameraIntent().pitch == -1000.0 &&
+              controller.camera().x < controller.state().x,
+          "Reverse mouse aim moved the root without locomotion input");
 
   controller.update({}, movement);
-  require(
-      controller.aim() == sf::game::PlayerAimState::chase &&
-          controller.state().x == spawn.x && controller.state().y == spawn.y &&
-          controller.state().z == spawn.z &&
-          controller.state().yaw == spawn.yaw && controller.state().grounded,
-      "Releasing first-person aim changed Gabe's body pose");
+  require(controller.aim() == sf::game::PlayerAimState::chase &&
+              controller.state().x == aimed_strafe_root.x &&
+              controller.state().y == aimed_strafe_root.y &&
+              controller.state().z == aimed_strafe_root.z &&
+              controller.state().yaw == spawn.yaw &&
+              controller.state().grounded,
+          "Releasing first-person aim discarded its locomotion root");
 
   controller.update(
       sf::game::PlayerInput{
@@ -1610,12 +1746,12 @@ void testPlayerController() {
   movement.allow = false;
   movement.attempts = 0U;
   controller.update(sf::game::PlayerInput{.move = 1.0}, movement);
-  require(movement.attempts == 3U && controller.state().x == spawn.x &&
+  require(movement.attempts == 1U && controller.state().x == spawn.x &&
               controller.state().z == spawn.z &&
               controller.locomotion() ==
                   sf::game::PlayerLocomotionState::idle &&
               controller.animationTick() == 0U,
-          "Blocked player movement was not deterministic");
+          "Blocked cardinal movement retried a zero-distance fallback");
 
   movement.allow = true;
   controller.reset(spawn);
@@ -2505,23 +2641,60 @@ void testPlayerInventory() {
 
 void testGameplayHud() {
   using sf::game::LegacyUiMessageChannel;
+  constexpr auto epsilon = 0.0001;
+  const auto interpolate_countdown = sf::game::interpolateHudCountdown;
+  require(std::abs(interpolate_countdown(18U, 17U, 0.0) - 18.0) < epsilon &&
+              std::abs(interpolate_countdown(18U, 17U, 0.5) - 17.5) < epsilon &&
+              std::abs(interpolate_countdown(18U, 17U, 1.0) - 17.0) < epsilon,
+          "Weapon HUD countdown no longer interpolates between 20 Hz ticks");
+  require(interpolate_countdown(0U, 18U, 0.0) == 18.0 &&
+              interpolate_countdown(17U, 18U, 0.5) == 18.0,
+          "A newly armed weapon HUD animation was delayed by interpolation");
+  require(interpolate_countdown(4U, 3U, -1.0) == 4.0 &&
+              interpolate_countdown(4U, 3U, 2.0) == 3.0,
+          "Weapon HUD countdown interpolation did not clamp render alpha");
+
+  const auto retail_scope_message = sf::platform::isRetailScopeMessage;
+  require(
+      retail_scope_message(true, LegacyUiMessageChannel::centered, false, 1U) &&
+          retail_scope_message(true, LegacyUiMessageChannel::centered, false,
+                               3U),
+      "Partial scope packets no longer stay on the retail rendering path");
+  require(!retail_scope_message(false, LegacyUiMessageChannel::centered, false,
+                                3U) &&
+              !retail_scope_message(true, LegacyUiMessageChannel::status, false,
+                                    3U) &&
+              !retail_scope_message(true, LegacyUiMessageChannel::centered,
+                                    true, 3U) &&
+              !retail_scope_message(true, LegacyUiMessageChannel::centered,
+                                    false, 0U),
+          "Non-scope gameplay text was classified as a retail scope packet");
   const auto retail_scope_font = sf::platform::useRetailEnglishScopeFont;
-  require(retail_scope_font(true, true, LegacyUiMessageChannel::centered,
-                            false, 1U) &&
-              retail_scope_font(true, true,
-                                LegacyUiMessageChannel::centered, false, 3U),
+  require(retail_scope_font(true, true, LegacyUiMessageChannel::centered, false,
+                            1U) &&
+              retail_scope_font(true, true, LegacyUiMessageChannel::centered,
+                                false, 3U),
           "Empty or partial scope source no longer selects the retail font");
   require(!retail_scope_font(false, true, LegacyUiMessageChannel::centered,
                              false, 3U) &&
-              !retail_scope_font(true, false,
-                                 LegacyUiMessageChannel::centered, false, 3U) &&
+              !retail_scope_font(true, false, LegacyUiMessageChannel::centered,
+                                 false, 3U) &&
               !retail_scope_font(true, true, LegacyUiMessageChannel::status,
                                  false, 3U) &&
-              !retail_scope_font(true, true,
-                                 LegacyUiMessageChannel::centered, true, 3U) &&
-              !retail_scope_font(true, true,
-                                 LegacyUiMessageChannel::centered, false, 0U),
+              !retail_scope_font(true, true, LegacyUiMessageChannel::centered,
+                                 true, 3U) &&
+              !retail_scope_font(true, true, LegacyUiMessageChannel::centered,
+                                 false, 0U),
           "Non-scope gameplay text escaped into the retail font path");
+
+  const auto revealed = sf::platform::gameplayMessageVisibleGlyphCount;
+  require(revealed(10U, 0U, 10U) == 0U && revealed(10U, 1U, 10U) == 1U &&
+              revealed(10U, 4U, 20U) == 8U && revealed(10U, 10U, 20U) == 20U &&
+              revealed(10U, 40U, 20U) == 20U,
+          "Gameplay message typewriter mapping no longer follows guest "
+          "reveal progress");
+  require(revealed(0U, 1U, 20U) == 0U && revealed(10U, 1U, 0U) == 0U,
+          "Empty gameplay message reveal inputs were not rejected");
 
   require(sf::game::originalHudGlyph('!') ==
                   sf::game::OriginalHudGlyph{8U, 24U, 1U} &&
@@ -3169,6 +3342,85 @@ void testTitleMenu() {
           "Title sprites did not restart their fade on the next movie pass");
 }
 
+void testActorShadowReceiverStability() {
+  using sf::game::DynamicLightPoint;
+  using sf::platform::ActorShadowCachedReceiver;
+  using sf::platform::ActorShadowReceiverPlane;
+
+  require(!sf::platform::actorShadowReceiverIsWall({0.0, -1.0, 0.0},
+                                                   {0.0, 1.0, 0.0}),
+          "Opposite-winding floor triangle was classified as a wall");
+  require(
+      sf::platform::actorShadowReceiverIsWall({1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}),
+      "Perpendicular receiver was not classified as a wall");
+
+  const auto wall =
+      ActorShadowReceiverPlane{DynamicLightPoint{100.0, 0.0, 0.0},
+                               DynamicLightPoint{-1.0, 0.0, 0.0}, true};
+  auto history = ActorShadowCachedReceiver{};
+  sf::platform::updateActorShadowReceiver(history, std::nullopt);
+  sf::platform::updateActorShadowReceiver(history, wall);
+  require(!history.stable,
+          "Single wall sample replaced the stable floor receiver");
+  sf::platform::updateActorShadowReceiver(history, wall);
+  require(history.stable && history.stable->wall,
+          "Confirmed wall receiver did not become stable");
+  auto opposite_winding_wall = wall;
+  opposite_winding_wall.normal = {1.0, 0.0, 0.0};
+  sf::platform::updateActorShadowReceiver(history, opposite_winding_wall);
+  require(history.stable && history.stable->normal.x < -0.99,
+          "Opposite-winding wall flipped the cached receiver bias");
+  sf::platform::updateActorShadowReceiver(history, std::nullopt);
+  require(history.stable.has_value(),
+          "Single missing receiver discarded the stable wall");
+  sf::platform::updateActorShadowReceiver(history, std::nullopt);
+  require(!history.stable,
+          "Confirmed floor receiver did not replace the cached wall");
+
+  const auto projected = sf::platform::projectActorShadowOntoCachedPlane(
+      {0.0, 0.0, 0.0}, {200.0, 0.0, 0.0}, wall);
+  require(projected && std::abs(projected->x - 96.0) < 0.000001,
+          "Cached wall plane projection lost its surface bias");
+  require(!sf::platform::projectActorShadowOntoCachedPlane(
+              {0.0, 0.0, 0.0}, {0.0, 200.0, 0.0}, wall),
+          "Parallel shadow segment intersected the cached plane");
+  auto distant_wall = wall;
+  distant_wall.point.x = 300.0;
+  require(!sf::platform::projectActorShadowOntoCachedPlane(
+              {0.0, 0.0, 0.0}, {200.0, 0.0, 0.0}, distant_wall),
+          "Cached plane projection escaped the shadow segment");
+
+  auto support = sf::platform::ActorShadowSupportState{};
+  const auto floor_a =
+      ActorShadowReceiverPlane{{0.0, 20.0, 0.0}, {0.0, 1.0, 0.0}, false};
+  auto floor_b =
+      ActorShadowReceiverPlane{{100.0, 120.0, 0.0}, {0.0, -1.0, 0.0}, false};
+  support = sf::platform::advanceActorShadowSupport(support, floor_a, 10U);
+  support = sf::platform::advanceActorShadowSupport(support, floor_b, 10U);
+  require(support.current.point == floor_a.point,
+          "Support plane advanced twice during one guest tick");
+  support = sf::platform::advanceActorShadowSupport(support, floor_b, 11U);
+  require(support.current.point == floor_a.point,
+          "One ledge sample replaced the stable support plane");
+  support = sf::platform::advanceActorShadowSupport(support, floor_a, 12U);
+  support = sf::platform::advanceActorShadowSupport(support, floor_b, 13U);
+  require(support.current.point == floor_a.point,
+          "Alternating ledge candidates made the support plane dance");
+  support = sf::platform::advanceActorShadowSupport(support, floor_b, 14U);
+  const auto halfway = sf::platform::sampleActorShadowSupport(support, 0.5);
+  require(halfway && std::abs(halfway->point.x - 50.0) < 0.000001 &&
+              std::abs(halfway->point.y - 70.0) < 0.000001 &&
+              halfway->normal.y > 0.99,
+          "Support plane did not interpolate smoothly across a ledge");
+  support = sf::platform::advanceActorShadowSupport(support, std::nullopt, 15U);
+  const auto retained = sf::platform::sampleActorShadowSupport(support, 1.0);
+  require(retained && retained->point == floor_b.point,
+          "One missing support query discarded the actor shadow");
+  support = sf::platform::advanceActorShadowSupport(support, std::nullopt, 16U);
+  require(!sf::platform::sampleActorShadowSupport(support, 1.0),
+          "Confirmed missing support left a stale actor shadow suspended");
+}
+
 } // namespace
 
 int main() {
@@ -3212,6 +3464,7 @@ int main() {
     testWeaponDescriptions();
     testMissionStartGate();
     testTitleMenu();
+    testActorShadowReceiverStability();
     std::cout << "All tests passed\n";
     return 0;
   } catch (const std::exception &error) {

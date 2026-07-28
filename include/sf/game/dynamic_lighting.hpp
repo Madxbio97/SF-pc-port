@@ -225,6 +225,18 @@ struct DynamicShadowProjection {
   bool source_driven{};
 };
 
+// Presentation history for one actor shadow. Selection remains an
+// authoritative 20 Hz operation; the previous/current pair is sampled at the
+// display refresh rate so source changes do not turn into visible direction
+// jumps. Callers keep one state per stable actor identity and discard it when
+// that identity leaves the resident scene.
+struct DynamicShadowProjectionState {
+  DynamicShadowProjection previous;
+  DynamicShadowProjection current;
+  std::uint64_t guest_tick{};
+  bool initialized{};
+};
+
 // Blends every eligible source which can physically cast onto the supplied
 // support plane. Continuous score weights avoid hard direction changes when
 // two nearby lights exchange dominance. Low/behind-floor effects are rejected
@@ -234,6 +246,23 @@ struct DynamicShadowProjection {
 selectDynamicShadowProjection(const DynamicLightFrame &frame,
                               DynamicLightPoint actor_anchor,
                               DynamicLightPoint ground_normal) noexcept;
+
+// Advances temporal shadow selection exactly once per guest update. Repeated
+// calls for the same tick are idempotent; a guest clock rollback (mission
+// restart/load) starts a fresh history. Brief combat flashes and authored
+// light animation are already removed by selectDynamicShadowProjection, so
+// this policy only damps genuine key-light transitions.
+[[nodiscard]] DynamicShadowProjectionState
+advanceDynamicShadowProjection(const DynamicShadowProjectionState &state,
+                               const DynamicShadowProjection &target,
+                               std::uint64_t guest_tick) noexcept;
+
+// Interpolates the last two 20 Hz presentation states. amount is the existing
+// host-frame interpolation fraction in [0, 1]. Invalid/uninitialized state
+// fails closed to the stable scene key projection.
+[[nodiscard]] DynamicShadowProjection
+sampleDynamicShadowProjection(const DynamicShadowProjectionState &state,
+                              double amount) noexcept;
 
 // Projects one posed actor vertex onto an arbitrary support plane. The small
 // normal offset avoids coplanar Z fighting while the dedicated depth-tested,

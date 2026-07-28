@@ -353,9 +353,8 @@ struct PlayerActionState {
 
 // Axis convention: positive forward/strafe/turn/yaw is forward/right/right/
 // right; positive pitch is up. In chase mode A/D turns and Q/E strafes.
-// During first-person aim W/S and A/D become the retail vertical/horizontal
-// sight axes. Q/E remain physical L2/R2 corner movement and relative mouse
-// deltas extend the same sight without being quantized to the PS1 stick.
+// During first-person aim W/S move, A/D strafe, mouse/right-stick move the
+// sight, and Q/E retain the original L2/R2 corner peek.
 struct PlayerInput {
   double move_forward{};
   double move_strafe{};
@@ -399,7 +398,9 @@ struct PlayerLookSample {
 struct FirstPersonAimInput {
   PlayerLookSample mouse_look{};
   PlayerLookSample directional_look_per_guest_tick{};
+  double move{};
   double strafe{};
+  double peek{};
 };
 
 // ROM measurement of the USA v1.1 L1 camera after its retail smoothing:
@@ -410,9 +411,9 @@ struct FirstPersonAimInput {
 inline constexpr double retail_first_person_yaw_units_per_tick = 10.0;
 inline constexpr double retail_first_person_pitch_units_per_tick = 13.0;
 
-// First-person routing preserves the original four directional axes and the
-// dedicated L2/R2 corner channel. Relative mouse input remains separate so it
-// can be accumulated losslessly between retail guest ticks.
+// First-person routing separates locomotion, sight, and the dedicated L2/R2
+// corner channel. Relative mouse input remains separate so it can be
+// accumulated losslessly between retail guest ticks.
 [[nodiscard]] FirstPersonAimInput
 firstPersonAimInput(const PlayerInput &input) noexcept;
 

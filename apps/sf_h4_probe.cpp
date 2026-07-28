@@ -646,19 +646,16 @@ int runProbe(const std::filesystem::path &cue_path) {
     return 36;
   }
   const auto aim_camera_origin = gameplay->camera();
-  auto horizontal_sight_moved = false;
-  auto vertical_sight_moved = false;
+  auto first_person_root_moved = false;
+  auto previous_first_person_root = aim_origin;
   for (std::uint32_t update = 0U; update < 32U; ++update) {
     const auto phase = update % 4U;
     const auto move = phase == 0U ? 1.0 : phase == 1U ? -1.0 : 0.0;
-    const auto turn = phase == 2U ? 1.0 : phase == 3U ? -1.0 : 0.0;
+    const auto strafe = phase == 2U ? 1.0 : phase == 3U ? -1.0 : 0.0;
     gameplay->update(sf::game::GameplayInput{
         .move = move,
-        .turn = turn,
         .aim = true,
-        .look_yaw = turn * sf::platform::retail_first_person_yaw_units_per_tick,
-        .look_pitch =
-            -move * sf::platform::retail_first_person_pitch_units_per_tick,
+        .strafe = strafe,
     });
     gameplay->advanceAnimationClock();
     if (gameplay->runtimeFaulted() ||
@@ -667,40 +664,30 @@ int runProbe(const std::filesystem::path &cue_path) {
       return 35;
     }
     const auto player = gameplay->player();
-    const auto camera = gameplay->camera();
-    horizontal_sight_moved =
-        horizontal_sight_moved ||
-        std::abs((camera.target_x - camera.x) -
-                 (aim_camera_origin.target_x - aim_camera_origin.x)) > 0.001 ||
-        std::abs((camera.target_z - camera.z) -
-                 (aim_camera_origin.target_z - aim_camera_origin.z)) > 0.001;
-    vertical_sight_moved =
-        vertical_sight_moved ||
-        std::abs((camera.target_y - camera.y) -
-                 (aim_camera_origin.target_y - aim_camera_origin.y)) > 0.001;
-    if (std::abs(player.x - aim_origin.x) > 0.001 ||
-        std::abs(player.y - aim_origin.y) > 64.0 ||
-        std::abs(player.z - aim_origin.z) > 0.001 ||
+    first_person_root_moved =
+        first_person_root_moved ||
+        std::hypot(player.x - previous_first_person_root.x,
+                   player.z - previous_first_person_root.z) > 0.001;
+    if (std::abs(player.y - aim_origin.y) > 64.0 ||
         player.yaw != aim_origin.yaw ||
         player.grounded != aim_origin.grounded) {
-      std::cerr << "H4 WASD moved Gabe's root during four-way aim: origin=("
+      std::cerr << "H4 WASD first-person movement corrupted Gabe's pose: origin=("
                 << aim_origin.x << ',' << aim_origin.y << ',' << aim_origin.z
                 << ") current=(" << player.x << ',' << player.y << ','
                 << player.z << ")\n";
       return 36;
     }
+    previous_first_person_root = player;
   }
-  if (!horizontal_sight_moved || !vertical_sight_moved) {
-    std::cerr << "H4 four-way aim missed an axis: horizontal="
-              << horizontal_sight_moved << " vertical=" << vertical_sight_moved
-              << '\n';
+  if (!first_person_root_moved) {
+    std::cerr << "H4 WASD did not move Gabe during first-person aim\n";
     return 36;
   }
 
   const auto strafe_origin = gameplay->player();
   const auto strafe_camera_origin = gameplay->camera();
   for (std::uint32_t update = 0U; update < 8U; ++update) {
-    gameplay->update(sf::game::GameplayInput{.aim = true, .strafe = -1.0});
+    gameplay->update(sf::game::GameplayInput{.aim = true, .aim_peek = -1.0});
     gameplay->advanceAnimationClock();
   }
   const auto strafe_left = gameplay->player();
@@ -711,7 +698,7 @@ int runProbe(const std::filesystem::path &cue_path) {
     gameplay->advanceAnimationClock();
   }
   for (std::uint32_t update = 0U; update < 8U; ++update) {
-    gameplay->update(sf::game::GameplayInput{.aim = true, .strafe = 1.0});
+    gameplay->update(sf::game::GameplayInput{.aim = true, .aim_peek = 1.0});
     gameplay->advanceAnimationClock();
   }
   const auto strafe_right = gameplay->player();
@@ -854,9 +841,9 @@ int runProbe(const std::filesystem::path &cue_path) {
     return 36;
   }
   if (held_aim_player.yaw != aim_origin.yaw ||
-      std::abs(held_aim_player.x - aim_origin.x) > 0.001 ||
-      std::abs(held_aim_player.y - aim_origin.y) > 64.0 ||
-      std::abs(held_aim_player.z - aim_origin.z) > 0.001) {
+      std::abs(held_aim_player.x - moved_aim_player.x) > 0.001 ||
+      std::abs(held_aim_player.y - moved_aim_player.y) > 64.0 ||
+      std::abs(held_aim_player.z - moved_aim_player.z) > 0.001) {
     std::cerr << "H4 neutral/fire aim changed Gabe's body transform\n";
     return 39;
   }
@@ -884,13 +871,14 @@ int runProbe(const std::filesystem::path &cue_path) {
     return 39;
   }
   const auto released_player = gameplay->player();
-  if (std::abs(released_player.x - aim_origin.x) > 0.001 ||
-      std::abs(released_player.z - aim_origin.z) > 0.001 ||
-      std::abs(released_player.y - aim_origin.y) > 128.0 ||
+  if (std::abs(released_player.x - held_aim_player.x) > 0.001 ||
+      std::abs(released_player.z - held_aim_player.z) > 0.001 ||
+      std::abs(released_player.y - held_aim_player.y) > 128.0 ||
       released_player.yaw != aim_origin.yaw ||
-      (aim_origin.grounded && !released_player.grounded)) {
+      (held_aim_player.grounded && !released_player.grounded)) {
     std::cerr << "H4 first-person exit left the collision envelope: origin=("
-              << aim_origin.x << ',' << aim_origin.y << ',' << aim_origin.z
+              << held_aim_player.x << ',' << held_aim_player.y << ','
+              << held_aim_player.z
               << ") released=(" << released_player.x << ',' << released_player.y
               << ',' << released_player.z << ")\n";
     return 38;

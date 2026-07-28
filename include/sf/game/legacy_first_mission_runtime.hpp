@@ -239,7 +239,7 @@ public:
 
   void setHostPadState(const LegacyHostPadState &state) noexcept;
   [[nodiscard]] bool
-  applyHostAimLocomotion(const LegacyHostPlayerState &state) noexcept;
+  applyHostAimLocomotion(const LegacyHostPlayerLocomotion &state) noexcept;
   void setHostAimRay(std::optional<LegacyHostAimRay> ray) noexcept;
   [[nodiscard]] bool restoreHostPlayerHeading(std::int32_t yaw) noexcept;
   [[nodiscard]] std::uint64_t hostAimRayPatchCount() const noexcept;
