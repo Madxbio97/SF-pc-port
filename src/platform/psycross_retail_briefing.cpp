@@ -296,6 +296,13 @@ struct TextLayout {
 
 TextLayout layoutTextObject(std::string_view text, int left, int top, int right,
                             int bottom) {
+  // The generated Russian atlas is sampled bilinearly from a 2x texture.
+  // Reserve a small logical guard at the right edge so the final texel's
+  // filter footprint never touches the briefing surround.  English keeps the
+  // exact retail layout.
+  if (game::russianLanguageActive()) {
+    right -= 2;
+  }
   TextLayout layout;
   auto x = left;
   auto y = top;

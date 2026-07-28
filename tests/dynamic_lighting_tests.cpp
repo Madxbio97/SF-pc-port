@@ -460,7 +460,7 @@ void testSceneTriangleLightingInterpolatesFloorColor() {
                                                             {25.0, 0.0, 25.0});
   require(sample && sample->color == DynamicLightVertexColor{64U, 80U, 96U} &&
               std::abs(sample->surface_y - 175.0) < 0.0001,
-          "Weapon-crate floor lighting did not barycentrically interpolate");
+          "Scene-object floor lighting did not barycentrically interpolate");
   require(!sf::game::sampleSceneTriangleLighting(vertices, colors,
                                                  {120.0, 0.0, 120.0}) &&
               !sf::game::sampleSceneTriangleLighting(

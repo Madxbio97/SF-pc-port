@@ -43,9 +43,9 @@ struct PlayerInput {
   bool quick_turn{};
   std::int32_t weapon_menu_delta{};
   std::optional<std::uint8_t> direct_weapon;
-  // Dedicated retail L1+L2/R2 corner-peek channel. First-person
-  // locomotion uses move/strafe; keeping this separate prevents the guest
-  // PAD from interpreting A/D movement as a camera-only peek.
+  // Dedicated retail L1+L2/R2 corner-peek channel. First-person movement is
+  // blocked; keeping this separate prevents rejected A/D locomotion from being
+  // reinterpreted as a camera-only peek.
   double aim_peek{};
 };
 
@@ -136,6 +136,9 @@ public:
   static constexpr unsigned int stand_action_updates = 11U;
   static constexpr unsigned int quick_turn_action_updates = 14U;
   static constexpr unsigned int interact_action_updates = 46U;
+  // Matches the collision resolver's largest legal step. First-person bridge
+  // samples outside this range are pose/transition offsets, not world roots.
+  static constexpr double maximum_first_person_root_height_step = 160.0;
 
   explicit PlayerController(
       ChaseCameraConfiguration chase_camera = {},
@@ -203,6 +206,7 @@ public:
            action_ == PlayerActionState::quick_turning ||
            action_ == PlayerActionState::interacting;
   }
+  [[nodiscard]] unsigned int rollDurationUpdates() const noexcept;
   [[nodiscard]] CameraState camera() const noexcept { return camera_; }
   [[nodiscard]] PlayerCameraIntent cameraIntent() const noexcept;
   [[nodiscard]] std::optional<std::uint8_t> directWeapon() const noexcept {

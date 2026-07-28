@@ -1647,6 +1647,8 @@ void GameplaySession::reset() {
   guest_quick_weapon_pending_ = false;
   host_manual_aim_ = false;
   retail_host_aim_active_ = false;
+  first_person_aim_roll_block_updates_ = 0U;
+  first_person_aim_release_rearm_required_ = false;
   host_manual_aim_strafe_ = 0.0;
   host_manual_aim_body_heading_.reset();
   pending_host_aim_heading_restore_.reset();
@@ -1892,6 +1894,8 @@ bool GameplaySession::restartCheckpoint() {
   guest_quick_weapon_pending_ = checkpoint_guest_quick_weapon_pending_;
   host_manual_aim_ = false;
   retail_host_aim_active_ = false;
+  first_person_aim_roll_block_updates_ = 0U;
+  first_person_aim_release_rearm_required_ = false;
   host_manual_aim_strafe_ = 0.0;
   host_manual_aim_body_heading_.reset();
   pending_host_aim_heading_restore_.reset();
@@ -3704,6 +3708,58 @@ bool GameplaySession::legacyWeaponMenuReady() const noexcept {
          mission->weapon_menu_input_ready;
 }
 
+bool GameplaySession::legacyRadioConversationActive() const noexcept {
+  const auto diagnostics = legacy_first_mission_ != nullptr
+                               ? legacy_first_mission_->audioDiagnostics()
+                               : std::nullopt;
+  // Gameplay music and effects are retail SPU voices. INGAME.XA is reserved
+  // for mission dialogue, including Lian's radio calls.
+  return diagnostics && diagnostics->xa_stream_set != 0U;
+}
+
+GameplayInput GameplaySession::admittedFirstPersonAimInput(
+    const GameplayInput &input) noexcept {
+  const auto optic_circle =
+      input.roll && input.aim &&
+      legacyFirstPersonCircleAllowed(hud_.inventory().current());
+  if (input.roll && !optic_circle) {
+    first_person_aim_roll_block_updates_ =
+        std::max(first_person_aim_roll_block_updates_,
+                 player_controller_.rollDurationUpdates());
+  }
+
+  const auto radio_active = legacyRadioConversationActive();
+  const auto transition_locked = (input.roll && !optic_circle) ||
+                                 first_person_aim_roll_block_updates_ != 0U ||
+                                 player_controller_.actionLocked();
+  if (input.aim && (transition_locked || radio_active)) {
+    first_person_aim_release_rearm_required_ = true;
+  } else if (!input.aim && !transition_locked && !radio_active) {
+    first_person_aim_release_rearm_required_ = false;
+  }
+
+  auto admitted = input;
+  if (!legacyFirstPersonAimInputAllowed(
+          first_person_aim_roll_block_updates_,
+          player_controller_.actionLocked(), radio_active,
+          first_person_aim_release_rearm_required_)) {
+    admitted.aim = false;
+    admitted.aim_peek = 0.0;
+  }
+  if (!legacyFirstPersonLocomotionInputAllowed(admitted.aim)) {
+    // This is the first movement gate and runs before either the native
+    // controller or the synchronous retail L1 transition sees the frame.
+    admitted.move = 0.0;
+    admitted.strafe = 0.0;
+    admitted.turn = 0.0;
+    admitted.run = false;
+  }
+  if (first_person_aim_roll_block_updates_ != 0U) {
+    --first_person_aim_roll_block_updates_;
+  }
+  return admitted;
+}
+
 void GameplaySession::stageNativeFirstPersonAim(const GameplayInput &input) {
   // Always consume the host release edge first. A retail camera/control lock
   // may appear on that same update; it must not leave the native controller
@@ -3755,10 +3811,9 @@ void GameplaySession::stageNativeFirstPersonAim(const GameplayInput &input) {
     return;
   }
 
-  // The native camera consumes the composed high-resolution look stream. The
-  // native movement resolver owns first-person locomotion; when it accepts a
-  // step, mirror both current and cached collision roots into the guest before
-  // its next retail tick so bridge synchronization cannot snap Gabe back.
+  // The native camera consumes the composed high-resolution look stream. Gabe's
+  // collision root remains stationary throughout first-person aim; only the
+  // sight heading and pitch are admitted here.
   if (playerAim() != PlayerAimState::first_person ||
       !host_manual_aim_body_heading_) {
     host_manual_aim_body_heading_ = player_controller_.state().yaw;
@@ -3766,10 +3821,7 @@ void GameplaySession::stageNativeFirstPersonAim(const GameplayInput &input) {
   const auto previous = player_controller_.state();
   player_controller_.update(
       PlayerInput{
-          .move = input.move,
-          .run = input.run,
           .aim = input.aim,
-          .strafe = input.strafe,
           .look_yaw = input.aim ? input.look_yaw : 0.0,
           .look_pitch = input.aim ? input.look_pitch : 0.0,
       },
@@ -5068,12 +5120,29 @@ void GameplaySession::syncLegacyGameplayBridge() {
       if (body_heading_override) {
         scripted_player.yaw = *body_heading_override;
       }
+      const LegacyObjectBridgeState *guest_player = nullptr;
       if (mission.player_slot >= 0 &&
           static_cast<std::size_t>(mission.player_slot) <
               bridge.objects.size()) {
-        scripted_player.grounded =
-            bridge.objects[static_cast<std::size_t>(mission.player_slot)]
-                .ground_contact_valid;
+        guest_player =
+            &bridge.objects[static_cast<std::size_t>(mission.player_slot)];
+        scripted_player.grounded = guest_player->ground_contact_valid;
+        if (native_aim_owns_body || pending_restore_owns_body) {
+          const auto height_delta =
+              std::abs(scripted_player.y - player_controller_.state().y);
+          const auto valid_world_height =
+              guest_player->ground_contact_valid &&
+              height_delta <=
+                  PlayerController::maximum_first_person_root_height_step;
+          if (!valid_world_height) {
+            // Missing contact or an impossible one-tick height jump is a
+            // transient pose sample, never permission to replace the last
+            // collision-resolved world root. This also protects the L1
+            // release frame, which uses reset() after retail tears aim down.
+            scripted_player.y = player_controller_.state().y;
+            scripted_player.grounded = player_controller_.state().grounded;
+          }
+        }
       }
       if (bridge.player.control_locked) {
         player_controller_.synchronizeScriptedPose(scripted_player);
@@ -5660,8 +5729,9 @@ void GameplaySession::update(const GameplayInput &input) {
   }
 
   const auto guest_weapon_before_update = hud_.inventory().current();
-  stageNativeFirstPersonAim(input);
-  stageLegacyHostState(input);
+  const auto admitted_input = admittedFirstPersonAimInput(input);
+  stageNativeFirstPersonAim(admitted_input);
+  stageLegacyHostState(admitted_input);
   const auto native_cinematic =
       mission_cinematic_phase_ == MissionCinematicPhase::intro ||
       mission_cinematic_phase_ == MissionCinematicPhase::finale;

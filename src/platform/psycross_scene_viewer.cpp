@@ -6078,6 +6078,8 @@ void renderHmdObject(const assets::HmdModel &model,
                      unsigned int texture_bank, HmdPoseScratch &pose_scratch,
                      const MATRIX &view, std::vector<OT_TAG> &ordering_table,
                      PrimitiveBuffer &primitives, RenderStats &stats,
+                     std::optional<VertexColor> back_color_override =
+                         std::nullopt,
                      std::span<const Vector3> prepared_world_vertices = {}) {
   if (prepared_world_vertices.empty()) {
     prepareHmdWorldVertices(model, object, animation_pose, pose_scratch,
@@ -6085,7 +6087,8 @@ void renderHmdObject(const assets::HmdModel &model,
     prepared_world_vertices = primitives.hmd_world_vertex_scratch;
   }
   const auto world_vertices = prepared_world_vertices;
-  const auto back_color = retailHmdBackColor(object);
+  const auto back_color =
+      back_color_override.value_or(retailHmdBackColor(object));
   const auto vertex = [&](std::size_t index) {
     const auto &world = world_vertices[index];
     return makeVertex(world.x, world.y, world.z);
@@ -7905,10 +7908,16 @@ void renderObjects(const game::GameplaySession &gameplay,
       const auto guest_back_color = weapon_crate
                                         ? retailGmdObjectBackColor(object)
                                         : VertexColor{128U, 128U, 128U};
+      // Static GMD props do not carry authored per-vertex colors.  They used
+      // to receive local scene light only for weapon crates, leaving switches,
+      // control boxes and other active trigger points at neutral brightness.
+      // Sample the same active world-color cache for every ordinary GMD prop;
+      // emissive billboards/lightbars deliberately retain their own intensity.
       const auto back_color =
-          weapon_crate ? localSceneBackColor(gameplay, presentation, object,
-                                             guest_back_color)
-                       : guest_back_color;
+          object_model.visual_effect == game::ObjectVisualEffect::none
+              ? localSceneBackColor(gameplay, presentation, object,
+                                    guest_back_color)
+              : guest_back_color;
       renderGmdObject(*model, object, object_model.visual_effect, texture_bank,
                       presentation.camera, view, ordering_table, primitives,
                       stats, back_color, false
@@ -7956,9 +7965,19 @@ void renderObjects(const game::GameplaySession &gameplay,
             object_index, presentation.guest_frame, interpolation_amount,
             shadow_cache, view, shadow_ordering_table, primitives, stats);
       }
+      auto back_color = retailHmdBackColor(object);
+      if (state == nullptr && !dedicated_presentation &&
+          !object.legacy_hmd_back_color_valid) {
+        // HMD switches occasionally pass through a guest display-controller
+        // transition with no valid back-color.  Neutral white is conspicuous
+        // in dark rooms, so use the surrounding active map light until the
+        // exact retail value becomes available again.
+        back_color =
+            localSceneBackColor(gameplay, presentation, object, back_color);
+      }
       renderHmdObject(*hmd_model, object, render_pose, texture_bank,
                       pose_scratch, view, ordering_table, primitives, stats,
-                      world_vertices);
+                      back_color, world_vertices);
       auto weapon = gameplay.legacyDedicatedActorWeapon(object_index);
       if (!weapon && state != nullptr && state->health != 0U) {
         weapon = state->weapon;
@@ -8346,7 +8365,8 @@ void renderPresentedPlayer(
                       shadow_ordering_table, primitives, stats);
     renderHmdObject(*player_model, player_object, &pose,
                     game::resident_hmd_texture_bank, pose_scratch, view,
-                    ordering_table, primitives, stats, world_vertices);
+                    ordering_table, primitives, stats, std::nullopt,
+                    world_vertices);
     if (gameplay.playerAlive()) {
       renderActorWeapon(gameplay, *player_model, player_object, pose,
                         presented_weapon, game::resident_weapon_texture_bank,

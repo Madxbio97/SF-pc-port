@@ -66,9 +66,9 @@ legacyPadStateFromPlayerInput(const PlayerInput &input) noexcept {
   LegacyHostPadState state;
   const auto movement_scale = input.run ? 1.0 : walking_stick_scale;
   if (input.aim) {
-    // Host first-person owns both collision-resolved locomotion and sight.
+    // Host first-person owns the sight while Gabe's collision root is frozen.
     // Keep the guest analog axes neutral so retail cannot reinterpret W/S or
-    // A/D as a second, quantized camera movement.
+    // A/D as a quantized camera or actor movement.
     state.left_x = padAxis(0.0);
     state.left_y = padAxis(0.0);
   } else {

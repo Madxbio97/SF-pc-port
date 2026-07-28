@@ -3,6 +3,33 @@
 All notable public-test changes are documented here. The project currently uses
 pre-release tags rather than a stable semantic-versioning promise.
 
+## 0.1.0-public-test.12 - 2026-07-28
+
+### Gameplay and input
+
+- Froze Gabe's collision root for the complete first-person aim hold at both
+  the host-input admission layer and the low-level player controller. A
+  simultaneous aim plus WASD edge can no longer enter collision resolution or
+  reuse an unresolved transition height.
+- Isolated first-person entry from rolls, recovery actions and active radio
+  conversations, with release-to-rearm semantics after a rejected transition.
+- Kept Circle as an optic zoom command only for the sniper and night-vision
+  rifles instead of forwarding it into incompatible grenade/roll paths.
+
+### Rendering and localization
+
+- Applied local scene lighting to ordinary GMD trigger props and supplied an
+  HMD fallback when a switch/control object has no valid retail back-color.
+- Regenerated the Russian Industria font sheets with bilinear-safe cell
+  gutters, corrected vertical metrics and a small briefing-layout guard so
+  glyphs remain inside the original interface frame.
+
+### Release artifact
+
+- File: `SyphonFilterPC-0.1.0-public-test.12-win64.zip`
+- Checksum: supplied in the accompanying `.zip.sha256` file.
+- Supported disc: *Syphon Filter* USA v1.1 (`SCUS-94240`), BIN/CUE.
+
 ## 0.1.0-public-test.11 - 2026-07-28
 
 ### Rendering

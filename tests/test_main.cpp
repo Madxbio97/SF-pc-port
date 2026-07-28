@@ -690,6 +690,26 @@ void testLegacyDynamicPresentationPolicy() {
           !sf::game::legacyManualAimPresentationActive(true, true, 1, false,
                                                        false, true),
       "Retail traversal camera mode leaked into host manual-aim visibility");
+  require(sf::game::legacyFirstPersonCircleAllowed(
+              sf::game::WeaponId::sniper_rifle) &&
+              sf::game::legacyFirstPersonCircleAllowed(
+                  sf::game::WeaponId::nightvision_rifle) &&
+              !sf::game::legacyFirstPersonCircleAllowed(
+                  sf::game::WeaponId::fragmentation_grenade) &&
+              !sf::game::legacyFirstPersonCircleAllowed(
+                  sf::game::WeaponId::gas_grenade),
+          "First-person Circle leaked from optics into grenade aim");
+  require(
+      sf::game::legacyFirstPersonAimInputAllowed(0U, false, false, false) &&
+          !sf::game::legacyFirstPersonAimInputAllowed(1U, false, false,
+                                                      false) &&
+          !sf::game::legacyFirstPersonAimInputAllowed(0U, true, false, false) &&
+          !sf::game::legacyFirstPersonAimInputAllowed(0U, false, true, false) &&
+          !sf::game::legacyFirstPersonAimInputAllowed(0U, false, false, true),
+      "First-person admission ignored roll, action, radio, or re-arm lock");
+  require(!sf::game::legacyFirstPersonLocomotionInputAllowed(true) &&
+              sf::game::legacyFirstPersonLocomotionInputAllowed(false),
+          "First-person hold did not isolate the collision root");
 
   const auto first = sf::game::legacyDynamicPoolIndex(355U, 350U, 350U);
   const auto last = sf::game::legacyDynamicPoolIndex(355U, 350U, 354U);
@@ -1444,15 +1464,14 @@ void testPlayerController() {
   const auto left = first_person_step(0.0, -1.0);
   const auto backward = first_person_step(-1.0, 0.0);
   const auto right = first_person_step(0.0, 1.0);
-  require(std::abs(forward.x - spawn.x) < 0.0001 &&
-              std::abs(forward.z - (spawn.z + 10.0)) < 0.0001 &&
-              std::abs(left.x - (spawn.x - 10.0)) < 0.0001 &&
-              std::abs(left.z - spawn.z) < 0.0001 &&
-              std::abs(backward.x - spawn.x) < 0.0001 &&
-              std::abs(backward.z - (spawn.z - 10.0)) < 0.0001 &&
-              std::abs(right.x - (spawn.x + 10.0)) < 0.0001 &&
-              std::abs(right.z - spawn.z) < 0.0001,
-          "First-person W/A/S/D directions or their common speed diverged");
+  const auto root_is_fixed = [&spawn](const sf::game::PlayerState &state) {
+    return std::abs(state.x - spawn.x) < 0.0001 &&
+           std::abs(state.y - spawn.y) < 0.0001 &&
+           std::abs(state.z - spawn.z) < 0.0001 && state.grounded;
+  };
+  require(root_is_fixed(forward) && root_is_fixed(left) &&
+              root_is_fixed(backward) && root_is_fixed(right),
+          "First-person W/A/S/D reached low-level collision movement");
 
   controller.reset(spawn);
   controller.update(
@@ -1462,11 +1481,10 @@ void testPlayerController() {
           .look_yaw = 1024.0,
       },
       movement);
-  require(std::abs(controller.state().x - (spawn.x + 10.0)) < 0.0001 &&
-              std::abs(controller.state().z - spawn.z) < 0.0001 &&
-              controller.state().yaw == spawn.yaw,
-          "First-person W did not follow the sight heading independently of "
-          "Gabe's body yaw");
+  require(root_is_fixed(controller.state()) &&
+              controller.state().yaw == spawn.yaw &&
+              controller.aimHeading() == 1024,
+          "First-person look moved Gabe's collision root or body heading");
 
   controller.reset(spawn);
   controller.update(
@@ -1490,11 +1508,56 @@ void testPlayerController() {
           .strafe = -1.0,
       },
       movement);
-  require(std::abs(controller.state().x - (spawn.x - 20.0)) < 0.0001 &&
-              std::abs(controller.state().z - spawn.z) < 0.0001 &&
+  require(root_is_fixed(controller.state()) &&
               controller.animationTick() == accepted_left_tick,
-          "Held A restarted or lost first-person locomotion after a guest "
-          "tick");
+          "Held first-person movement changed the synchronized collision root");
+
+  const auto stable_aim_root = controller.state();
+  const sf::game::PlayerState unresolved_aim_root{
+      stable_aim_root.x + 7.0,
+      stable_aim_root.y + 4096.0,
+      stable_aim_root.z + 9.0,
+      1024,
+      false,
+  };
+  controller.synchronizeFirstPersonRoot(unresolved_aim_root);
+  require(std::abs(controller.state().x - unresolved_aim_root.x) < 0.0001 &&
+              std::abs(controller.state().z - unresolved_aim_root.z) < 0.0001 &&
+              std::abs(controller.state().y - stable_aim_root.y) < 0.0001 &&
+              controller.state().grounded && controller.state().yaw == 1024,
+          "Unresolved first-person pose replaced the grounded world height");
+  const sf::game::PlayerState resolved_aim_root{
+      unresolved_aim_root.x,
+      stable_aim_root.y + 12.0,
+      unresolved_aim_root.z,
+      1024,
+      true,
+  };
+  controller.synchronizeFirstPersonRoot(resolved_aim_root);
+  require(std::abs(controller.state().y - resolved_aim_root.y) < 0.0001 &&
+              controller.state().grounded,
+          "Resolved first-person floor contact did not update world height");
+  const auto accepted_ground_height = controller.state().y;
+  auto invalid_grounded_aim_root = resolved_aim_root;
+  invalid_grounded_aim_root.y +=
+      sf::game::PlayerController::maximum_first_person_root_height_step + 1.0;
+  controller.synchronizeFirstPersonRoot(invalid_grounded_aim_root);
+  require(std::abs(controller.state().y - accepted_ground_height) < 0.0001 &&
+              controller.state().grounded,
+          "Out-of-range first-person pose bypassed the grounded height guard");
+  controller.setWeaponStance(sf::game::PlayerWeaponStance::sidearm);
+  controller.update(
+      sf::game::PlayerInput{
+          .aim = true,
+          .roll = true,
+      },
+      movement);
+  require(controller.action() == sf::game::PlayerActionState::rolling &&
+              controller.aim() == sf::game::PlayerAimState::chase &&
+              std::abs(controller.state().y - accepted_ground_height) <
+                  0.0001 &&
+              controller.state().grounded,
+          "Sidearm/grenade roll transition corrupted the grounded root");
 
   controller.reset(spawn);
   movement.allow = false;
@@ -1508,8 +1571,8 @@ void testPlayerController() {
   require(controller.state().x == spawn.x && controller.state().z == spawn.z &&
               controller.locomotion() ==
                   sf::game::PlayerLocomotionState::idle &&
-              movement.attempts == blocked_attempt + 1U,
-          "Blocked first-person W used a zero-distance collision fallback");
+              movement.attempts == blocked_attempt,
+          "Blocked first-person W reached the collision resolver");
   movement.allow = true;
 
   controller.reset(spawn);
@@ -1522,10 +1585,10 @@ void testPlayerController() {
           .strafe = 1.0,
       },
       movement);
-  require(controller.state().x > spawn.x &&
-              std::abs(controller.state().z - spawn.z) < 0.0001 &&
-              movement.attempts == slide_attempt + 2U,
-          "Blocked first-person diagonal did not slide along its free axis");
+  require(root_is_fixed(controller.state()) &&
+              movement.attempts == slide_attempt,
+          "Blocked first-person diagonal reached collision sliding");
+  movement.failures_before_accept = 0U;
 
   controller.reset(spawn);
   const auto attempts_before_aim = movement.attempts;
@@ -1537,15 +1600,12 @@ void testPlayerController() {
           .strafe = 1.0,
       },
       movement);
-  require(controller.locomotion() == sf::game::PlayerLocomotionState::walking &&
+  require(controller.locomotion() == sf::game::PlayerLocomotionState::idle &&
               controller.aim() == sf::game::PlayerAimState::first_person &&
-              controller.state().y == spawn.y &&
-              controller.state().x > spawn.x &&
-              controller.state().z > spawn.z && controller.state().grounded &&
+              root_is_fixed(controller.state()) &&
               controller.state().yaw == spawn.yaw &&
-              movement.attempts == attempts_before_aim + 1U,
-          "First-person movement did not use collision-resolved WASD while "
-          "keeping body yaw independent");
+              movement.attempts == attempts_before_aim,
+          "First-person WASD moved the root or body heading");
 
   controller.reset(spawn);
   controller.update(sf::game::PlayerInput{.turn = 1.0}, movement);
@@ -1575,8 +1635,7 @@ void testPlayerController() {
       movement);
   require(controller.state().yaw == spawn.yaw &&
               controller.locomotion() ==
-                  sf::game::PlayerLocomotionState::walking &&
-              controller.actorMotion() == sf::game::ActorMotion::walk &&
+                  sf::game::PlayerLocomotionState::idle &&
               controller.aim() == sf::game::PlayerAimState::first_person &&
               controller.weaponSwitch() ==
                   sf::game::PlayerWeaponSwitchState::next &&
@@ -1584,7 +1643,7 @@ void testPlayerController() {
                   sf::game::PlayerActionState::weapon_switching &&
               controller.cameraIntent().mode ==
                   sf::game::PlayerCameraMode::first_person_aim,
-          "First-person movement or weapon-switch state was not retained");
+          "First-person root lock or weapon-switch state was not retained");
 
   controller.update(
       sf::game::PlayerInput{
@@ -1616,18 +1675,14 @@ void testPlayerController() {
       },
       movement);
   const auto aimed_strafe_root = controller.state();
-  require(controller.locomotion() == sf::game::PlayerLocomotionState::walking &&
-              controller.actorMotion() == sf::game::ActorMotion::walk &&
+  require(controller.locomotion() == sf::game::PlayerLocomotionState::idle &&
               controller.aimHeading() == 1024 &&
               controller.state().yaw == spawn.yaw &&
-              controller.state().y == spawn.y &&
-              std::abs(controller.state().x - spawn.x) < 0.0001 &&
-              std::abs(controller.state().z - (spawn.z - 10.0)) < 0.0001 &&
-              controller.state().grounded &&
+              root_is_fixed(controller.state()) &&
               controller.action() == sf::game::PlayerActionState::firing &&
               controller.cameraIntent().pitch == 1000.0 &&
               controller.camera().x > controller.state().x,
-          "Mouse aim lost independent yaw/pitch/fire or first-person movement");
+          "Mouse aim lost yaw/pitch/fire or moved the first-person root");
 
   controller.update(
       sf::game::PlayerInput{

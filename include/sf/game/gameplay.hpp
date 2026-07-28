@@ -218,6 +218,36 @@ legacyGuestIdentity(const LegacyObjectBridgeState &guest) noexcept;
          !camera_scripted && !camera_locked;
 }
 
+// Circle is a zoom-out command only while a retail optic owns first-person
+// input. Forwarding the same button to an unscoped weapon enters incompatible
+// action paths (most visibly grenade aim + roll) while L1 still owns the
+// camera and can corrupt the player motion root.
+[[nodiscard]] constexpr bool
+legacyFirstPersonCircleAllowed(WeaponId weapon) noexcept {
+  return weapon == WeaponId::nightvision_rifle ||
+         weapon == WeaponId::sniper_rifle;
+}
+
+// Host first-person admission is one contract shared by the native camera and
+// the retail PAD bridge. A roll/recovery owns Gabe's collision root, while XA
+// playback in gameplay is the retail radio-dialogue channel. Neither state may
+// be interrupted by L1, and a held L1 must be released before it can re-arm.
+[[nodiscard]] constexpr bool legacyFirstPersonAimInputAllowed(
+    unsigned int roll_block_updates, bool action_locked,
+    bool radio_conversation_active, bool release_rearm_required) noexcept {
+  return roll_block_updates == 0U && !action_locked &&
+         !radio_conversation_active && !release_rearm_required;
+}
+
+// Retail L1 aim changes the owner and representation of Gabe's collision root.
+// Host locomotion must stay neutral from the request edge through the complete
+// first-person hold; otherwise simultaneous WASD can advance the native root
+// while retail is publishing a pose-space transition sample.
+[[nodiscard]] constexpr bool
+legacyFirstPersonLocomotionInputAllowed(bool aim_requested) noexcept {
+  return !aim_requested;
+}
+
 [[nodiscard]] constexpr bool
 legacyRetailNpcIsAlly(std::uint8_t ai_archetype) noexcept {
   return (ai_archetype & 1U) == 0U;
@@ -890,6 +920,9 @@ private:
   [[nodiscard]] bool legacyMissionAuthoritative() const noexcept;
   void stageNativeFirstPersonAim(const GameplayInput &input);
   void stageLegacyHostState(const GameplayInput &input);
+  [[nodiscard]] GameplayInput
+  admittedFirstPersonAimInput(const GameplayInput &input) noexcept;
+  [[nodiscard]] bool legacyRadioConversationActive() const noexcept;
   void syncLegacyGameplayBridge();
   void syncLegacyUiProjection(const LegacyGameplayBridgeState &bridge,
                               const LegacyUiCommandFrame &ui);
@@ -1039,6 +1072,8 @@ private:
   bool guest_quick_weapon_pending_{};
   bool host_manual_aim_{};
   bool retail_host_aim_active_{};
+  unsigned int first_person_aim_roll_block_updates_{};
+  bool first_person_aim_release_rearm_required_{};
   double host_manual_aim_strafe_{};
   std::optional<std::int32_t> host_manual_aim_body_heading_;
   std::optional<std::int32_t> pending_host_aim_heading_restore_;

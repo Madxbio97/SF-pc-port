@@ -143,12 +143,12 @@ python tools/generate_sf_cyrillic_fonts.py `
   --source assets/locales/ru-vit/fonts `
   --output assets/locales/ru-vit/fonts `
   --font tools/fonts/industry/Industry-Bold_RUS.ttf `
-  --font-size 15 `
+  --font-size 14 `
   --font-weight 700 `
   --atlas-scale 2 `
   --metrics docs/images/sf-cyrillic-font-metrics.json `
-  --preview docs/images/sf-cyrillic-font-atlas-preview-v6.png `
-  --contact docs/images/sf-cyrillic-font-contact-v6.png
+  --preview docs/images/sf-cyrillic-font-atlas-preview-v7.png `
+  --contact docs/images/sf-cyrillic-font-contact-v7.png
 ```
 
 The resulting nearest-neighbour atlas preview, contact sheet and advance table
@@ -164,7 +164,7 @@ Build `syphon_filter` first, then run:
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File tools/package_windows_release.ps1 `
-  -Version 0.1.0-public-test.11 `
+  -Version 0.1.0-public-test.12 `
   -Configuration Release
 ```
 

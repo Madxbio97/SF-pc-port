@@ -241,7 +241,12 @@ def _render_glyph(
     # Д/Ц/Щ would be pulled up to make room for their descenders.  That was
     # the source of the visibly wavy Russian text.  The retail cell is allowed
     # to clip only the excess accent/descender pixels at its outer edges.
-    baseline = height - 1
+    # The HD atlas has one extra physical row available below the baseline.
+    # Keep it as a safety row instead of letting the Industry descenders for
+    # Д/Ц/Щ land outside their 8-pixel logical cell.  The 1x compatibility
+    # path stays pixel-identical because it cannot afford that half-pixel
+    # adjustment.
+    baseline = height - 1 - (1 if height >= 16 else 0)
     draw.text((-left, baseline), character, font=font, fill=255, anchor="ls")
 
     if character in ("Ш", "Щ", "ш", "щ"):
@@ -284,6 +289,35 @@ def _render_glyph(
                             (column, fill_row), canvas.getpixel((column, row))
                         )
                 break
+
+    # The PC renderer samples the 2x sheet bilinearly while the retail layout
+    # still addresses adjacent 8x8 logical cells.  A covered physical border
+    # row therefore leaks into the glyph above/below.  Preserve tall accents
+    # by moving only top-touching outlines into the spare row, then clip the
+    # excess descender antialiasing exactly at the retail cell boundary.  This
+    # keeps a one-physical-pixel gutter without shrinking or blurring the face.
+    if height >= 16:
+        top_covered = any(
+            canvas.getpixel((column, 0)) for column in range(canvas.width)
+        )
+        bottom_covered = any(
+            canvas.getpixel((column, height - 1)) for column in range(canvas.width)
+        )
+        if top_covered and not bottom_covered:
+            # Fold only the antialiased cap into the next row. Moving the
+            # complete glyph would also move its baseline and make Й/Ё jump
+            # relative to the surrounding capitals.
+            for column in range(canvas.width):
+                canvas.putpixel(
+                    (column, 1),
+                    max(
+                        canvas.getpixel((column, 0)),
+                        canvas.getpixel((column, 1)),
+                    ),
+                )
+        draw = ImageDraw.Draw(canvas)
+        draw.line((0, 0, canvas.width - 1, 0), fill=0)
+        draw.line((0, height - 1, canvas.width - 1, height - 1), fill=0)
 
     bounds = canvas.getbbox()
     if bounds is None:
@@ -464,6 +498,23 @@ def write_regenerated_fonts(
         for column in range(8 * atlas_scale)
     ):
         raise ValueError("Cyrillic Й lost its breve at the atlas boundary")
+
+    if atlas_scale == 2:
+        for code in FONT_CHARACTERS:
+            x, y, _ = cells[code]
+            for row in (0, 8 * atlas_scale - 1):
+                if any(
+                    _read_sheet_pixel(
+                        sheets,
+                        x * atlas_scale + column,
+                        y * atlas_scale + row,
+                    )
+                    != TRANSPARENT_INDEX
+                    for column in range(8 * atlas_scale)
+                ):
+                    raise ValueError(
+                        f"font cell 0x{code:02X} lost its bilinear border gutter"
+                    )
 
     reference_bounds = cell_bounds(ord("a"))  # ViT byte 0x61 is Cyrillic А.
     if reference_bounds is None:

@@ -82,6 +82,15 @@ PlayerController::rollingRootMotion() const noexcept {
   return rolling_root_motion_;
 }
 
+unsigned int PlayerController::rollDurationUpdates() const noexcept {
+  const auto &root_motion = rollingRootMotion();
+  return root_motion.empty()
+             ? minimum_roll_updates
+             : std::max(minimum_roll_updates,
+                        static_cast<unsigned int>(root_motion.size()) *
+                            updates_per_animation_frame);
+}
+
 void PlayerController::reset(const PlayerState &spawn) noexcept {
   state_ = spawn;
   locomotion_ = PlayerLocomotionState::idle;
@@ -120,7 +129,27 @@ void PlayerController::synchronizeScriptedPose(
 
 void PlayerController::synchronizeFirstPersonRoot(
     const PlayerState &pose) noexcept {
-  state_ = pose;
+  // Retail can publish first-person transition samples before its motion
+  // controller has resolved a floor contact. Their motion Y belongs to the
+  // temporary aim pose, not to Gabe's world root. Accept planar collision and
+  // heading immediately, but retain the last grounded height until the bridge
+  // supplies an authoritative contact-space Y.
+  const auto stable_y = state_.y;
+  const auto stable_grounded = state_.grounded;
+  state_.x = pose.x;
+  state_.z = pose.z;
+  state_.yaw = pose.yaw;
+  const auto valid_grounded_height =
+      pose.grounded &&
+      (!stable_grounded ||
+       std::abs(pose.y - stable_y) <= maximum_first_person_root_height_step);
+  if (valid_grounded_height) {
+    state_.y = pose.y;
+    state_.grounded = true;
+  } else {
+    state_.y = stable_y;
+    state_.grounded = stable_grounded;
+  }
   state_.yaw = normalizeHeading(state_.yaw);
   updateCamera();
 }
@@ -169,7 +198,6 @@ void PlayerController::updateAction(const PlayerInput &input) noexcept {
     return;
   }
   if (input.roll) {
-    const auto &roll_root_motion = rollingRootMotion();
     const auto horizontal = std::abs(input.strafe) > std::abs(input.move);
     if (horizontal) {
       roll_direction_ = input.strafe < 0.0 ? PlayerRollDirection::left
@@ -179,13 +207,7 @@ void PlayerController::updateAction(const PlayerInput &input) noexcept {
       // along the native clip's local forward axis when not strafing.
       roll_direction_ = PlayerRollDirection::forward;
     }
-    const auto roll_updates =
-        roll_root_motion.empty()
-            ? minimum_roll_updates
-            : std::max(minimum_roll_updates,
-                       static_cast<unsigned int>(roll_root_motion.size()) *
-                           updates_per_animation_frame);
-    beginAction(PlayerActionState::rolling, roll_updates);
+    beginAction(PlayerActionState::rolling, rollDurationUpdates());
   } else if (input.quick_turn) {
     state_.yaw = normalizeHeading(static_cast<std::int64_t>(state_.yaw) + 2048);
     beginAction(PlayerActionState::quick_turning,
@@ -250,8 +272,8 @@ void PlayerController::update(const PlayerInput &input,
     aim_heading_ = state_.yaw;
   }
   // First-person aim receives one already-composed look stream (lossless
-  // relative mouse plus right-stick rate). Body yaw remains independent, but
-  // locomotion is allowed and follows the sight heading.
+  // relative mouse plus right-stick rate). Body yaw and collision root remain
+  // fixed until aim is released.
   const auto turn = manual_aim ? 0.0 : std::clamp(input.turn, -1.0, 1.0);
   const auto look_turn = std::clamp(
       input.look_yaw / static_cast<double>(turn_units_per_update), -1.0, 1.0);
@@ -271,7 +293,10 @@ void PlayerController::update(const PlayerInput &input,
         static_cast<std::int64_t>(std::lround(input.look_yaw)));
   }
 
-  const auto movement_allowed = !movement_locked;
+  // This is the low-level movement gate.  Keep it independent of the platform
+  // bindings and guest PAD bridge so no simultaneous aim+WASD edge can reach
+  // collision resolution, even if a caller forgets to sanitize its input.
+  const auto movement_allowed = !movement_locked && !manual_aim;
   const auto move = movement_allowed ? std::clamp(input.move, -1.0, 1.0) : 0.0;
   const auto strafe =
       movement_allowed ? std::clamp(input.strafe, -1.0, 1.0) : 0.0;
@@ -283,11 +308,6 @@ void PlayerController::update(const PlayerInput &input,
   if (has_forward_motion || has_strafe_motion) {
     if (stance_ == PlayerStanceState::kneeling) {
       requested_locomotion = PlayerLocomotionState::crouch_walking;
-    } else if (manual_aim) {
-      // First-person WASD is one camera-relative planar walk. A single
-      // locomotion state and root-motion scalar keep W/A/S/D and diagonals at
-      // the same cadence instead of switching between WK0 and STEPL/STEPR.
-      requested_locomotion = PlayerLocomotionState::walking;
     } else if (has_strafe_motion && !has_forward_motion) {
       requested_locomotion = PlayerLocomotionState::strafing;
     } else if (input.run && move > 0.0 && !input.aim) {
