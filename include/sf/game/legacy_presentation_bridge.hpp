@@ -2,6 +2,7 @@
 
 #include "sf/game/legacy_bridge_types.hpp"
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -116,6 +117,33 @@ struct LegacyMuzzleFlashPresentationState {
   std::uint16_t controller{};
   std::uint16_t particle{};
   std::uint64_t sequence{};
+};
+
+// The retail pickup allocator publishes owner, descriptor and MATRIX through
+// separate stores. At a room transition the host can sample the single 20 Hz
+// tick between those stores and briefly lose an otherwise live pickup. Keep
+// only the last validated value for that one missing guest tick. A collected
+// or genuinely despawned item is therefore gone on the following tick rather
+// than becoming a host-owned persistent object.
+class LegacyDroppedItemPresentationCache final {
+public:
+  static constexpr std::size_t capacity = 30U;
+
+  void reconcile(std::uint64_t guest_frame,
+                 std::vector<LegacyDroppedItemBridgeState> &items);
+  void reset() noexcept;
+
+private:
+  struct Entry {
+    LegacyDroppedItemBridgeState item;
+    std::uint64_t last_valid_guest_frame{};
+    bool valid{};
+  };
+
+  std::array<Entry, capacity> entries_{};
+  std::vector<LegacyDroppedItemBridgeState> stable_items_;
+  std::uint64_t observed_guest_frame_{};
+  bool observed_{};
 };
 
 // The guest can advance several retail ticks before one host presentation.

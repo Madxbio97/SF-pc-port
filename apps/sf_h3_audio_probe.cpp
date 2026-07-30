@@ -84,9 +84,23 @@ bool verifyRetailMenuCues(sf::game::GameDisc &disc) {
   if (hashes != expected_hashes) {
     return false;
   }
+  constexpr auto retail_voice_preview_sound_id = std::size_t{4U};
+  constexpr auto retail_voice_preview_hash = 0xfb5ed4ce95c5c5a7ULL;
+  const auto voice_preview =
+      sf::psx::decodeVabSound(header, body, retail_voice_preview_sound_id);
+  if (!voice_preview.succeeded() || voice_preview.frames.empty() ||
+      voice_preview.vab_id != 5U || voice_preview.program != 7U ||
+      voice_preview.sample != 4U ||
+      pcmHash(voice_preview.frames) != retail_voice_preview_hash ||
+      std::ranges::none_of(voice_preview.frames, [](const auto &frame) {
+        return frame.left != 0 || frame.right != 0;
+      })) {
+    return false;
+  }
   std::cout << "H3 retail menu cues: navigate=0x" << std::hex << hashes[0]
             << ", confirm=0x" << hashes[1] << ", cancel=0x" << hashes[2]
-            << std::dec << '\n';
+            << ", voice-preview=0x" << retail_voice_preview_hash << std::dec
+            << '\n';
   return true;
 }
 

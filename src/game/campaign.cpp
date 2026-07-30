@@ -15,7 +15,8 @@ CampaignProgress::CampaignProgress(
       pending_eol_mission_(pending_eol_mission) {}
 
 CampaignSaveResult
-CampaignSaveMenu::update(const CampaignSaveInput &input) noexcept {
+CampaignSaveMenu::update(const CampaignSaveInput &input,
+                         const TitleSaveSlots &slots) noexcept {
   if (phase_ == CampaignSavePhase::complete) {
     return {};
   }
@@ -33,16 +34,36 @@ CampaignSaveMenu::update(const CampaignSaveInput &input) noexcept {
     return {};
   }
 
-  if (input.cancel) {
-    phase_ = CampaignSavePhase::prompt;
+  if (phase_ == CampaignSavePhase::slots) {
+    if (input.cancel) {
+      phase_ = CampaignSavePhase::prompt;
+      return {};
+    }
+    if (input.next) {
+      slot_selection_ = (slot_selection_ + 1U) % title_save_slot_count;
+    }
+    if (input.previous) {
+      slot_selection_ = slot_selection_ == 0U ? title_save_slot_count - 1U
+                                              : slot_selection_ - 1U;
+    }
+    if (input.confirm) {
+      if (slots[slot_selection_].occupied) {
+        overwrite_selected_ = true;
+        phase_ = CampaignSavePhase::overwrite;
+        return {};
+      }
+      phase_ = CampaignSavePhase::complete;
+      return {CampaignSaveDecision::save, slot_selection_};
+    }
     return {};
   }
-  if (input.next) {
-    slot_selection_ = (slot_selection_ + 1U) % title_save_slot_count;
+
+  if (input.previous || input.next) {
+    overwrite_selected_ = !overwrite_selected_;
   }
-  if (input.previous) {
-    slot_selection_ = slot_selection_ == 0U ? title_save_slot_count - 1U
-                                            : slot_selection_ - 1U;
+  if (input.cancel || (input.confirm && !overwrite_selected_)) {
+    phase_ = CampaignSavePhase::slots;
+    return {};
   }
   if (input.confirm) {
     phase_ = CampaignSavePhase::complete;
@@ -127,7 +148,6 @@ bool CampaignProgress::stageMissionCompletionInSlot(
     TitleSaveSlots &slots, std::size_t save_slot,
     std::optional<CampaignCarryState> carry) noexcept {
   if (!active_ || pending_eol_mission_ || save_slot >= slots.size() ||
-      mission_index_ != maximum_unlocked_mission_ ||
       mission_index_ >= missionCatalog().size()) {
     return false;
   }

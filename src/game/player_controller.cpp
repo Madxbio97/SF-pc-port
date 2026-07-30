@@ -267,7 +267,10 @@ void PlayerController::update(const PlayerInput &input,
 
   const auto rolling = action_ == PlayerActionState::rolling;
   const auto movement_locked = actionLocked();
-  const auto manual_aim = input.aim && !movement_locked;
+  const auto stance_transition =
+      action_ == PlayerActionState::kneeling_down ||
+      action_ == PlayerActionState::standing_up;
+  const auto manual_aim = input.aim && !actionLocksManualAim();
   if (manual_aim && !was_manual_aim) {
     aim_heading_ = state_.yaw;
   }
@@ -286,11 +289,19 @@ void PlayerController::update(const PlayerInput &input,
     state_.yaw =
         normalizeHeading(static_cast<std::int64_t>(state_.yaw) + turn_delta);
   }
-  if (!movement_locked && std::abs(input.look_yaw) > input_dead_zone) {
+  if ((!movement_locked || stance_transition) &&
+      std::abs(input.look_yaw) > input_dead_zone) {
     auto &heading = manual_aim ? aim_heading_ : state_.yaw;
     heading = normalizeHeading(
         static_cast<std::int64_t>(heading) +
         static_cast<std::int64_t>(std::lround(input.look_yaw)));
+  }
+
+  // Leaving manual aim commits the final sight heading to Gabe's body.  The
+  // old path discarded aim_heading_ here, so chase view resumed from the yaw
+  // captured before aiming and made Gabe visibly snap to the wrong direction.
+  if (was_manual_aim && !manual_aim) {
+    state_.yaw = aim_heading_;
   }
 
   // This is the low-level movement gate.  Keep it independent of the platform

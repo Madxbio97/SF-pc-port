@@ -128,18 +128,31 @@ public:
   explicit PsyCrossUiAudio(const std::filesystem::path &cue_path);
 
   void play(PsyCrossUiCue cue);
+  void playVoicePreview();
   void setVolumePercent(std::uint8_t percent) {
     output_.setGainPercent(percent);
   }
-  void update() { output_.update(); }
-  void reset() noexcept { output_.reset("ui-reset"); }
+  void setVoiceVolumePercent(std::uint8_t percent) {
+    voice_preview_output_.setGainPercent(percent);
+  }
+  void update() {
+    output_.update();
+    voice_preview_output_.update();
+  }
+  void reset() noexcept {
+    output_.reset("ui-reset");
+    voice_preview_output_.reset("voice-preview-reset");
+  }
 
 private:
   [[nodiscard]] std::span<const psx::SpuPcmFrame>
   cueFrames(PsyCrossUiCue cue) const noexcept;
 
   PsyCrossAudioOutput output_{1U, "ui", PsyCrossAudioStreamKind::one_shot};
+  PsyCrossAudioOutput voice_preview_output_{1U, "voice-preview",
+                                            PsyCrossAudioStreamKind::one_shot};
   std::array<std::vector<psx::SpuPcmFrame>, 3U> cues_;
+  std::vector<psx::SpuPcmFrame> voice_preview_;
 };
 
 } // namespace sf::platform::detail

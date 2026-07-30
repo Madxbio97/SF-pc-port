@@ -167,8 +167,9 @@ legacyGuestHmdPoseComplete(std::size_t available_bones,
 // a complete pose, retain that exact pose until the lifetime is explicitly
 // hidden or retired instead of interpreting a presentation transient as a
 // despawn.
-[[nodiscard]] constexpr bool legacyGuestActorPoseAvailable(
-    bool current_pose_complete, bool retained_pose_complete) noexcept {
+[[nodiscard]] constexpr bool
+legacyGuestActorPoseAvailable(bool current_pose_complete,
+                              bool retained_pose_complete) noexcept {
   return current_pose_complete || retained_pose_complete;
 }
 
@@ -191,6 +192,34 @@ legacyGuestHmdPoseComplete(std::size_t available_bones,
            (source_in_active_dat || live_position_in_active_dat)));
 }
 
+// Georgia Street authors its three objective bombs as persistent mission
+// objects. Two of them straddle lower-subway DAT boundaries: their objective
+// callouts remain active while neither their source room nor their origin is
+// in the host's native active-room envelope. Keep exactly those retail source
+// identities alive; widening this to arbitrary resident props retains whole
+// room texture sets and can exhaust the native VRAM alias pool.
+[[nodiscard]] constexpr bool legacyGeorgiaStreetObjectiveBomb(
+    std::uint32_t mission_index, std::uint16_t source_index,
+    std::int16_t class_id) noexcept {
+  if (mission_index != 0U) {
+    return false;
+  }
+  return ((source_index == 28U || source_index == 29U) &&
+          class_id == 0x2e) ||
+         (source_index == 30U && class_id == 0x58);
+}
+
+[[nodiscard]] constexpr bool legacyGuestStaticPropStreamVisible(
+    bool source_in_active_dat, bool live_position_in_active_dat,
+    std::uint32_t mission_index, std::uint16_t source_index,
+    std::int16_t class_id, bool player_resident) noexcept {
+  if (source_in_active_dat || live_position_in_active_dat) {
+    return true;
+  }
+  return player_resident && legacyGeorgiaStreetObjectiveBomb(
+                                mission_index, source_index, class_id);
+}
+
 // Stable identity of one retail object lifetime. Dynamic guest slots are
 // recycled; instance is therefore part of the identity even when definition,
 // path and authored coordinates are reused by the next lifetime.
@@ -210,12 +239,45 @@ legacyGuestIdentity(const LegacyObjectBridgeState &guest) noexcept;
 // Retail camera mode 1 is shared by manual aim and ledge/hang presentation.
 // Native first-person visibility therefore belongs to the actual host-held
 // aim action, never to that ambiguous guest camera number alone.
+[[nodiscard]] constexpr bool
+legacyManualAimControlAvailable(bool control_locked, bool target_lock_active,
+                                bool camera_scripted,
+                                bool camera_locked) noexcept {
+  // R1 target tracking can leave the guest control lock asserted for the
+  // transition frame in which host L1 takes ownership. Manual aim explicitly
+  // suppresses R1, so that stale lock must not cancel the new L1 state.
+  return !camera_scripted && !camera_locked &&
+         (!control_locked || target_lock_active);
+}
+
 [[nodiscard]] constexpr bool legacyManualAimPresentationActive(
     bool host_held, bool native_first_person, std::int32_t retail_camera_mode,
-    bool control_locked, bool camera_scripted, bool camera_locked) noexcept {
+    bool control_locked, bool target_lock_active, bool camera_scripted,
+    bool camera_locked) noexcept {
   static_cast<void>(retail_camera_mode);
-  return host_held && native_first_person && !control_locked &&
-         !camera_scripted && !camera_locked;
+  return host_held && native_first_person &&
+         legacyManualAimControlAvailable(control_locked, target_lock_active,
+                                         camera_scripted, camera_locked);
+}
+
+[[nodiscard]] constexpr bool legacyChaseControlLockPresentationActive(
+    bool control_locked, bool target_lock_active,
+    std::uint8_t first_person_aim_mode) noexcept {
+  return control_locked && !target_lock_active && first_person_aim_mode == 0U;
+}
+
+[[nodiscard]] constexpr bool legacyRadioConversationPresentationActive(
+    bool xa_stream_active, bool xa_samples_queued) noexcept {
+  return xa_stream_active || xa_samples_queued;
+}
+
+[[nodiscard]] constexpr bool legacyFirstPersonAimReleaseRearmRequired(
+    bool previous, bool aim_held, bool roll_transition_locked,
+    bool radio_conversation_active) noexcept {
+  if (!aim_held) {
+    return false;
+  }
+  return previous || roll_transition_locked || radio_conversation_active;
 }
 
 // Circle is a zoom-out command only while a retail optic owns first-person
@@ -323,7 +385,31 @@ enum class ObjectVisualEffect : std::uint8_t {
   none,
   police_lightbar,
   billboard_glow,
+  scanner_xray,
 };
+
+inline constexpr std::uint32_t legacy_virus_scanner_target_class = 0x59U;
+inline constexpr std::uint32_t legacy_virus_scanner_marker_class = 0x6fU;
+
+// Warehouses and Elite Guards pair each class-0x59 corpse with a class-0x6f
+// GRGLO/GDF scanner reveal. Class 0x6f is reused elsewhere, so retain the full
+// mission, class and resource test before bypassing ordinary world depth.
+[[nodiscard]] constexpr bool
+legacyVirusScannerMarker(std::uint32_t mission_index, std::uint32_t class_id,
+                         std::string_view primary_model,
+                         std::string_view secondary_model) noexcept {
+  return (mission_index == 14U || mission_index == 15U) &&
+         class_id == legacy_virus_scanner_marker_class &&
+         primary_model == "GRGLO.GMD" && secondary_model == "GDF.GMD";
+}
+
+// Emissive object effects author their own intensity. Passing them through the
+// scene-lighting stack makes lamp halos and lightbars dim with the room or
+// acquire the colour of a nearby source even though they are the emitters.
+[[nodiscard]] constexpr bool
+objectVisualEffectReceivesSceneLighting(ObjectVisualEffect effect) noexcept {
+  return effect == ObjectVisualEffect::none;
+}
 
 struct ObjectModel {
   std::string name;
@@ -571,10 +657,25 @@ resolveTextureBankOwnership(std::uint8_t current_bank,
 // its separately submitted weapon remains visible.
 inline constexpr std::uint8_t resident_hmd_texture_bank = 0U;
 inline constexpr std::uint8_t resident_weapon_texture_bank = 0U;
+inline constexpr std::uint8_t resident_spfx_object_texture_bank = 0U;
 
-[[nodiscard]] constexpr std::uint8_t resolveDisplayedObjectTextureBank(
-    std::uint8_t object_bank, bool hmd_backed) noexcept {
-  return hmd_backed ? resident_hmd_texture_bank : object_bank;
+[[nodiscard]] constexpr bool
+legacyResidentSpfxObjectTexture(std::string_view model_name) noexcept {
+  // These DLF meshes sample BOMB/BOMB2/BOMLIT/BOMSYM from COMMON/SPFX.
+  // Their identically addressed pages in a streamed second bank are empty.
+  return model_name == "BOMB.GMD" || model_name == "BOMBD.GMD" ||
+         model_name == "BOMBSUB.GMD";
+}
+
+[[nodiscard]] constexpr std::uint8_t
+resolveDisplayedObjectTextureBank(std::uint8_t object_bank,
+                                  bool hmd_backed,
+                                  bool resident_gmd_backed = false) noexcept {
+  if (hmd_backed) {
+    return resident_hmd_texture_bank;
+  }
+  return resident_gmd_backed ? resident_spfx_object_texture_bank
+                             : object_bank;
 }
 
 // A native checkpoint is only the presentation half of one guest snapshot.
@@ -648,6 +749,7 @@ public:
   [[nodiscard]] std::uint16_t currentRoom() const noexcept {
     return current_room_;
   }
+  [[nodiscard]] std::uint32_t missionIndex() const noexcept;
   [[nodiscard]] std::span<const std::uint16_t> activeModels() const noexcept {
     return active_models_;
   }
@@ -758,6 +860,10 @@ public:
   legacyGuestSlotsBySceneObject() const noexcept {
     return legacy_guest_slot_by_scene_object_;
   }
+  [[nodiscard]] std::optional<std::uint16_t>
+  legacyVirusScannerTargetObject() const noexcept;
+  [[nodiscard]] std::optional<std::uint16_t>
+  legacyVirusScannerMarkerObject(std::uint16_t target_object) const noexcept;
   [[nodiscard]] std::optional<std::uint16_t> taserTarget() const noexcept {
     return taser_tether_updates_ != 0U ? taser_target_ : std::nullopt;
   }
@@ -811,6 +917,7 @@ public:
     return requested;
   }
   [[nodiscard]] bool legacyScriptedCameraActive() const noexcept;
+  [[nodiscard]] bool legacyCinematicPresentationActive() const noexcept;
   [[nodiscard]] std::optional<std::int32_t>
   legacyWeaponMenuState() const noexcept;
   [[nodiscard]] bool legacyWeaponMenuDirty() const noexcept;
@@ -822,7 +929,12 @@ public:
   [[nodiscard]] bool cinematic() const noexcept {
     return mission_cinematic_phase_ == MissionCinematicPhase::intro ||
            mission_cinematic_phase_ == MissionCinematicPhase::finale ||
-           legacyScriptedCameraActive();
+           legacyCinematicPresentationActive();
+  }
+  [[nodiscard]] bool letterboxActive() const noexcept {
+    // Keep bars only for the authored mission opening. Radio calls, scripted
+    // gameplay cameras and finale handoffs retain the full viewport.
+    return mission_cinematic_phase_ == MissionCinematicPhase::intro;
   }
   [[nodiscard]] std::uint8_t mapFade() const noexcept;
   [[nodiscard]] std::uint32_t missionObjectiveCount() const noexcept {

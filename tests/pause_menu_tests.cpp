@@ -1,3 +1,4 @@
+#include "sf/game/hud.hpp"
 #include "sf/game/localization.hpp"
 #include "sf/game/mission.hpp"
 #include "sf/game/pause_menu.hpp"
@@ -1109,8 +1110,8 @@ void testCompoundRussianMenuLocalization() {
   require(ammo.find("Ammo") == std::string::npos &&
           ammo.find("15/90") != std::string::npos);
   require(sf::game::localizeTextCopy("Gas Granade") != "Gas Granade");
-  for (const auto label : {"Grenades", "GRANADES", "Gas Grenades",
-                           "GAS GRANADES"}) {
+  for (const auto label :
+       {"Grenades", "GRANADES", "Gas Grenades", "GAS GRANADES"}) {
     const auto translated = sf::game::localizeTextCopy(label);
     require(translated != label && translated.find('?') == std::string::npos);
   }
@@ -1422,6 +1423,41 @@ void testMissionMenuLocalizationDoesNotLeakAcrossLanguages() {
   sf::game::setGameLanguage(sf::game::GameLanguage::english);
 }
 
+void testRetailWeaponArtAssets() {
+  constexpr std::array<std::string_view, sf::game::weapon_slot_count> expected{
+      "",
+      "GLOKSIL.TIM",
+      "GLOKSIL.TIM",
+      "",
+      "COLT45.TIM",
+      "GLOCK18.TIM",
+      "BERELLI.TIM",
+      "ITHICA37.TIM",
+      "AK102.TIM",
+      "M16.TIM",
+      "BIZON2.TIM",
+      "MP5.TIM",
+      "DRAGSVD.TIM",
+      "SUPERG.TIM",
+      "TASER.TIM",
+      "",
+      "GRENLAUN.TIM",
+      "G3.TIM",
+      "VIRLSCAN.TIM",
+      "GRENADE.TIM",
+      "GASGREN.TIM",
+      "FLASHLT.TIM",
+      "",
+      "KCARD.TIM",
+      "C4.TIM",
+      "ANTIGEN.TIM",
+  };
+  for (std::size_t index = 0U; index < expected.size(); ++index) {
+    require(sf::game::pauseWeaponArtAsset(
+                static_cast<sf::game::WeaponId>(index)) == expected[index]);
+  }
+}
+
 void testRetailCheatChordsAndContexts() {
   using sf::game::RetailCheat;
   using sf::game::RetailPauseCheatContext;
@@ -1489,6 +1525,7 @@ int main() {
     testProofreadRussianCampaignTextIsBuiltIn();
     testFormattedMissionLocalization();
     testMissionMenuLocalizationDoesNotLeakAcrossLanguages();
+    testRetailWeaponArtAssets();
     testRetailCheatChordsAndContexts();
   } catch (const std::exception &error) {
     std::fprintf(stderr, "%s\n", error.what());

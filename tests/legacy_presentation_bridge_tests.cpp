@@ -37,6 +37,18 @@ void testRetailDangerAggregation() {
   require(sf::game::legacyRetailDangerPercent(threats, 0) == 68U,
           "Committed retail threat did not apply the alert floor");
 
+  threats[0].danger_q12 = 0U;
+  require(sf::game::legacyRetailDangerPercent(threats, 0) == 0U,
+          "Released retail threat remained latched by its stale AI state");
+
+  threats[0].ai_state = 1U;
+  threats[0].danger_q12 = 0xffffc000U;
+  require(sf::game::legacyRetailDangerPercent(threats, 0) == 0U,
+          "Retail controller flags leaked into the danger value");
+
+  threats[0].ai_state = 9U;
+  threats[0].danger_q12 = 1U;
+
   threats.push_back({.guest_slot = 8,
                      .target_slot = 0,
                      .health = 100,
@@ -51,6 +63,65 @@ void testRetailDangerAggregation() {
   threats[1].resident = false;
   require(sf::game::legacyRetailDangerPercent(threats, 0) == 0U,
           "Non-player or non-resident threats affected the danger bar");
+}
+
+void testDroppedItemPresentationCache() {
+  sf::game::LegacyDroppedItemPresentationCache cache;
+  sf::game::LegacyDroppedItemBridgeState pistol;
+  pistol.slot = 4U;
+  pistol.room = 2U;
+  pistol.item = 1U;
+  pistol.transform.translation = {100, -200, 300};
+  const auto same_item = [](const auto &actual, const auto &expected) {
+    return actual.slot == expected.slot && actual.room == expected.room &&
+           actual.item == expected.item &&
+           actual.transform.translation.x == expected.transform.translation.x &&
+           actual.transform.translation.y == expected.transform.translation.y &&
+           actual.transform.translation.z == expected.transform.translation.z;
+  };
+  std::vector items{pistol};
+
+  cache.reconcile(10U, items);
+  require(items.size() == 1U && same_item(items[0], pistol),
+          "Validated retail pickup was not published");
+
+  items.clear();
+  cache.reconcile(11U, items);
+  require(items.size() == 1U && same_item(items[0], pistol),
+          "One transitional allocator tick lost a live pickup");
+
+  // Re-presenting the same immutable guest frame must not age the cache at
+  // 60/120/240 Hz.
+  items.clear();
+  cache.reconcile(11U, items);
+  require(items.size() == 1U && same_item(items[0], pistol),
+          "Native presentation refresh aged a retail pickup");
+
+  items.clear();
+  cache.reconcile(12U, items);
+  require(items.empty(),
+          "Collected or despawned pickup became host-owned state");
+
+  sf::game::LegacyDroppedItemBridgeState rifle = pistol;
+  rifle.slot = 8U;
+  rifle.item = 13U;
+  items = {rifle};
+  cache.reconcile(20U, items);
+  require(items.size() == 1U && same_item(items[0], rifle),
+          "New pickup did not replace the expired cache contents");
+
+  // Checkpoint/mission time can regress while the same viewer survives.
+  // Old room pickups must never leak into the restarted timeline.
+  items.clear();
+  cache.reconcile(3U, items);
+  require(items.empty(), "Regressed guest time retained a future pickup");
+
+  items = {pistol};
+  cache.reconcile(4U, items);
+  cache.reset();
+  items.clear();
+  cache.reconcile(5U, items);
+  require(items.empty(), "Explicit presentation reset retained a pickup");
 }
 
 void testAtomicDeepCopy() {
@@ -340,8 +411,8 @@ void testAtomicDeepCopy() {
               frame->renderer->state.weapon_events[0].weapon == 1U &&
               frame->renderer->state.weapon_events[0].origin.y == -200 &&
               frame->renderer->state.dropped_items.size() == 1U &&
-              frame->renderer->state.dropped_items[0]
-                      .transform.translation.x == 120 &&
+              frame->renderer->state.dropped_items[0].transform.translation.x ==
+                  120 &&
               frame->renderer->state.dropped_items[0].transform.rotation[4] ==
                   4096 &&
               frame->renderer->state.line_particles[0].first.y == -800 &&
@@ -988,6 +1059,7 @@ void testRetailGuestSpriteSortSelection() {
 int main() {
   try {
     testRetailDangerAggregation();
+    testDroppedItemPresentationCache();
     testAtomicDeepCopy();
     testInvalidAndFaultFrames();
     testWeaponEffectPresentationQueue();

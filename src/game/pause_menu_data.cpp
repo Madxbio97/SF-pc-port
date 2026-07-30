@@ -114,20 +114,27 @@ std::string_view pauseWeaponIcon(WeaponId id) noexcept {
   switch (id) {
   case WeaponId::silenced_9mm:
   case WeaponId::pistol_9mm:
-  case WeaponId::unused_357:
-  case WeaponId::pistol_45:
-  case WeaponId::g_18:
     return "GLOKSIL.TIM";
+  case WeaponId::pistol_45:
+    return "COLT45.TIM";
+  case WeaponId::g_18:
+    return "GLOCK18.TIM";
   case WeaponId::combat_shotgun:
+    return "BERELLI.TIM";
   case WeaponId::shotgun:
     return "ITHICA37.TIM";
   case WeaponId::pk_102:
+    return "AK102.TIM";
   case WeaponId::m_16:
-  case WeaponId::biz_2:
-  case WeaponId::hk_5:
-  case WeaponId::k3g4:
     return "M16.TIM";
+  case WeaponId::biz_2:
+    return "BIZON2.TIM";
+  case WeaponId::hk_5:
+    return "MP5.TIM";
+  case WeaponId::k3g4:
+    return "G3.TIM";
   case WeaponId::nightvision_rifle:
+    return "DRAGSVD.TIM";
   case WeaponId::sniper_rifle:
     return "SUPERG.TIM";
   case WeaponId::taser:
@@ -142,11 +149,14 @@ std::string_view pauseWeaponIcon(WeaponId id) noexcept {
     return "GASGREN.TIM";
   case WeaponId::flashlight:
     return "FLASHLT.TIM";
+  case WeaponId::key_card:
+    return "KCARD.TIM";
+  case WeaponId::c4_explosives:
+    return "C4.TIM";
+  case WeaponId::viral_antigen:
+    return "ANTIGEN.TIM";
   default:
-    // MENU.HOG has ten representative weapon images, not one asset for each
-    // of the 26 retail inventory slots. Retail uses its pistol family image
-    // as the safe catalog fallback for unarmed/mission-only equipment.
-    return "GLOKSIL.TIM";
+    return {};
   }
 }
 
@@ -176,11 +186,14 @@ std::string_view pauseWeaponDescription(WeaponId id) noexcept {
            "gas operated system found in most autoloading shotguns.";
   case WeaponId::shotgun:
     return "The 12-gauge modified choke shotgun is standard issue for the DEA, "
-           "FBI and USSS. In firing tests using tactical 00 shot with nine lead "
-           "on an ISCP regulation target at 25 yards, the payload was delivered "
+           "FBI and USSS. In firing tests using tactical 00 shot with nine "
+           "lead "
+           "on an ISCP regulation target at 25 yards, the payload was "
+           "delivered "
            "into the \"A\" kill zone with limited collateral damage.";
   case WeaponId::pk_102:
-    return "A variant of the popular Vokinhsilak system (one of the most widely "
+    return "A variant of the popular Vokinhsilak system (one of the most "
+           "widely "
            "used and modified designs in the world) the PK102 is a compact, "
            "lightweight, full assault rifle that is easy to conceal, making it "
            "a popular choice for terrorists.";
@@ -197,7 +210,8 @@ std::string_view pauseWeaponDescription(WeaponId id) noexcept {
   case WeaponId::hk_5:
     return "The HK5's modular design and small size makes it very popular with "
            "both military special forces and terrorists. With over 23 "
-           "officially recognized variants, it is fast becoming the most widely "
+           "officially recognized variants, it is fast becoming the most "
+           "widely "
            "used pistol-machine gun in the world.";
   case WeaponId::nightvision_rifle:
     return "A Russian rifle capable of high accuracy, it is often used by "
@@ -210,18 +224,23 @@ std::string_view pauseWeaponDescription(WeaponId id) noexcept {
            "a highly accurate weapon capable of identifying and classifying "
            "human targets and impact points prior to firing.";
   case WeaponId::taser:
-    return "Using CO2 cartridges, this weapon fires a probe that lodges one inch "
-           "deep in the victim's body. Then a charge of 500,000 volts is passed "
-           "along a wire connecting the weapon to the probe. This charge can be "
+    return "Using CO2 cartridges, this weapon fires a probe that lodges one "
+           "inch "
+           "deep in the victim's body. Then a charge of 500,000 volts is "
+           "passed "
+           "along a wire connecting the weapon to the probe. This charge can "
+           "be "
            "sustained indefinitely.";
   case WeaponId::m_79:
     return "This single-barreled, break-action grenade launcher was developed "
-           "during the Vietnam war. Commonly referred to as the \"Blooper\", it "
+           "during the Vietnam war. Commonly referred to as the \"Blooper\", "
+           "it "
            "fires 40mm HE grenades that contain enough explosives to produce "
            "over 300 fragments with a lethal radius of up to five meters.";
   case WeaponId::k3g4:
     return "A popular assault rifle, the K3G4 is commonly armed with "
-           "Teflon-coated bullets, making it a deadly weapon capable of cutting "
+           "Teflon-coated bullets, making it a deadly weapon capable of "
+           "cutting "
            "through most standard-issue flak jackets like a hot knife through "
            "butter.";
   case WeaponId::virus_scanner:
@@ -230,8 +249,10 @@ std::string_view pauseWeaponDescription(WeaponId id) noexcept {
            "Filter virus from up to 50 meters away. It can also scan through "
            "some solid objects and provide visual feedback of their contents.";
   case WeaponId::fragmentation_grenade:
-    return "Upon detonation, this incendiary weapon spreads ammonium perchlorate "
-           "three meters outwards from the blast point. It is instantly ignited "
+    return "Upon detonation, this incendiary weapon spreads ammonium "
+           "perchlorate "
+           "three meters outwards from the blast point. It is instantly "
+           "ignited "
            "by the explosion and quickly burns out, fatally burning anyone "
            "nearby, but leaving little collateral damage in the terrain.";
   case WeaponId::gas_grenade:
@@ -246,9 +267,12 @@ std::string_view pauseWeaponDescription(WeaponId id) noexcept {
   case WeaponId::key_card:
     return "A standard magnetic-strip card key.";
   case WeaponId::c4_explosives:
-    return "These incendiary blocks are made of a putty-like material which can "
-           "be molded to the user's liking. The C4 explosive putty is then wired "
-           "to a fuse and a friction igniter, allowing the user to detonate the "
+    return "These incendiary blocks are made of a putty-like material which "
+           "can "
+           "be molded to the user's liking. The C4 explosive putty is then "
+           "wired "
+           "to a fuse and a friction igniter, allowing the user to detonate "
+           "the "
            "explosive from a distant or protected position.";
   case WeaponId::viral_antigen:
     return "This device is used to subcutanelously inject a fine stream of "
@@ -387,6 +411,10 @@ pauseMapAssetIndex(std::string_view name) noexcept {
 }
 
 } // namespace
+
+std::string_view pauseWeaponArtAsset(WeaponId id) noexcept {
+  return pauseWeaponIcon(id);
+}
 
 std::vector<std::string>
 paginatePauseBriefing(std::string_view directive,
@@ -609,16 +637,14 @@ PauseMenuData makePauseMenuData(const MissionPackage &mission,
     }
     const auto specifications = pauseWeaponSpecifications(id);
     const auto fallback_ratings = pauseWeaponRatings(id);
-    const auto fire_rate =
-        specifications.authored
-            ? specifications.fire_rate
-            : (original == nullptr ? fallback_ratings.first
-                                   : original->fire_rate);
-    const auto damage =
-        specifications.authored
-            ? specifications.damage
-            : (original == nullptr ? fallback_ratings.second
-                                   : original->damage);
+    const auto fire_rate = specifications.authored
+                               ? specifications.fire_rate
+                               : (original == nullptr ? fallback_ratings.first
+                                                      : original->fire_rate);
+    const auto damage = specifications.authored
+                            ? specifications.damage
+                            : (original == nullptr ? fallback_ratings.second
+                                                   : original->damage);
     const auto original_description =
         original == nullptr ? std::string{}
                             : normalizedDescriptionText(original->description);
@@ -628,11 +654,10 @@ PauseMenuData makePauseMenuData(const MissionPackage &mission,
     // field made the ViT-encoded result pass through localizeTextCopy() a
     // second time and could corrupt or bypass the authored description.
     const auto authored_description = pauseWeaponDescription(id);
-    const auto description = !authored_description.empty()
-                                 ? std::string{authored_description}
-                             : !original_description.empty()
-                                 ? original_description
-                                 : std::string{"Agency field weapon."};
+    const auto description =
+        !authored_description.empty()   ? std::string{authored_description}
+        : !original_description.empty() ? original_description
+                                        : std::string{"Agency field weapon."};
     const auto maximum_ammo =
         definition->uses_ammo
             ? static_cast<std::int32_t>(definition->magazine_capacity) *
@@ -641,7 +666,7 @@ PauseMenuData makePauseMenuData(const MissionPackage &mission,
     data.weapons.push_back(PauseWeaponData{
         static_cast<std::uint32_t>(id),
         localizeTextCopy(definition->name),
-        std::string{pauseWeaponIcon(id)},
+        std::string{pauseWeaponArtAsset(id)},
         description,
         static_cast<std::int32_t>(state->magazine) + state->reserve,
         maximum_ammo,

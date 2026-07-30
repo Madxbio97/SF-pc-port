@@ -48,6 +48,22 @@ class G4CampaignTransitionProbeAccess;
 [[nodiscard]] LegacyHostPadState
 legacyPadStateFromPlayerInput(const PlayerInput &input) noexcept;
 
+// Host input can sample many presentation frames before one 20 Hz retail
+// tick. If R1 auto-lock was latched before L1 manual aim, both buttons used to
+// reach FUN_8002fa48 together and leave the two camera controllers fighting.
+// Manual aim owns that transition and must discard only the stale R1 bit.
+[[nodiscard]] constexpr std::uint16_t
+legacyManualAimTransitionButtons(std::uint16_t current_buttons,
+                                 std::uint16_t latched_buttons,
+                                 bool manual_aim_active) noexcept {
+  constexpr std::uint16_t target_lock_button = 0x0800U;
+  const auto combined =
+      static_cast<std::uint16_t>(current_buttons | latched_buttons);
+  return manual_aim_active
+             ? static_cast<std::uint16_t>(combined & ~target_lock_button)
+             : combined;
+}
+
 // FUN_80017844's 0x80115cca byte marks the beginning of the failure fade.
 // The retail restart is ready only after its callback reaches application
 // state 2; stopping the VM at the byte would freeze that fade in progress.

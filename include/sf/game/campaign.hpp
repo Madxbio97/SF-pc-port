@@ -18,6 +18,7 @@ enum class CampaignAdvance {
 enum class CampaignSavePhase {
   prompt,
   slots,
+  overwrite,
   complete,
 };
 
@@ -40,21 +41,26 @@ struct CampaignSaveResult {
 };
 
 // Retail first asks whether the completed mission should be saved. Choosing
-// Yes enters a separate memory-card slot picker; cancelling that picker
-// returns to the question without changing durable data.
+// Yes enters a separate memory-card slot picker. Occupied slots require an
+// explicit overwrite confirmation; cancelling either sub-screen returns to
+// its parent without changing durable data.
 class CampaignSaveMenu final {
 public:
-  [[nodiscard]] CampaignSaveResult
-  update(const CampaignSaveInput &input) noexcept;
+  [[nodiscard]] CampaignSaveResult update(const CampaignSaveInput &input,
+                                          const TitleSaveSlots &slots) noexcept;
   [[nodiscard]] CampaignSavePhase phase() const noexcept { return phase_; }
   [[nodiscard]] bool saveSelected() const noexcept { return save_selected_; }
   [[nodiscard]] std::size_t slotSelection() const noexcept {
     return slot_selection_;
   }
+  [[nodiscard]] bool overwriteSelected() const noexcept {
+    return overwrite_selected_;
+  }
 
 private:
   CampaignSavePhase phase_{CampaignSavePhase::prompt};
   bool save_selected_{true};
+  bool overwrite_selected_{true};
   std::size_t slot_selection_{};
 };
 
@@ -109,8 +115,9 @@ public:
   // Declining the retail save prompt advances only the live campaign. Any
   // previously loaded save remains untouched.
   [[nodiscard]] CampaignAdvance completeMissionWithoutSaving() noexcept;
-  // Replays an already reached mission without lowering the durable
-  // campaign frontier kept by the loaded save slot.
+  // Replays an already reached mission without lowering the live campaign
+  // frontier. An explicit save into an occupied slot may still replace that
+  // slot with the replay's next mission after overwrite confirmation.
   [[nodiscard]] bool
   selectUnlockedMission(std::uint32_t mission_index) noexcept;
 

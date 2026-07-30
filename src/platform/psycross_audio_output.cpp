@@ -234,8 +234,8 @@ void PsyCrossAudioOutput::queue(std::span<const psx::SpuPcmFrame> frames) {
   if (buffer_callback_ != nullptr) {
     compactStaging();
     const auto staged_count = staged_frames_.size() - staged_offset_;
-    if (frames.size() > maximum_staged_frames -
-                            std::min(staged_count, maximum_staged_frames)) {
+    if (frames.size() >
+        maximum_staged_frames - std::min(staged_count, maximum_staged_frames)) {
       throw core::Error{core::ErrorCode::io,
                         "Gameplay audio timeline exceeded its FIFO bound"};
     }
@@ -248,8 +248,8 @@ void PsyCrossAudioOutput::queue(std::span<const psx::SpuPcmFrame> frames) {
 
   compactStaging();
   const auto staged_count = staged_frames_.size() - staged_offset_;
-  if (frames.size() > maximum_staged_frames -
-                          std::min(staged_count, maximum_staged_frames)) {
+  if (frames.size() >
+      maximum_staged_frames - std::min(staged_count, maximum_staged_frames)) {
     throw core::Error{core::ErrorCode::io,
                       "Gameplay audio timeline exceeded its FIFO bound"};
   }
@@ -452,9 +452,9 @@ void PsyCrossAudioOutput::logDiagnostics(
   const auto producer_staged = staged_frames_.size() >= staged_offset_
                                    ? staged_frames_.size() - staged_offset_
                                    : 0U;
-  const auto staged = producer_staged +
-                      (buffer_callback_ != nullptr ? stream_frames_.size()
-                                                   : 0U);
+  const auto staged =
+      producer_staged +
+      (buffer_callback_ != nullptr ? stream_frames_.size() : 0U);
   PsyX_Log_Info(
       "[AudioDiag][host] role=%s context=%.*s valid=%u al_error=%d "
       "sink=%s state=%s(%d) queued=%d processed=%d sample_offset=%d "
@@ -475,8 +475,7 @@ void PsyCrossAudioOutput::logDiagnostics(
       static_cast<unsigned int>(gain_policy_.targetPercent()),
       static_cast<double>(pitch),
       static_cast<unsigned long long>(submitted_frames_),
-      static_cast<unsigned long long>(uploaded_frames_),
-      producer_staged,
+      static_cast<unsigned long long>(uploaded_frames_), producer_staged,
       static_cast<unsigned long long>(recycled_buffers_),
       static_cast<unsigned long long>(source_starts_),
       static_cast<unsigned long long>(source_underruns_),
@@ -702,6 +701,14 @@ PsyCrossUiAudio::PsyCrossUiAudio(const std::filesystem::path &cue_path) {
     }
     cues_[cue] = std::move(decoded.frames);
   }
+  constexpr auto retail_voice_preview_sound_id = std::size_t{4U};
+  auto preview =
+      psx::decodeVabSound(header, body, retail_voice_preview_sound_id);
+  if (!preview.succeeded() || preview.frames.empty()) {
+    throw core::Error{core::ErrorCode::invalid_format,
+                      "Cannot decode retail OPTIONS voice preview"};
+  }
+  voice_preview_ = std::move(preview.frames);
 }
 
 std::span<const psx::SpuPcmFrame>
@@ -721,6 +728,16 @@ void PsyCrossUiAudio::play(PsyCrossUiCue cue) {
   output_.reset("ui-retrigger");
   output_.queue(frames);
   output_.flush();
+}
+
+void PsyCrossUiAudio::playVoicePreview() {
+  if (voice_preview_.empty()) {
+    return;
+  }
+  // OPTIONS retriggers Gabe's authored test voice on every slider step.
+  voice_preview_output_.reset("voice-preview-retrigger");
+  voice_preview_output_.queue(voice_preview_);
+  voice_preview_output_.flush();
 }
 
 } // namespace sf::platform::detail

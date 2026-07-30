@@ -21,7 +21,15 @@ legacyRetailDangerPercent(std::span<const LegacyUiThreatCommand> threats,
       continue;
     }
 
-    auto threat_q12 = std::min(threat.danger_q12 & 0xffff3fffU, fixed_one);
+    // The retail controller stores the Q12 alert value in the low 14 bits.
+    // Upper bits are controller flags and must never fill the HUD meter. A
+    // zero low value also means that this controller has released Gabe; its
+    // stale AI state can remain resident until the object is despawned.
+    auto threat_q12 = threat.danger_q12 & 0x3fffU;
+    if (threat_q12 == 0U) {
+      continue;
+    }
+    threat_q12 = std::min(threat_q12, fixed_one);
     if ((threat.ai_state & 0xffU) == 9U) {
       threat_q12 = std::max(threat_q12, alerted_floor);
     }
@@ -33,6 +41,55 @@ legacyRetailDangerPercent(std::span<const LegacyUiThreatCommand> threats,
   const auto endpoint =
       retail_bar_maximum - ((safe_q12 * retail_bar_maximum) >> 12U);
   return static_cast<std::uint8_t>(endpoint * 2U);
+}
+
+void LegacyDroppedItemPresentationCache::reconcile(
+    std::uint64_t guest_frame,
+    std::vector<LegacyDroppedItemBridgeState> &items) {
+  if (observed_ && guest_frame < observed_guest_frame_) {
+    reset();
+  }
+  if (observed_ && guest_frame == observed_guest_frame_) {
+    items = stable_items_;
+    return;
+  }
+
+  std::array<bool, capacity> published{};
+  for (const auto &item : items) {
+    if (item.slot >= capacity) {
+      continue;
+    }
+    auto &entry = entries_[item.slot];
+    entry.item = item;
+    entry.last_valid_guest_frame = guest_frame;
+    entry.valid = true;
+    published[item.slot] = true;
+  }
+
+  stable_items_.clear();
+  stable_items_.reserve(capacity);
+  for (std::size_t slot = 0U; slot < entries_.size(); ++slot) {
+    auto &entry = entries_[slot];
+    if (!entry.valid) {
+      continue;
+    }
+    if (!published[slot] && (guest_frame <= entry.last_valid_guest_frame ||
+                             guest_frame - entry.last_valid_guest_frame > 1U)) {
+      entry = {};
+      continue;
+    }
+    stable_items_.push_back(entry.item);
+  }
+  items = stable_items_;
+  observed_guest_frame_ = guest_frame;
+  observed_ = true;
+}
+
+void LegacyDroppedItemPresentationCache::reset() noexcept {
+  entries_ = {};
+  stable_items_.clear();
+  observed_guest_frame_ = 0U;
+  observed_ = false;
 }
 
 namespace {

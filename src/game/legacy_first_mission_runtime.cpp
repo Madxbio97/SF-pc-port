@@ -96,7 +96,7 @@ legacyPadStateFromPlayerInput(const PlayerInput &input) noexcept {
   // binding live during aim; only the chase-mode quick-turn displacement is
   // suppressed while native first-person aim owns the body heading.
   press(input.roll || (!input.aim && input.quick_turn), circle);
-  press(!input.aim && input.kneel, cross);
+  press(input.kneel, cross);
   press(input.fire_pressed || input.fire_held, square);
   if (input.quick_turn && !input.aim) {
     state.left_y = 0xffU;
@@ -141,8 +141,8 @@ LegacyFirstMissionRuntime::LegacyFirstMissionRuntime(
   try {
     virtual_cd_ = image.createVirtualCd();
     // The outer runtime owns the exact 20 Hz hardware cadence. Guest frame
-    // functions execute atomically between those boundaries, so shipping
-    // gameplay uses the real PSX CPU clock without an overclock multiplier.
+    // functions execute atomically between those boundaries, so a machine
+    // clock multiplier cannot accelerate this clock-neutral path.
     vm_ = std::make_unique<LegacyGameplayVm>(image.executable());
     vm_->bindSyphonFilterUsaV11BootstrapPlatformCalls();
     vm_->bindSyphonFilterUsaV11VirtualCdCalls(virtual_cd_);
@@ -287,8 +287,12 @@ bool LegacyFirstMissionRuntime::applyHostFirstPersonAim(bool active) noexcept {
   }
   try {
     auto transition_pad = host_pad_state_;
-    transition_pad.buttons = static_cast<std::uint16_t>(
-        transition_pad.buttons | latched_pad_buttons_);
+    if (active) {
+      latched_pad_buttons_ =
+          legacyManualAimTransitionButtons(0U, latched_pad_buttons_, true);
+    }
+    transition_pad.buttons = legacyManualAimTransitionButtons(
+        transition_pad.buttons, latched_pad_buttons_, active);
     // FUN_8001c7e8 consumes PAD RAM immediately rather than waiting for the
     // next guest frame.  Publish the current neutral manual-aim axes first so
     // stale chase movement can never be interpreted as a sight command.

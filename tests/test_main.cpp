@@ -28,6 +28,7 @@
 #include "sf/game/title.hpp"
 #include "sf/platform/actor_shadow_stability.hpp"
 #include "sf/platform/gameplay_message_reveal_policy.hpp"
+#include "sf/platform/player_camera_fade.hpp"
 #include "sf/platform/retail_scope_text_policy.hpp"
 #include "sf/psx/executable.hpp"
 #include "sf/psx/function_map.hpp"
@@ -668,6 +669,29 @@ void testLegacyDynamicPresentationPolicy() {
                   true, true, sf::game::legacy_hmd_rendered_this_pass, true,
                   true, true, true),
           "Dormant or unposed story actor escaped retail presentation");
+  require(sf::game::legacyGeorgiaStreetObjectiveBomb(0U, 28U, 0x2e) &&
+              sf::game::legacyGeorgiaStreetObjectiveBomb(0U, 29U, 0x2e) &&
+              sf::game::legacyGeorgiaStreetObjectiveBomb(0U, 30U, 0x58) &&
+              !sf::game::legacyGeorgiaStreetObjectiveBomb(0U, 28U, 0x58) &&
+              !sf::game::legacyGeorgiaStreetObjectiveBomb(0U, 30U, 0x2e) &&
+              !sf::game::legacyGeorgiaStreetObjectiveBomb(1U, 29U, 0x2e),
+          "Georgia Street objective-bomb identity escaped its exact sources");
+  require(
+      sf::game::legacyGuestStaticPropStreamVisible(true, false, 7U, 99U,
+                                                   0x12, false) &&
+          sf::game::legacyGuestStaticPropStreamVisible(false, true, 7U, 99U,
+                                                       0x12, false) &&
+          sf::game::legacyGuestStaticPropStreamVisible(false, false, 0U, 28U,
+                                                       0x2e, true) &&
+          sf::game::legacyGuestStaticPropStreamVisible(false, false, 0U, 29U,
+                                                       0x2e, true) &&
+              sf::game::legacyGuestStaticPropStreamVisible(
+                  false, false, 0U, 30U, 0x58, true) &&
+              !sf::game::legacyGuestStaticPropStreamVisible(
+                  false, false, 0U, 30U, 0x58, false) &&
+              !sf::game::legacyGuestStaticPropStreamVisible(
+                  false, false, 1U, 30U, 0x58, true),
+          "Objective-bomb geometry did not outlive the subway DAT envelope");
   require(
       sf::game::legacyHmdFallbackUsesContactSpace(false, false, true) &&
           sf::game::legacyHmdFallbackUsesContactSpace(false, true, false) &&
@@ -676,20 +700,47 @@ void testLegacyDynamicPresentationPolicy() {
       "Guest HMD fallback mixed contact and skeleton root spaces");
   require(
       sf::game::legacyManualAimPresentationActive(true, true, 0, false, false,
-                                                  false) &&
+                                                  false, false) &&
           sf::game::legacyManualAimPresentationActive(true, true, 1, false,
+                                                      false, false, false) &&
+          sf::game::legacyManualAimPresentationActive(true, true, 1, true, true,
                                                       false, false) &&
           !sf::game::legacyManualAimPresentationActive(false, false, 1, false,
-                                                       false, false) &&
+                                                       false, false, false) &&
           !sf::game::legacyManualAimPresentationActive(false, true, 1, false,
-                                                       false, false) &&
+                                                       false, false, false) &&
           !sf::game::legacyManualAimPresentationActive(true, true, 1, true,
-                                                       false, false) &&
+                                                       false, false, false) &&
           !sf::game::legacyManualAimPresentationActive(true, true, 1, false,
-                                                       true, false) &&
+                                                       false, true, false) &&
           !sf::game::legacyManualAimPresentationActive(true, true, 1, false,
-                                                       false, true),
+                                                       false, false, true),
       "Retail traversal camera mode leaked into host manual-aim visibility");
+  require(
+      sf::game::legacyChaseControlLockPresentationActive(true, false, 0U) &&
+          !sf::game::legacyChaseControlLockPresentationActive(true, true, 0U) &&
+          !sf::game::legacyChaseControlLockPresentationActive(true, false,
+                                                              2U) &&
+          !sf::game::legacyChaseControlLockPresentationActive(false, false, 0U),
+      "Aim or target control lock leaked into cinematic letterbox state");
+  require(sf::game::legacyRadioConversationPresentationActive(
+              true, false) &&
+              sf::game::legacyRadioConversationPresentationActive(false,
+                                                                  true) &&
+              !sf::game::legacyRadioConversationPresentationActive(false,
+                                                                   false),
+          "Active or queued XA dialogue did not own radio letterbox state");
+  require(!sf::game::legacyFirstPersonAimReleaseRearmRequired(false, true,
+                                                              false, false) &&
+              sf::game::legacyFirstPersonAimReleaseRearmRequired(false, true,
+                                                                 true, false) &&
+              sf::game::legacyFirstPersonAimReleaseRearmRequired(false, true,
+                                                                 false, true) &&
+              sf::game::legacyFirstPersonAimReleaseRearmRequired(
+                  true, true, false, false) &&
+              !sf::game::legacyFirstPersonAimReleaseRearmRequired(true, false,
+                                                                  true, true),
+          "Manual aim release re-arm stuck across a transient action lock");
   require(sf::game::legacyFirstPersonCircleAllowed(
               sf::game::WeaponId::sniper_rifle) &&
               sf::game::legacyFirstPersonCircleAllowed(
@@ -755,15 +806,57 @@ void testLegacyDynamicPresentationPolicy() {
           "Resident weapon textures must remain in the authored SPFX bank");
   require(sf::game::resident_hmd_texture_bank == 0U,
           "Resident HMD textures must remain in their authored bank zero");
+  require(sf::game::resident_spfx_object_texture_bank == 0U,
+          "Resident object effects must remain in their authored SPFX bank");
+  require(sf::game::legacyResidentSpfxObjectTexture("BOMB.GMD") &&
+              sf::game::legacyResidentSpfxObjectTexture("BOMBD.GMD") &&
+              sf::game::legacyResidentSpfxObjectTexture("BOMBSUB.GMD") &&
+              !sf::game::legacyResidentSpfxObjectTexture("BOMB.HMD") &&
+              !sf::game::legacyResidentSpfxObjectTexture("WEPCRATE.GMD"),
+          "Resident SPFX texture provenance leaked to an unrelated model");
   require(sf::game::resolveDisplayedObjectTextureBank(1U, true) == 0U &&
-              sf::game::resolveDisplayedObjectTextureBank(1U, false) == 1U,
-          "Displayed HMD inherited a streamed room texture bank");
+              sf::game::resolveDisplayedObjectTextureBank(1U, false, true) ==
+                  0U &&
+              sf::game::resolveDisplayedObjectTextureBank(1U, false,
+                                                           false) == 1U &&
+              sf::game::resolveDisplayedObjectTextureBank(0U, false, true) ==
+                  0U,
+          "Resident displayed geometry inherited a streamed room texture "
+          "bank");
   const auto object_texture_bank = sf::game::resolveAuthoredObjectTextureBank;
   require(object_texture_bank(1U, false, false, 0x00U, 0x01U) == 0U &&
               object_texture_bank(0U, false, false, 0x00U, 0x02U) == 1U &&
               object_texture_bank(1U, false, false, 0x01U, 0x03U) == 0U &&
               object_texture_bank(0U, true, true, 0x03U, 0x03U) == 0U,
           "Retained objects lost authored texture ownership across a portal");
+}
+
+void testEmissiveObjectLightingPolicy() {
+  require(sf::game::objectVisualEffectReceivesSceneLighting(
+              sf::game::ObjectVisualEffect::none) &&
+              !sf::game::objectVisualEffectReceivesSceneLighting(
+                  sf::game::ObjectVisualEffect::billboard_glow) &&
+              !sf::game::objectVisualEffectReceivesSceneLighting(
+                  sf::game::ObjectVisualEffect::police_lightbar) &&
+              !sf::game::objectVisualEffectReceivesSceneLighting(
+                  sf::game::ObjectVisualEffect::scanner_xray),
+          "Emissive lamp presentation inherited scene lighting");
+}
+
+void testVirusScannerMarkerPolicy() {
+  constexpr auto primary = std::string_view{"GRGLO.GMD"};
+  constexpr auto secondary = std::string_view{"GDF.GMD"};
+  require(
+      sf::game::legacy_virus_scanner_target_class == 0x59U &&
+          sf::game::legacyVirusScannerMarker(14U, 0x6fU, primary, secondary) &&
+          sf::game::legacyVirusScannerMarker(15U, 0x6fU, primary, secondary) &&
+          !sf::game::legacyVirusScannerMarker(13U, 0x6fU, primary, secondary) &&
+          !sf::game::legacyVirusScannerMarker(14U, 0x6eU, primary, secondary) &&
+          !sf::game::legacyVirusScannerMarker(14U, 0x6fU, "GLIT.GMD",
+                                              secondary) &&
+          !sf::game::legacyVirusScannerMarker(14U, 0x6fU, primary,
+                                              "WEPCRATE.GMD"),
+      "Virus scanner selected an unrelated class-0x6f scene glow");
 }
 
 void testGameplayCheckpointRestorePolicy() {
@@ -1707,9 +1800,9 @@ void testPlayerController() {
               controller.state().x == aimed_strafe_root.x &&
               controller.state().y == aimed_strafe_root.y &&
               controller.state().z == aimed_strafe_root.z &&
-              controller.state().yaw == spawn.yaw &&
-              controller.state().grounded,
-          "Releasing first-person aim discarded its locomotion root");
+              controller.state().yaw == 3072 && controller.state().grounded &&
+              controller.cameraIntent().heading == 3072,
+          "Releasing first-person aim lost its root or final sight heading");
 
   controller.update(
       sf::game::PlayerInput{
@@ -1783,6 +1876,23 @@ void testPlayerController() {
                   sf::game::PlayerLocomotionState::crouch_walking &&
               controller.actorMotion() == sf::game::ActorMotion::crouch_walk,
           "Kneeling movement did not select crouch walk");
+
+  controller.reset(spawn);
+  const auto attempts_before_aim_kneel = movement.attempts;
+  controller.update(
+      sf::game::PlayerInput{
+          .aim = true,
+          .look_yaw = 64.0,
+          .kneel = true,
+      },
+      movement);
+  require(
+      controller.stance() == sf::game::PlayerStanceState::kneeling &&
+          controller.action() == sf::game::PlayerActionState::kneeling_down &&
+          controller.aim() == sf::game::PlayerAimState::first_person &&
+          !controller.actionLocksManualAim() && controller.aimHeading() == 64 &&
+          movement.attempts == attempts_before_aim_kneel,
+      "First-person kneel transition dropped manual aim or moved Gabe");
 
   controller.reset(spawn);
   controller.update(sf::game::PlayerInput{.quick_turn = true}, movement);
@@ -2709,6 +2819,20 @@ void testGameplayHud() {
               interpolate_countdown(4U, 3U, 2.0) == 3.0,
           "Weapon HUD countdown interpolation did not clamp render alpha");
 
+  const auto english_optic = sf::platform::usesRetailEnglishOpticText;
+  require(english_optic(sf::game::WeaponId::nightvision_rifle) &&
+              english_optic(sf::game::WeaponId::sniper_rifle) &&
+              english_optic(sf::game::WeaponId::virus_scanner) &&
+              !english_optic(sf::game::WeaponId::gas_grenade),
+          "Retail English optic-text routing no longer includes the virus "
+          "scanner exclusively");
+
+  const auto scanner_xray = sf::platform::virusScannerXrayActive;
+  require(scanner_xray(true, sf::game::WeaponId::virus_scanner) &&
+              !scanner_xray(false, sf::game::WeaponId::virus_scanner) &&
+              !scanner_xray(true, sf::game::WeaponId::sniper_rifle),
+          "Virus-scanner X-ray activation leaked into another optic mode");
+
   const auto retail_scope_message = sf::platform::isRetailScopeMessage;
   require(
       retail_scope_message(true, LegacyUiMessageChannel::centered, false, 1U) &&
@@ -3476,6 +3600,40 @@ void testActorShadowReceiverStability() {
           "Confirmed missing support left a stale actor shadow suspended");
 }
 
+void testPlayerCameraFade() {
+  using sf::game::CameraState;
+  using sf::platform::PlayerCameraVisibility;
+  using sf::platform::playerCameraVisibility;
+  constexpr auto player_x = 100.0;
+  constexpr auto player_y = 600.0;
+  constexpr auto player_z = -80.0;
+  const auto camera = [](double x, double y, double z, double target_x,
+                         double target_y, double target_z) {
+    return CameraState{x, y, z, target_x, target_y, target_z};
+  };
+  require(playerCameraVisibility(
+              camera(player_x, player_y - 300.0, player_z + 672.0, player_x,
+                     player_y - 185.0, player_z),
+              player_x, player_y, player_z) == PlayerCameraVisibility::opaque,
+          "Ordinary chase camera faded Gabe");
+  require(playerCameraVisibility(camera(player_x + 140.0, player_y - 220.0,
+                                        player_z, player_x, player_y - 185.0,
+                                        player_z),
+                                 player_x, player_y, player_z) ==
+              PlayerCameraVisibility::translucent,
+          "Close chase camera did not fade Gabe");
+  require(playerCameraVisibility(
+              camera(player_x + 20.0, player_y - 220.0, player_z, player_x,
+                     player_y - 185.0, player_z),
+              player_x, player_y, player_z) == PlayerCameraVisibility::hidden,
+          "Camera inside Gabe did not hide the intersecting model");
+  require(playerCameraVisibility(camera(player_x + 20.0, player_y - 220.0,
+                                        player_z, 5000.0, 0.0, 5000.0),
+                                 player_x, player_y,
+                                 player_z) == PlayerCameraVisibility::opaque,
+          "Unrelated scripted camera made Gabe disappear");
+}
+
 } // namespace
 
 int main() {
@@ -3491,6 +3649,8 @@ int main() {
     testCfireSpawnPoint();
     testLegacyEffectSpriteLayouts();
     testLegacyDynamicPresentationPolicy();
+    testEmissiveObjectLightingPolicy();
+    testVirusScannerMarkerPolicy();
     testGameplayCheckpointRestorePolicy();
     testPoliceLightbarFrames();
     testHmdModel();
@@ -3520,6 +3680,7 @@ int main() {
     testMissionStartGate();
     testTitleMenu();
     testActorShadowReceiverStability();
+    testPlayerCameraFade();
     std::cout << "All tests passed\n";
     return 0;
   } catch (const std::exception &error) {

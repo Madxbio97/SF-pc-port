@@ -206,6 +206,11 @@ public:
            action_ == PlayerActionState::quick_turning ||
            action_ == PlayerActionState::interacting;
   }
+  [[nodiscard]] bool actionLocksManualAim() const noexcept {
+    return actionLocked() &&
+           action_ != PlayerActionState::kneeling_down &&
+           action_ != PlayerActionState::standing_up;
+  }
   [[nodiscard]] unsigned int rollDurationUpdates() const noexcept;
   [[nodiscard]] CameraState camera() const noexcept { return camera_; }
   [[nodiscard]] PlayerCameraIntent cameraIntent() const noexcept;

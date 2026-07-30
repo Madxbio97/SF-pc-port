@@ -752,16 +752,24 @@ bool observeProductionActors(const sf::game::MissionPackage &mission,
           (object.instance_state[3] & sf::game::legacy_instance_dormant) != 0U;
       const auto *native_model =
           gameplay.displayedObjectModel(static_cast<std::uint16_t>(scene));
-      if (retail_dormant && native_model != nullptr) {
-        return false;
-      }
       const auto *hmd_model = std::get_if<sf::assets::HmdModel>(
           &gameplay.objectModels()[scene_object.model].geometry);
       const auto hmd_backed = hmd_model != nullptr;
+      const auto actor = sf::game::legacyPresentationUsesRetailNpc(
+          hmd_backed, object.object_handler, object.ai_controller);
+      const auto static_presentation_allowed =
+          !actor && sf::game::legacyGuestStaticPropPresentationAllowed(
+                        retail_dormant, object.destroyed(),
+                        scene_object.destroyed_model.has_value(),
+                        scene_object.damage_response);
+      if (retail_dormant && native_model != nullptr &&
+          !static_presentation_allowed) {
+        return false;
+      }
       const auto exact_guest_pose =
           hmd_model != nullptr &&
-          sf::game::legacyGuestHmdPoseComplete(
-              object.bone_matrix_count, hmd_model->parts().size());
+          sf::game::legacyGuestHmdPoseComplete(object.bone_matrix_count,
+                                               hmd_model->parts().size());
       const auto presented =
           object.resident && (object.presentation_controller == 0U ||
                               object.presentation_enabled != 0U);
@@ -1349,8 +1357,7 @@ TransitionTrace runTransition(sf::game::LegacyGameplayVm &vm,
                                                        *transition_mission)) {
         result.decision = sf::game::classifyLegacyMissionTransition(
             mission_index, application_state, application_state,
-            *transition_mission, movie_loader_pending,
-            scripted_movie_count);
+            *transition_mission, movie_loader_pending, scripted_movie_count);
         result.final_state = *transition_mission;
         result.last_state = *transition_mission;
         result.final_application_state = application_state;
@@ -1373,8 +1380,7 @@ TransitionTrace runTransition(sf::game::LegacyGameplayVm &vm,
         result.states.emplace_back(application_state, transition.final_state);
         result.decision = sf::game::classifyLegacyMissionTransition(
             mission_index, application_state, transition.final_state,
-            *transition_mission, movie_loader_pending,
-            scripted_movie_count);
+            *transition_mission, movie_loader_pending, scripted_movie_count);
         result.final_state = *transition_mission;
         result.last_state = *transition_mission;
         result.stop_phase = 7U;
@@ -1660,8 +1666,7 @@ int runProbe(const std::filesystem::path &cue_path,
           runProductionRendererStress(package, renderer_stress_updates);
       std::cout << "mission=" << mission.index
                 << " renderer-stress=" << renderer_stress_updates
-                << " result=" << (passed_stress ? "passed" : "failed")
-                << '\n';
+                << " result=" << (passed_stress ? "passed" : "failed") << '\n';
       return passed_stress ? 0 : 2;
     }
     if (spec.event_kind != EventKind::none) {
@@ -1734,9 +1739,9 @@ int runProbe(const std::filesystem::path &cue_path,
         constexpr std::uint32_t probe_text = 0x801ff000U;
         constexpr std::string_view text = "PARK UI";
         for (std::size_t index = 0U; index < text.size(); ++index) {
-          if (!vm.runtime().write8(
-                  probe_text + static_cast<std::uint32_t>(index),
-                  static_cast<std::uint8_t>(text[index]))) {
+          if (!vm.runtime().write8(probe_text +
+                                       static_cast<std::uint32_t>(index),
+                                   static_cast<std::uint8_t>(text[index]))) {
             return trace;
           }
         }
@@ -1744,9 +1749,9 @@ int runProbe(const std::filesystem::path &cue_path,
                 probe_text + static_cast<std::uint32_t>(text.size()), 0U)) {
           return trace;
         }
-        const auto timer = vm.invoke(
-            timer_setup_entry, std::array{0x4b0U, 0U, 0x80146a64U},
-            common_call_budget);
+        const auto timer =
+            vm.invoke(timer_setup_entry, std::array{0x4b0U, 0U, 0x80146a64U},
+                      common_call_budget);
         trace.timer_call = timer.completed();
         auto timer_state = vm.readMissionBridgeState();
         while (trace.timer_call && timer_state && !timer_state->timer &&
@@ -1757,15 +1762,15 @@ int runProbe(const std::filesystem::path &cue_path,
           ++trace.timer_setup_updates;
           timer_state = vm.readMissionBridgeState();
         }
-        static_cast<void>(vm.runtime().read16(0x80115f22U,
-                                               trace.raw_timer_handle));
+        static_cast<void>(
+            vm.runtime().read16(0x80115f22U, trace.raw_timer_handle));
         if (trace.raw_timer_handle != 0xffffU) {
-          const auto object = 0x80120a98U +
-                              (trace.raw_timer_handle & 0xffU) * 0x1cU;
+          const auto object =
+              0x80120a98U + (trace.raw_timer_handle & 0xffU) * 0x1cU;
           static_cast<void>(
               vm.runtime().read32(object, trace.raw_timer_glyphs));
-          static_cast<void>(vm.runtime().read16(
-              object + 0x0cU, trace.raw_timer_glyph_count));
+          static_cast<void>(
+              vm.runtime().read16(object + 0x0cU, trace.raw_timer_glyph_count));
         }
         trace.timer_bridge = timer_state && timer_state->timer.has_value();
         if (!trace.timer_call || !trace.timer_bridge) {
@@ -1784,8 +1789,7 @@ int runProbe(const std::filesystem::path &cue_path,
         trace.timer_first_x = before->timer->glyphs.front().x;
         trace.timer_first_y = before->timer->glyphs.front().y;
         for (const auto &candidate : before->messages) {
-          if (candidate.channel ==
-              sf::game::LegacyUiMessageChannel::status) {
+          if (candidate.channel == sf::game::LegacyUiMessageChannel::status) {
             trace.message_before.insert(trace.message_before.end(),
                                         candidate.glyphs.begin(),
                                         candidate.glyphs.end());
@@ -1803,8 +1807,7 @@ int runProbe(const std::filesystem::path &cue_path,
         }
         trace.timer_after = after->timer->remaining_ticks;
         for (const auto &candidate : after->messages) {
-          if (candidate.channel ==
-              sf::game::LegacyUiMessageChannel::status) {
+          if (candidate.channel == sf::game::LegacyUiMessageChannel::status) {
             trace.message_after.insert(trace.message_after.end(),
                                        candidate.glyphs.begin(),
                                        candidate.glyphs.end());
@@ -1823,13 +1826,11 @@ int runProbe(const std::filesystem::path &cue_path,
       const auto replay_restored = vm.restoreSnapshot(ui_checkpoint);
       const auto replay_ui = replay_restored ? trace_park_ui() : ParkUiTrace{};
       const auto final_restored = vm.restoreSnapshot(ui_checkpoint);
-      park_ui_bridge_ready = first_ui.completed && replay_ui == first_ui &&
-                             final_restored;
+      park_ui_bridge_ready =
+          first_ui.completed && replay_ui == first_ui && final_restored;
       std::cout << "PARK-retail-ui timer=" << first_ui.timer_before << "->"
-                << first_ui.timer_after
-                << " timer-glyphs=8 message-glyphs="
-                << first_ui.message_before.size()
-                << " transition="
+                << first_ui.timer_after << " timer-glyphs=8 message-glyphs="
+                << first_ui.message_before.size() << " transition="
                 << (first_ui.message_before != first_ui.message_after)
                 << " backdrop=" << first_ui.backdrop.has_value()
                 << " replay=" << (replay_ui == first_ui)
@@ -1966,9 +1967,9 @@ int runProbe(const std::filesystem::path &cue_path,
         outcomeResultEqual(success_first, success_replay);
 
     const auto ready = natural_tier_ready && park_ui_bridge_ready &&
-                       start_visual_exact &&
-                       production_actor_exact && route_exact &&
-                       objective_exact && failure_exact && success_exact;
+                       start_visual_exact && production_actor_exact &&
+                       route_exact && objective_exact && failure_exact &&
+                       success_exact;
     lifetime_spawns +=
         natural_first.lifetime.spawns + route_first.lifetime.spawns;
     lifetime_despawns +=
@@ -2179,9 +2180,8 @@ int main(int argc, char **argv) {
     auto renderer_stress_updates = std::uint32_t{};
     if (argc == 4) {
       const auto text = std::string_view{argv[3]};
-      const auto parsed = std::from_chars(text.data(),
-                                          text.data() + text.size(),
-                                          renderer_stress_updates);
+      const auto parsed = std::from_chars(
+          text.data(), text.data() + text.size(), renderer_stress_updates);
       if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size() ||
           renderer_stress_updates == 0U) {
         std::cerr << "Invalid renderer stress update count\n";

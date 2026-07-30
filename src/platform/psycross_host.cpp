@@ -300,14 +300,16 @@ game::CampaignSaveResult runCampaignSaveMenu(
     };
     const auto previous_phase = menu.phase();
     const auto previous_save_selection = menu.saveSelected();
+    const auto previous_overwrite_selection = menu.overwriteSelected();
     const auto previous_slot = menu.slotSelection();
-    const auto result = menu.update(input);
+    const auto result = menu.update(input, slots);
     if (input.cancel) {
       ui_audio.play(detail::PsyCrossUiCue::cancel);
     } else if (input.confirm) {
       ui_audio.play(detail::PsyCrossUiCue::confirm);
     } else if (menu.phase() != previous_phase ||
                menu.saveSelected() != previous_save_selection ||
+               menu.overwriteSelected() != previous_overwrite_selection ||
                menu.slotSelection() != previous_slot) {
       ui_audio.play(detail::PsyCrossUiCue::navigate);
     }
@@ -764,8 +766,6 @@ public:
           continue;
         }
         if (scene_result.reason == detail::SceneExitReason::mission_complete) {
-          const auto replaying_unlocked_mission =
-              mission_index < campaign->maximumUnlockedMission();
           const auto next_mission = mission_index + 1U;
           const auto carry_for_next =
               game::campaignMissionsShareCarry(mission_index, next_mission)
@@ -782,11 +782,8 @@ public:
                 "Campaign transition has no coherent player carry; "
                 "continuing with mission defaults\n");
           }
-          const auto save_result =
-              replaying_unlocked_mission
-                  ? game::CampaignSaveResult{}
-                  : runCampaignSaveMenu(*mission, save_slots, pad,
-                                        previous_buttons, ui_audio, input_);
+          const auto save_result = runCampaignSaveMenu(
+              *mission, save_slots, pad, previous_buttons, ui_audio, input_);
           auto completion_is_saved = false;
           if (save_result.decision == game::CampaignSaveDecision::save &&
               save_result.slot) {

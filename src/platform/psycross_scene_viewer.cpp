@@ -24,6 +24,7 @@
 #include "sf/game/retail_cheats.hpp"
 #include "sf/platform/actor_shadow_stability.hpp"
 #include "sf/platform/gameplay_message_reveal_policy.hpp"
+#include "sf/platform/player_camera_fade.hpp"
 #include "sf/platform/player_input.hpp"
 #include "sf/platform/retail_scope_text_policy.hpp"
 #include "sf/platform/stable_frame_vector.hpp"
@@ -795,6 +796,19 @@ public:
       required_crate_banks_.fill(false);
       required_crate_overlay_pages_.fill(false);
       required_scrim_destination_pages_.fill(false);
+      scrim_destination_page_mask_ = 0U;
+      if (const auto frame = gameplay.legacyPresentationFrame();
+          frame && frame->renderer &&
+          frame->renderer->state.scrim.resource_present) {
+        for (const auto &move : frame->renderer->state.scrim.vram_moves) {
+          const auto page =
+              static_cast<unsigned int>(move.destination_x / 64) +
+              static_cast<unsigned int>(move.destination_y / 256) * 16U;
+          if (page < 32U) {
+            scrim_destination_page_mask_ |= (1U << page);
+          }
+        }
+      }
       for (auto &owners : required_page_owners_) {
         owners.clear();
       }
@@ -1008,9 +1022,7 @@ public:
             const auto *gmd = std::get_if<assets::GmdModel>(&geometry);
             const auto *emd = std::get_if<assets::EmdScene>(&geometry);
             const auto *hmd = std::get_if<assets::HmdModel>(&geometry);
-            const auto bank = emd != nullptr
-                                  ? static_cast<int>(emd->textureBank())
-                                  : selected_bank;
+            const auto bank = selected_bank;
             if (bank >= 2U) {
               throw core::Error{core::ErrorCode::unsupported,
                                 "Unsupported object texture bank"};
@@ -1139,17 +1151,18 @@ public:
             const auto page =
                 static_cast<unsigned int>(move.destination_x / 64) +
                 static_cast<unsigned int>(move.destination_y / 256) * 16U;
-            // DR_MOVE addresses the live room texture bank. SCRIM.EMD itself
-            // can keep its original bank flag after the subway streamer has
-            // switched banks, so its model flag is not the copy owner.
-            const auto scrim_copy_bank = static_cast<std::size_t>(object_bank);
-            const auto slot = required_page_remap_[scrim_copy_bank][page];
-            const auto expected_bank = texturePageSourceBank(page, object_bank);
-            if (slot < required_pages_.size() &&
-                required_pages_[slot] == static_cast<int>(page) &&
-                required_banks_[slot] == expected_bank) {
-              append_owner(slot);
-              required_scrim_destination_pages_[slot] = true;
+            // A portal can expose TRAIN.EMD instances from both mission
+            // banks. Preserve every already-required destination variant;
+            // the CPU ring below publishes one coherent phase to both.
+            for (auto bank = 0; bank < 2; ++bank) {
+              const auto slot = required_page_remap_[bank][page];
+              const auto expected_bank = texturePageSourceBank(page, bank);
+              if (slot < required_pages_.size() &&
+                  required_pages_[slot] == static_cast<int>(page) &&
+                  required_banks_[slot] == expected_bank) {
+                append_owner(slot);
+                required_scrim_destination_pages_[slot] = true;
+              }
             }
           }
         }
@@ -1767,6 +1780,13 @@ private:
                                           int texture_bank) const noexcept {
     texture_bank =
         canonicalMissionTextureBank(texture_bank, mission_.textureBankCount());
+    // SCRIM destinations are mutable live VRAM, not immutable authored
+    // pages. Bank-zero and bank-one copies may start equal yet diverge after
+    // the first DR_MOVE, so they must never share one physical alias.
+    if (logical_page < 32U &&
+        (scrim_destination_page_mask_ & (1U << logical_page)) != 0U) {
+      return texture_bank;
+    }
     if (logical_page < 32U && texture_bank >= 0 && texture_bank < 2 &&
         vlf_compatible_pages_[static_cast<std::size_t>(texture_bank)]
                              [logical_page]) {
@@ -2197,6 +2217,7 @@ private:
   std::array<bool, resident_texture_page_count> required_crate_overlay_pages_{};
   std::array<bool, resident_texture_page_count>
       required_scrim_destination_pages_{};
+  std::uint32_t scrim_destination_page_mask_{};
   bool requirements_valid_{};
   std::array<PageState, resident_texture_page_count> loaded_pages_{};
   std::array<bool, resident_texture_page_count> scrim_dirty_pages_{};
@@ -2816,11 +2837,11 @@ class RetailScrimAnimation final {
 public:
   void reset() noexcept {
     executed_copy_count_ = 0U;
-    texture_bank_ = -1;
     scene_room_.reset();
-    authored_restore_pending_ = false;
     moves_.clear();
-    pages_.clear();
+    for (auto &pages : bank_pages_) {
+      pages.clear();
+    }
     copy_scratch_.clear();
   }
 
@@ -2836,8 +2857,7 @@ public:
             ? std::span<const game::LegacyVramMoveBridgeState>{state.vram_moves}
             : std::span<const game::LegacyVramMoveBridgeState>{moves_};
     if (!moves.empty()) {
-      ensureState(moves, textureBank(gameplay, moves, textures),
-                  gameplay.currentRoom(), textures);
+      ensureState(moves, gameplay.currentRoom(), textures);
     }
     if (synchronizeResidentPages(textures)) {
       DrawSync(0);
@@ -2909,8 +2929,7 @@ private:
       }
       return uploaded;
     }
-    const auto bank = textureBank(gameplay, moves, textures);
-    ensureState(moves, bank, gameplay.currentRoom(), textures);
+    ensureState(moves, gameplay.currentRoom(), textures);
     auto changed = synchronizeResidentPages(textures);
     if (changed) {
       DrawSync(0);
@@ -2967,125 +2986,79 @@ private:
     std::optional<std::uint64_t> uploaded_residency;
   };
 
-  [[nodiscard]] static int
-  textureBank(const game::GameplaySession &gameplay,
-              std::span<const game::LegacyVramMoveBridgeState> moves,
-              const TextureStreamer &textures) {
-    if (gameplay.currentRoom() >= gameplay.models().size()) {
-      throw core::Error{core::ErrorCode::not_found,
-                        "Retail SCRIM has no active scene texture bank"};
-    }
-    const auto scene_bank = static_cast<int>(
-        gameplay.models()[gameplay.currentRoom()].scene.textureBank());
-    if (scene_bank < 0 || scene_bank >= 2) {
-      throw core::Error{core::ErrorCode::unsupported,
-                        "Retail SCRIM scene texture bank is unsupported"};
-    }
-
-    // DR_MOVE addresses the live PS1 VRAM, not the texture bank encoded by
-    // SCRIM.EMD. Its bank flag can stay at zero after the level streamer has
-    // switched the subway to bank one. Resolve the copy pages from the bank
-    // which is actually resident; a page initially seeded by VLF is shared
-    // only when its bytes also match that bank's authored TPxx.BIN.
-    auto resident_bank_mask = std::uint8_t{};
-    const auto include_page = [&](int x, int y) {
-      const auto page = static_cast<unsigned int>(x / 64) +
-                        static_cast<unsigned int>(y / 256) * 16U;
-      resident_bank_mask = static_cast<std::uint8_t>(
-          resident_bank_mask | textures.residentTextureBankMask(page));
-    };
-    for (const auto &move : moves) {
-      include_page(move.source_x, move.source_y);
-      include_page(move.destination_x, move.destination_y);
-    }
-    if (resident_bank_mask == 1U) {
-      return 0;
-    }
-    if (resident_bank_mask == 2U) {
-      return 1;
-    }
-    return scene_bank;
-  }
-
   void ensureState(std::span<const game::LegacyVramMoveBridgeState> moves,
-                   int bank, std::size_t scene_room,
-                   const TextureStreamer &textures) {
-    if (!pages_.empty() && texture_bank_ == bank && scene_room_ == scene_room &&
+                   std::size_t scene_room, const TextureStreamer &textures) {
+    if (!bank_pages_[0].empty() && scene_room_ == scene_room &&
         std::ranges::equal(moves_, moves)) {
       return;
     }
 
-    const auto had_state = !pages_.empty();
     const auto same_packet_ring = std::ranges::equal(moves_, moves);
-    const auto previous_bank = texture_bank_;
-    const auto previous_room = scene_room_;
     if (!same_packet_ring) {
       executed_copy_count_ = 0U;
     }
-    texture_bank_ = bank;
     scene_room_ = scene_room;
     moves_.assign(moves.begin(), moves.end());
-    pages_.clear();
-    const auto append = [&](int x, int y, int width, int height,
-                            bool destination) {
-      const auto local_x = x & 63;
-      const auto local_y = y & 255;
-      if (local_x + width > 64 || local_y + height > 256) {
-        throw core::Error{
-            core::ErrorCode::invalid_format,
-            "Retail SCRIM copy crosses a logical texture-page boundary"};
+    for (auto bank = 0; bank < 2; ++bank) {
+      auto &pages = bank_pages_[static_cast<std::size_t>(bank)];
+      pages.clear();
+      const auto append = [&](int x, int y, int width, int height,
+                              bool destination) {
+        const auto local_x = x & 63;
+        const auto local_y = y & 255;
+        if (local_x + width > 64 || local_y + height > 256) {
+          throw core::Error{
+              core::ErrorCode::invalid_format,
+              "Retail SCRIM copy crosses a logical texture-page boundary"};
+        }
+        const auto page = static_cast<unsigned int>(x / 64) +
+                          static_cast<unsigned int>(y / 256) * 16U;
+        auto existing = std::ranges::find_if(pages, [page](const auto &entry) {
+          return entry.logical_page == page;
+        });
+        if (existing != pages.end()) {
+          existing->destination = existing->destination || destination;
+          return;
+        }
+        const auto authored = textures.authoredTexturePage(page, bank);
+        if (authored.size() != texture_page_bytes) {
+          throw core::Error{
+              core::ErrorCode::invalid_format,
+              "Retail SCRIM texture page has invalid source data"};
+        }
+        pages.push_back(CpuPage{page, destination});
+        std::ranges::copy(authored, pages.back().bytes.begin());
+      };
+      for (const auto &move : moves) {
+        append(move.source_x, move.source_y, move.width, move.height, false);
+        append(move.destination_x, move.destination_y, move.width, move.height,
+               true);
       }
-      const auto page = static_cast<unsigned int>(x / 64) +
-                        static_cast<unsigned int>(y / 256) * 16U;
-      auto existing = std::ranges::find_if(pages_, [page](const auto &entry) {
-        return entry.logical_page == page;
-      });
-      if (existing != pages_.end()) {
-        existing->destination = existing->destination || destination;
-        return;
-      }
-      const auto authored = textures.authoredTexturePage(page, bank);
-      if (authored.size() != texture_page_bytes) {
-        throw core::Error{core::ErrorCode::invalid_format,
-                          "Retail SCRIM texture page has invalid source data"};
-      }
-      pages_.push_back(CpuPage{page, destination});
-      std::ranges::copy(authored, pages_.back().bytes.begin());
-    };
-    for (const auto &move : moves) {
-      append(move.source_x, move.source_y, move.width, move.height, false);
-      append(move.destination_x, move.destination_y, move.width, move.height,
-             true);
     }
-    // The retail room streamer can replace texture data without changing the
-    // selected bank. SCRIM's CPU copy ring must start from that room's freshly
-    // authored pages as well. Keeping the previous room's working set is what
-    // left strips of the old subway segment in train and sign textures.
-    authored_restore_pending_ = had_state;
+    rebuildAuthoredPhase(textures);
     if (textureDiagnosticsEnabled()) {
       PsyX_Log_Info(
-          "[TextureDiag][scrim-state] previous_bank=%d selected_bank=%d "
-          "previous_room=%lld selected_room=%zu phase=%llu moves=%zu\n",
-          previous_bank, texture_bank_,
-          previous_room ? static_cast<long long>(*previous_room) : -1LL,
+          "[TextureDiag][scrim-state] banks=2 room=%zu phase=%llu moves=%zu\n",
           *scene_room_, static_cast<unsigned long long>(executed_copy_count_),
           moves_.size());
     }
   }
 
-  [[nodiscard]] CpuPage &page(unsigned int logical_page) {
+  [[nodiscard]] CpuPage &page(int bank, unsigned int logical_page) {
+    auto &pages = bank_pages_[static_cast<std::size_t>(bank)];
     const auto found =
-        std::ranges::find_if(pages_, [logical_page](const CpuPage &candidate) {
+        std::ranges::find_if(pages, [logical_page](const CpuPage &candidate) {
           return candidate.logical_page == logical_page;
         });
-    if (found == pages_.end()) {
+    if (found == pages.end()) {
       throw core::Error{core::ErrorCode::invalid_format,
                         "Retail SCRIM copy references an unknown CPU page"};
     }
     return *found;
   }
 
-  void apply(std::span<const game::LegacyVramMoveBridgeState> moves) {
+  void applyBank(int bank,
+                 std::span<const game::LegacyVramMoveBridgeState> moves) {
     for (const auto &move : moves) {
       const auto source_page =
           static_cast<unsigned int>(move.source_x / 64) +
@@ -3110,110 +3083,105 @@ private:
 
       const auto row_bytes = width * sizeof(std::uint16_t);
       copy_scratch_.resize(row_bytes * height);
-      const auto &source = page(source_page).bytes;
-      auto &destination = page(destination_page).bytes;
+      const auto &source = page(bank, source_page).bytes;
+      auto &destination = page(bank, destination_page).bytes;
       copyTexturePageRectangle(source, source_x, source_y, destination,
                                destination_x, destination_y, width, height,
                                copy_scratch_);
     }
   }
 
+  void apply(std::span<const game::LegacyVramMoveBridgeState> moves) {
+    for (auto bank = 0; bank < 2; ++bank) {
+      applyBank(bank, moves);
+    }
+  }
+
+  void rebuildAuthoredPhase(const TextureStreamer &textures) {
+    for (auto bank = 0; bank < 2; ++bank) {
+      for (auto &page_state : bank_pages_[static_cast<std::size_t>(bank)]) {
+        const auto authored =
+            textures.authoredTexturePage(page_state.logical_page, bank);
+        if (authored.size() != page_state.bytes.size()) {
+          throw core::Error{core::ErrorCode::invalid_format,
+                            "Retail SCRIM page has invalid authored data"};
+        }
+        std::ranges::copy(authored, page_state.bytes.begin());
+        page_state.uploaded_residency.reset();
+      }
+    }
+    // The copy phase is global retail VRAM state. Replay the complete packet
+    // ring so every destination page comes from the same phase.
+    for (auto phase = std::uint64_t{}; phase < executed_copy_count_; ++phase) {
+      apply(moves_);
+    }
+  }
+
   [[nodiscard]] bool uploadDestinationPages(TextureStreamer &textures) {
     auto uploaded = false;
-    for (auto &page_state : pages_) {
-      if (!page_state.destination) {
-        continue;
-      }
-      const auto token =
-          textures.residentPageToken(page_state.logical_page, texture_bank_);
-      if (!token) {
-        page_state.uploaded_residency.reset();
-        continue;
-      }
-      if (textures.uploadRuntimeTexturePage(page_state.logical_page,
-                                            texture_bank_, page_state.bytes)) {
-        page_state.uploaded_residency = token;
-        uploaded = true;
+    for (auto bank = 0; bank < 2; ++bank) {
+      for (auto &page_state : bank_pages_[static_cast<std::size_t>(bank)]) {
+        if (!page_state.destination) {
+          continue;
+        }
+        const auto token =
+            textures.residentPageToken(page_state.logical_page, bank);
+        if (!token) {
+          page_state.uploaded_residency.reset();
+          continue;
+        }
+        if (textures.uploadRuntimeTexturePage(page_state.logical_page, bank,
+                                              page_state.bytes)) {
+          page_state.uploaded_residency = token;
+          uploaded = true;
+        }
       }
     }
     return uploaded;
   }
 
   [[nodiscard]] bool synchronizeResidentPages(TextureStreamer &textures) {
-    auto reset = false;
-    for (auto &page_state : pages_) {
-      if (!page_state.destination) {
-        continue;
-      }
-      const auto token =
-          textures.residentPageToken(page_state.logical_page, texture_bank_);
-      if (!token) {
-        page_state.uploaded_residency.reset();
-        continue;
-      }
-      if (page_state.uploaded_residency == token) {
-        continue;
-      }
-      // TextureStreamer has just materialized a new physical residency (or
-      // restored a page after a room/overlay transition). Mirror those fresh
-      // authored bytes into the CPU copy ring instead of publishing the stale
-      // contents accumulated while this logical page was not resident.
-      const auto authored =
-          textures.authoredTexturePage(page_state.logical_page, texture_bank_);
-      if (authored.size() != page_state.bytes.size()) {
-        throw core::Error{core::ErrorCode::invalid_format,
-                          "Retail SCRIM resident page has invalid source data"};
-      }
-      std::ranges::copy(authored, page_state.bytes.begin());
-      page_state.uploaded_residency = token;
-      reset = true;
-      if (textureDiagnosticsEnabled()) {
-        PsyX_Log_Info("[TextureDiag][scrim-residency-reset] logical=%u bank=%d "
-                      "token=%llu phase=%llu\n",
-                      page_state.logical_page, texture_bank_,
-                      static_cast<unsigned long long>(*token),
-                      static_cast<unsigned long long>(executed_copy_count_));
-      }
-    }
-    if (authored_restore_pending_) {
-      // A logical page may retain the same physical residency token while the
-      // guest crosses a room boundary. Publish the rebuilt authored bytes
-      // explicitly; token-only synchronization cannot observe that semantic
-      // streaming boundary.
-      for (auto &page_state : pages_) {
+    auto residency_changed = false;
+    for (auto bank = 0; bank < 2; ++bank) {
+      for (auto &page_state : bank_pages_[static_cast<std::size_t>(bank)]) {
         if (!page_state.destination) {
           continue;
         }
         const auto token =
-            textures.residentPageToken(page_state.logical_page, texture_bank_);
+            textures.residentPageToken(page_state.logical_page, bank);
         if (!token) {
+          page_state.uploaded_residency.reset();
           continue;
         }
-        if (textures.uploadRuntimeTexturePage(
-                page_state.logical_page, texture_bank_, page_state.bytes)) {
-          page_state.uploaded_residency = token;
-          reset = true;
-          if (textureDiagnosticsEnabled()) {
-            PsyX_Log_Info(
-                "[TextureDiag][scrim-room-restore] logical=%u bank=%d "
-                "room=%zu token=%llu phase=%llu\n",
-                page_state.logical_page, texture_bank_, *scene_room_,
-                static_cast<unsigned long long>(*token),
-                static_cast<unsigned long long>(executed_copy_count_));
-          }
+        if (page_state.uploaded_residency == token) {
+          continue;
+        }
+        residency_changed = true;
+        if (textureDiagnosticsEnabled()) {
+          PsyX_Log_Info(
+              "[TextureDiag][scrim-residency-change] logical=%u bank=%d "
+              "token=%llu phase=%llu\n",
+              page_state.logical_page, bank,
+              static_cast<unsigned long long>(*token),
+              static_cast<unsigned long long>(executed_copy_count_));
         }
       }
-      authored_restore_pending_ = false;
     }
-    return reset;
+    if (!residency_changed) {
+      return false;
+    }
+
+    // Rebuild and publish the entire ring atomically. Restoring just the page
+    // whose token changed left train/sign polygons sampling different SCRIM
+    // phases, which looked like textures assigned to the wrong mesh regions.
+    rebuildAuthoredPhase(textures);
+    return uploadDestinationPages(textures);
   }
 
   std::uint64_t executed_copy_count_{};
-  int texture_bank_{-1};
   std::optional<std::size_t> scene_room_;
-  bool authored_restore_pending_{};
   std::vector<game::LegacyVramMoveBridgeState> moves_;
-  std::vector<CpuPage> pages_;
+  std::array<std::vector<CpuPage>, 2U> bank_pages_;
   std::vector<std::byte> copy_scratch_;
 };
 
@@ -3289,6 +3257,7 @@ struct Vector3 {
 
 struct WorldCalloutAnchor {
   Vector3 point;
+  std::uint16_t object{};
   std::string_view text;
   bool headshot{};
 };
@@ -3340,6 +3309,7 @@ struct RetailDepthCueState {
 
 RetailDepthCueState active_retail_depth_cue;
 game::DynamicLightFrame active_dynamic_lights;
+game::DynamicLightFrame active_dynamic_shadow_lights;
 game::DynamicLightPoint active_dynamic_light_observer;
 std::vector<game::RetailVertexLightState> active_retail_vertex_lights;
 std::int32_t active_retail_light_projection{320};
@@ -3876,10 +3846,16 @@ struct ActorShadowReceiverVertex {
   bool wall{};
 };
 
+struct ActorShadowTriangle {
+  std::array<std::size_t, 3U> vertex_indices{};
+};
+
 struct ActorShadowPresentationState {
   std::uint64_t actor{};
   std::uint64_t last_seen_guest_frame{};
   std::uint64_t receiver_guest_frame{std::numeric_limits<std::uint64_t>::max()};
+  const void *body_geometry{};
+  const void *attachment_geometry{};
   ActorShadowSupportState support;
   game::DynamicShadowProjectionState projection;
   std::vector<ActorShadowCachedReceiver> receivers;
@@ -3904,10 +3880,10 @@ public:
     last_guest_frame_ = guest_frame;
   }
 
-  [[nodiscard]] ActorShadowPresentationState &state(std::uint64_t actor,
-                                                    std::uint64_t guest_frame,
-                                                    std::size_t vertex_count,
-                                                    std::size_t edge_count) {
+  [[nodiscard]] ActorShadowPresentationState &
+  state(std::uint64_t actor, std::uint64_t guest_frame,
+        const void *body_geometry, const void *attachment_geometry,
+        std::size_t vertex_count, std::size_t edge_count) {
     auto found =
         std::ranges::find(states_, actor, &ActorShadowPresentationState::actor);
     if (found == states_.end()) {
@@ -3925,8 +3901,12 @@ public:
       found = std::prev(states_.end());
     }
     found->last_seen_guest_frame = guest_frame;
-    if (found->receivers.size() != vertex_count ||
+    if (found->body_geometry != body_geometry ||
+        found->attachment_geometry != attachment_geometry ||
+        found->receivers.size() != vertex_count ||
         found->edge_receivers.size() != edge_count) {
+      found->body_geometry = body_geometry;
+      found->attachment_geometry = attachment_geometry;
       found->receiver_guest_frame = std::numeric_limits<std::uint64_t>::max();
       found->support = {};
       found->projection = {};
@@ -3934,6 +3914,14 @@ public:
       found->edge_receivers.assign(edge_count, ActorShadowCachedReceiver{});
     }
     return *found;
+  }
+
+  void transitionRoom() noexcept {
+    for (auto &state : states_) {
+      state.receiver_guest_frame = std::numeric_limits<std::uint64_t>::max();
+      std::ranges::fill(state.receivers, ActorShadowCachedReceiver{});
+      std::ranges::fill(state.edge_receivers, ActorShadowCachedReceiver{});
+    }
   }
 
   void reset() noexcept {
@@ -3984,6 +3972,8 @@ struct PrimitiveBuffer {
   // Actor geometry is consumed immediately; these reusable vectors never
   // enter an ordering table and avoid per-actor allocations at high FPS.
   std::vector<Vector3> hmd_world_vertex_scratch;
+  std::vector<Vector3> actor_shadow_world_vertex_scratch;
+  std::vector<ActorShadowTriangle> actor_shadow_triangle_scratch;
   std::vector<std::optional<ActorShadowReceiverVertex>>
       actor_shadow_receiver_scratch;
 
@@ -4031,6 +4021,8 @@ struct PrimitiveBuffer {
     guest_raw_gouraud_triangles.reset();
     guest_raw_modes.reset();
     hmd_world_vertex_scratch.clear();
+    actor_shadow_world_vertex_scratch.clear();
+    actor_shadow_triangle_scratch.clear();
     actor_shadow_receiver_scratch.clear();
   }
 
@@ -4230,6 +4222,63 @@ struct VertexColor {
   std::uint8_t red;
   std::uint8_t green;
   std::uint8_t blue;
+};
+
+struct LocalSceneLightingSample {
+  std::uint16_t model{};
+  std::uint16_t section{};
+  std::uint32_t polygon{};
+  std::array<std::size_t, 3U> corners{};
+};
+
+struct LocalSceneLightingCacheEntry {
+  assets::MissionTransform transform;
+  std::optional<LocalSceneLightingSample> sample;
+};
+
+class LocalSceneLightingCache final {
+public:
+  void beginFrame(std::uint16_t room,
+                  std::span<const std::uint16_t> active_models,
+                  std::size_t object_count) {
+    if (room == room_ && entries_.size() == object_count &&
+        std::ranges::equal(active_models_, active_models)) {
+      return;
+    }
+    room_ = room;
+    active_models_.assign(active_models.begin(), active_models.end());
+    entries_.assign(object_count, std::nullopt);
+  }
+
+  [[nodiscard]] const LocalSceneLightingCacheEntry *
+  find(std::size_t object_index,
+       const assets::MissionTransform &transform) const noexcept {
+    if (object_index >= entries_.size() || !entries_[object_index]) {
+      return nullptr;
+    }
+    const auto &entry = *entries_[object_index];
+    return sameTransform(entry.transform, transform) ? &entry : nullptr;
+  }
+
+  void store(std::size_t object_index,
+             const assets::MissionTransform &transform,
+             std::optional<LocalSceneLightingSample> sample) noexcept {
+    if (object_index < entries_.size()) {
+      entries_[object_index] = LocalSceneLightingCacheEntry{transform, sample};
+    }
+  }
+
+private:
+  [[nodiscard]] static bool
+  sameTransform(const assets::MissionTransform &left,
+                const assets::MissionTransform &right) noexcept {
+    return left.x == right.x && left.y == right.y && left.z == right.z &&
+           left.rotation == right.rotation;
+  }
+
+  std::uint16_t room_{std::numeric_limits<std::uint16_t>::max()};
+  std::vector<std::uint16_t> active_models_;
+  std::vector<std::optional<LocalSceneLightingCacheEntry>> entries_;
 };
 
 struct TexturedVertex {
@@ -4766,9 +4815,14 @@ public:
     }
   }
 
-  void advance() {
+  void advance(unsigned int guest_ticks) {
+    if (guest_ticks == 0U) {
+      return;
+    }
     for (auto &shard : shards_) {
-      ++shard.age;
+      shard.age = static_cast<std::uint16_t>(std::min<unsigned int>(
+          static_cast<unsigned int>(shard.age) + guest_ticks,
+          std::numeric_limits<std::uint16_t>::max()));
     }
     std::erase_if(
         shards_, [](const auto &shard) { return shard.age >= shard.lifetime; });
@@ -5432,8 +5486,8 @@ void worldCalloutAnchors(
     if (!anchor || callout.text.empty()) {
       continue;
     }
-    result.push_back(
-        WorldCalloutAnchor{*anchor, callout.text, callout.headshot});
+    result.push_back(WorldCalloutAnchor{*anchor, callout.object, callout.text,
+                                        callout.headshot});
   }
 }
 
@@ -5906,7 +5960,7 @@ void renderGmdObject(
     const game::CameraState &camera, const MATRIX &view,
     std::vector<OT_TAG> &ordering_table, PrimitiveBuffer &primitives,
     RenderStats &stats, VertexColor back_color = {128U, 128U, 128U},
-    bool force_two_sided = false
+    bool force_two_sided = false, bool force_semi_transparent = false
 #if defined(SF_ENABLE_SURFACE_PICKER)
     ,
     const SurfacePickerObjectContext *picker_context = nullptr) {
@@ -5914,6 +5968,8 @@ void renderGmdObject(
 ) {
 #endif
   const auto reverse_winding = reversesWinding(object.transform);
+  const auto apply_scene_lighting =
+      game::objectVisualEffectReceivesSceneLighting(visual_effect);
   for (auto triangle_index = std::size_t{};
        triangle_index < model.triangles().size(); ++triangle_index) {
     const auto &triangle = model.triangles()[triangle_index];
@@ -5941,20 +5997,24 @@ void renderGmdObject(
     if (near_status == NearPlaneStatus::intersecting) {
       const auto normal = visibleSurfaceNormal(positions);
       const std::array textured{
-          makeTexturedVertex(v0, triangle.uv[0], back_color, true, normal),
-          makeTexturedVertex(v1, triangle.uv[1], back_color, true, normal),
-          makeTexturedVertex(v2, triangle.uv[2], back_color, true, normal),
+          makeTexturedVertex(v0, triangle.uv[0], back_color,
+                             apply_scene_lighting, normal),
+          makeTexturedVertex(v1, triangle.uv[1], back_color,
+                             apply_scene_lighting, normal),
+          makeTexturedVertex(v2, triangle.uv[2], back_color,
+                             apply_scene_lighting, normal),
       };
-      submitClippedTriangle(textured,
-                            TexturedMaterial{
-                                triangle.texture_page,
-                                triangle.clut,
-                                triangle.semi_transparent,
-                                false,
-                                static_cast<std::uint8_t>(texture_bank),
-                            },
-                            two_sided_effect, reverse_winding, view,
-                            ordering_table, primitives.objects, stats);
+      submitClippedTriangle(
+          textured,
+          TexturedMaterial{
+              triangle.texture_page,
+              triangle.clut,
+              triangle.semi_transparent || force_semi_transparent,
+              false,
+              static_cast<std::uint8_t>(texture_bank),
+          },
+          two_sided_effect, reverse_winding, view, ordering_table,
+          primitives.objects, stats);
       continue;
     }
 
@@ -5973,11 +6033,16 @@ void renderGmdObject(
 
     auto &primitive = primitives.objects.emplace_back();
     configurePrimitive(primitive, triangle, texture_bank, back_color);
-    dynamicallyLight(primitive, positions);
+    if (force_semi_transparent) {
+      setSemiTrans(&primitive, 1);
+    }
+    if (apply_scene_lighting) {
+      dynamicallyLight(primitive, positions);
+    }
     setProjected(&primitive.x0, xy0);
     setProjected(&primitive.x1, xy1);
     setProjected(&primitive.x2, xy2);
-    if (!triangle.semi_transparent) {
+    if (!triangle.semi_transparent && !force_semi_transparent) {
       depthCuePrimitive(primitive,
                         {retailObjectDepthCue(cameraDepth(view, v0)),
                          retailObjectDepthCue(cameraDepth(view, v1)),
@@ -6008,35 +6073,50 @@ void renderGmdObject(
   }
 }
 
-void renderActorWeapon(const game::GameplaySession &gameplay,
-                       const assets::HmdModel &actor_model,
-                       const game::SceneObject &actor_object,
-                       const game::ActorPose &actor_pose, game::WeaponId weapon,
-                       unsigned int texture_bank, HmdPoseScratch &pose_scratch,
-                       const game::CameraState &camera, const MATRIX &view,
-                       std::vector<OT_TAG> &ordering_table,
-                       PrimitiveBuffer &primitives, RenderStats &stats) {
+struct ActorWeaponPresentation {
+  const assets::GmdModel *geometry{};
+  assets::MissionTransform transform{};
+};
+
+[[nodiscard]] std::optional<ActorWeaponPresentation>
+prepareActorWeaponPresentation(const game::GameplaySession &gameplay,
+                               const assets::HmdModel &actor_model,
+                               const game::SceneObject &actor_object,
+                               const game::ActorPose &actor_pose,
+                               game::WeaponId weapon,
+                               HmdPoseScratch &pose_scratch) {
   const auto *weapon_model = gameplay.weaponModel(weapon);
   if (weapon_model == nullptr) {
-    return;
+    return std::nullopt;
   }
   const auto *geometry = std::get_if<assets::GmdModel>(&weapon_model->geometry);
   if (geometry == nullptr) {
-    return;
+    return std::nullopt;
   }
   const auto transform = posedActorPartTransform(
       actor_model, actor_object, actor_pose, pose_scratch, "RightHan");
   if (!transform) {
-    return;
+    return std::nullopt;
   }
-  auto weapon_object = game::SceneObject{.transform = *transform};
+  return ActorWeaponPresentation{geometry, *transform};
+}
+
+void renderActorWeapon(const ActorWeaponPresentation &presentation,
+                       const game::SceneObject &actor_object,
+                       unsigned int texture_bank,
+                       const game::CameraState &camera, const MATRIX &view,
+                       std::vector<OT_TAG> &ordering_table,
+                       PrimitiveBuffer &primitives, RenderStats &stats,
+                       bool force_semi_transparent = false) {
+  auto weapon_object = game::SceneObject{.transform = presentation.transform};
   weapon_object.legacy_hmd_back_color_q12 =
       actor_object.legacy_hmd_back_color_q12;
   weapon_object.legacy_hmd_back_color_valid =
       actor_object.legacy_hmd_back_color_valid;
-  renderGmdObject(*geometry, weapon_object, game::ObjectVisualEffect::none,
-                  texture_bank, camera, view, ordering_table, primitives, stats,
-                  retailHmdBackColor(actor_object));
+  renderGmdObject(
+      *presentation.geometry, weapon_object, game::ObjectVisualEffect::none,
+      texture_bank, camera, view, ordering_table, primitives, stats,
+      retailHmdBackColor(actor_object), false, force_semi_transparent);
 }
 
 void prepareHmdWorldVertices(const assets::HmdModel &model,
@@ -6072,15 +6152,62 @@ void prepareHmdWorldVertices(const assets::HmdModel &model,
   }
 }
 
-void renderHmdObject(const assets::HmdModel &model,
-                     const game::SceneObject &object,
-                     const game::ActorPose *animation_pose,
-                     unsigned int texture_bank, HmdPoseScratch &pose_scratch,
-                     const MATRIX &view, std::vector<OT_TAG> &ordering_table,
-                     PrimitiveBuffer &primitives, RenderStats &stats,
-                     std::optional<VertexColor> back_color_override =
-                         std::nullopt,
-                     std::span<const Vector3> prepared_world_vertices = {}) {
+void prepareActorShadowGeometry(const assets::HmdModel &body_model,
+                                std::span<const Vector3> body_world_vertices,
+                                const ActorWeaponPresentation *weapon,
+                                PrimitiveBuffer &primitives) {
+  auto &vertices = primitives.actor_shadow_world_vertex_scratch;
+  auto &triangles = primitives.actor_shadow_triangle_scratch;
+  vertices.clear();
+  triangles.clear();
+  if (body_world_vertices.size() != body_model.vertices().size()) {
+    return;
+  }
+
+  const auto weapon_vertex_count =
+      weapon == nullptr ? std::size_t{} : weapon->geometry->vertices().size();
+  const auto weapon_triangle_count =
+      weapon == nullptr ? std::size_t{} : weapon->geometry->triangles().size();
+  vertices.reserve(body_world_vertices.size() + weapon_vertex_count);
+  triangles.reserve(body_model.triangles().size() + weapon_triangle_count);
+  vertices.assign(body_world_vertices.begin(), body_world_vertices.end());
+  for (const auto &triangle : body_model.triangles()) {
+    triangles.push_back(ActorShadowTriangle{{triangle.vertex_indices[0],
+                                             triangle.vertex_indices[1],
+                                             triangle.vertex_indices[2]}});
+  }
+  if (weapon == nullptr) {
+    return;
+  }
+
+  const auto vertex_offset = vertices.size();
+  for (const auto &vertex : weapon->geometry->vertices()) {
+    vertices.push_back(
+        transformPoint(vertex.x, vertex.y, vertex.z, weapon->transform));
+  }
+  for (const auto &triangle : weapon->geometry->triangles()) {
+    if (triangle.flags == 0U ||
+        std::ranges::any_of(triangle.vertex_indices, [&](std::uint8_t index) {
+          return index >= weapon->geometry->vertices().size();
+        })) {
+      continue;
+    }
+    triangles.push_back(
+        ActorShadowTriangle{{vertex_offset + triangle.vertex_indices[0],
+                             vertex_offset + triangle.vertex_indices[1],
+                             vertex_offset + triangle.vertex_indices[2]}});
+  }
+}
+
+void renderHmdObject(
+    const assets::HmdModel &model, const game::SceneObject &object,
+    const game::ActorPose *animation_pose, unsigned int texture_bank,
+    HmdPoseScratch &pose_scratch, const MATRIX &view,
+    std::vector<OT_TAG> &ordering_table, PrimitiveBuffer &primitives,
+    RenderStats &stats,
+    std::optional<VertexColor> back_color_override = std::nullopt,
+    std::span<const Vector3> prepared_world_vertices = {},
+    bool force_semi_transparent = false) {
   if (prepared_world_vertices.empty()) {
     prepareHmdWorldVertices(model, object, animation_pose, pose_scratch,
                             primitives.hmd_world_vertex_scratch);
@@ -6112,7 +6239,8 @@ void renderHmdObject(const assets::HmdModel &model,
       };
       submitClippedTriangle(
           textured,
-          TexturedMaterial{triangle.texture_page, triangle.clut, false, false,
+          TexturedMaterial{triangle.texture_page, triangle.clut,
+                           force_semi_transparent, false,
                            static_cast<std::uint8_t>(texture_bank)},
           true, false, view, ordering_table, primitives.objects, stats);
       continue;
@@ -6131,13 +6259,19 @@ void renderHmdObject(const assets::HmdModel &model,
     }
     auto &primitive = primitives.objects.emplace_back();
     configurePrimitive(primitive, triangle, texture_bank, back_color);
+    if (force_semi_transparent) {
+      setSemiTrans(&primitive, 1);
+    }
     dynamicallyLight(primitive, positions);
     setProjected(&primitive.x0, xy0);
     setProjected(&primitive.x1, xy1);
     setProjected(&primitive.x2, xy2);
-    depthCuePrimitive(primitive, {retailObjectDepthCue(cameraDepth(view, v0)),
-                                  retailObjectDepthCue(cameraDepth(view, v1)),
-                                  retailObjectDepthCue(cameraDepth(view, v2))});
+    if (!force_semi_transparent) {
+      depthCuePrimitive(primitive,
+                        {retailObjectDepthCue(cameraDepth(view, v0)),
+                         retailObjectDepthCue(cameraDepth(view, v1)),
+                         retailObjectDepthCue(cameraDepth(view, v2))});
+    }
     addPrim(&ordering_table[std::clamp(depth, 1, ordering_table_size - 1)],
             &primitive);
     const std::array projected{xy0, xy1, xy2};
@@ -6148,13 +6282,13 @@ void renderHmdObject(const assets::HmdModel &model,
 void renderActorShadow(
     const game::GameplaySession &gameplay, const assets::HmdModel &model,
     const game::SceneObject &object, std::span<const Vector3> world_vertices,
-    game::DynamicLightPoint support_root, std::uint64_t actor_shadow_key,
-    std::uint64_t guest_frame, double interpolation_amount,
-    ActorShadowPresentationCache &shadow_cache, const MATRIX &view,
-    std::vector<OT_TAG> &shadow_ordering_table, PrimitiveBuffer &primitives,
-    RenderStats &stats) {
-  if (world_vertices.size() != model.vertices().size() ||
-      model.triangles().empty()) {
+    std::span<const ActorShadowTriangle> triangles,
+    const void *attachment_geometry, game::DynamicLightPoint support_root,
+    std::uint64_t actor_shadow_key, std::uint64_t guest_frame,
+    double interpolation_amount, ActorShadowPresentationCache &shadow_cache,
+    const MATRIX &view, std::vector<OT_TAG> &shadow_ordering_table,
+    PrimitiveBuffer &primitives, RenderStats &stats) {
+  if (world_vertices.size() < model.vertices().size() || triangles.empty()) {
     return;
   }
   auto minimum_y = std::numeric_limits<double>::max();
@@ -6171,9 +6305,9 @@ void renderActorShadow(
   const auto root = transformPoint(0.0, 0.0, 0.0, object.transform);
   const auto actor_anchor =
       game::DynamicLightPoint{root.x, (minimum_y + contact_y) * 0.5, root.z};
-  auto &shadow_state =
-      shadow_cache.state(actor_shadow_key, guest_frame, world_vertices.size(),
-                         model.triangles().size() * 3U);
+  auto &shadow_state = shadow_cache.state(
+      actor_shadow_key, guest_frame, &model, attachment_geometry,
+      world_vertices.size(), triangles.size() * 3U);
   const auto refresh_shadow_tick =
       !shadow_state.support.initialized ||
       shadow_state.support.guest_tick != guest_frame;
@@ -6182,10 +6316,14 @@ void renderActorShadow(
     if (const auto surface = gameplay.actorGroundSurface(
             support_root.x, support_root.z, support_root.y);
         surface && std::abs(surface->y - support_root.y) <= 1200.0) {
+      auto support_normal = game::DynamicLightPoint{
+          surface->normal_x, surface->normal_y, surface->normal_z};
+      if (support_normal.y < 0.0) {
+        support_normal = {-support_normal.x, -support_normal.y,
+                          -support_normal.z};
+      }
       target_support = ActorShadowReceiverPlane{
-          {support_root.x, surface->y, support_root.z},
-          {surface->normal_x, surface->normal_y, surface->normal_z},
-          false};
+          {support_root.x, surface->y, support_root.z}, support_normal, false};
     }
     shadow_state.support = advanceActorShadowSupport(
         shadow_state.support, target_support, guest_frame);
@@ -6194,7 +6332,7 @@ void renderActorShadow(
           support_root.x, support_root.y + (actor_anchor.y - root.y),
           support_root.z};
       const auto target_projection = game::selectDynamicShadowProjection(
-          active_dynamic_lights, authoritative_anchor,
+          active_dynamic_shadow_lights, authoritative_anchor,
           shadow_state.support.current.normal);
       shadow_state.projection = game::advanceDynamicShadowProjection(
           shadow_state.projection, target_projection, guest_frame);
@@ -6281,8 +6419,8 @@ void renderActorShadow(
     long flags{};
     const auto depth =
         RotTransPers3(&v0, &v1, &v2, &xy0, &xy1, &xy2, &depth_cue, &flags);
-    if (depth <= 0 || flags != 0L || !projected_valid(xy0) ||
-        !projected_valid(xy1) || !projected_valid(xy2)) {
+    if (depth <= 0 || !projected_valid(xy0) || !projected_valid(xy1) ||
+        !projected_valid(xy2)) {
       return;
     }
     const auto area =
@@ -6315,10 +6453,10 @@ void renderActorShadow(
     return first.normal.x * second.normal.x + first.normal.y * second.normal.y +
            first.normal.z * second.normal.z;
   };
-  for (auto triangle_index = std::size_t{};
-       triangle_index < model.triangles().size(); ++triangle_index) {
-    const auto &triangle = model.triangles()[triangle_index];
-    if (std::ranges::any_of(triangle.vertex_indices, [&](std::uint16_t index) {
+  for (auto triangle_index = std::size_t{}; triangle_index < triangles.size();
+       ++triangle_index) {
+    const auto &triangle = triangles[triangle_index];
+    if (std::ranges::any_of(triangle.vertex_indices, [&](std::size_t index) {
           return index >= world_vertices.size() || !receivers[index];
         })) {
       continue;
@@ -7586,8 +7724,9 @@ void renderWeaponEffects(
 
 void renderEmdObject(
     const assets::EmdScene &scene, const game::SceneObject &object,
-    const MATRIX &view, std::vector<OT_TAG> &ordering_table,
-    PrimitiveBuffer &primitives, RenderStats &stats, bool retail_scrim = false
+    unsigned int texture_bank, const MATRIX &view,
+    std::vector<OT_TAG> &ordering_table, PrimitiveBuffer &primitives,
+    RenderStats &stats, bool retail_scrim = false
 #if defined(SF_ENABLE_SURFACE_PICKER)
     ,
     const SurfacePickerObjectContext *picker_context = nullptr) {
@@ -7595,7 +7734,6 @@ void renderEmdObject(
 ) {
 #endif
   const auto reverse_winding = reversesWinding(object.transform);
-  const auto texture_bank = scene.textureBank();
   for (auto section_index = std::size_t{};
        section_index < scene.sections().size(); ++section_index) {
     const auto &section = scene.sections()[section_index];
@@ -7781,15 +7919,21 @@ liveWorldVertexColors(const RenderPresentationSnapshot &presentation,
 
 VertexColor localSceneBackColor(const game::GameplaySession &gameplay,
                                 const RenderPresentationSnapshot &presentation,
+                                std::size_t object_index,
                                 const game::SceneObject &object,
-                                VertexColor fallback) {
+                                VertexColor fallback,
+                                LocalSceneLightingCache &cache) {
   const auto origin = transformPoint(0.0, 0.0, 0.0, object.transform);
-  auto nearest_vertical_distance = std::numeric_limits<double>::max();
-  auto result = fallback;
-  const auto consider = [&](const assets::EmdSection &section,
-                            const assets::EmdPolygon &polygon,
-                            std::span<const std::uint16_t> live_colors,
-                            std::array<std::size_t, 3U> corners) {
+  struct SampledLighting {
+    double vertical_distance{};
+    VertexColor color{};
+  };
+  const auto sample_triangle =
+      [&](const assets::EmdSection &section,
+          const assets::EmdPolygon &polygon,
+          std::span<const std::uint16_t> live_colors,
+          std::array<std::size_t, 3U> corners)
+      -> std::optional<SampledLighting> {
     const auto point = [&](std::size_t corner) {
       const auto &source =
           section.vertices[polygon.vertex_indices[corners[corner]]];
@@ -7809,18 +7953,74 @@ VertexColor localSceneBackColor(const game::GameplaySession &gameplay,
         {point(0U), point(1U), point(2U)}, {color(0U), color(1U), color(2U)},
         {origin.x, origin.y, origin.z});
     if (!sample) {
+      return std::nullopt;
+    }
+    return SampledLighting{
+        .vertical_distance = std::abs(sample->surface_y - origin.y),
+        .color = {sample->color.red, sample->color.green, sample->color.blue},
+    };
+  };
+  const auto sample_reference =
+      [&](const LocalSceneLightingSample &reference)
+      -> std::optional<VertexColor> {
+    if (reference.model >= gameplay.models().size()) {
+      return std::nullopt;
+    }
+    const auto &scene = gameplay.models()[reference.model].scene;
+    if (reference.section >= scene.sections().size()) {
+      return std::nullopt;
+    }
+    const auto &section = scene.sections()[reference.section];
+    if (reference.polygon >= section.polygons.size()) {
+      return std::nullopt;
+    }
+    const auto &polygon = section.polygons[reference.polygon];
+    const auto live_colors = liveWorldVertexColors(
+        presentation, reference.model, reference.section,
+        section.vertices.size());
+    const auto sampled =
+        sample_triangle(section, polygon, live_colors, reference.corners);
+    return sampled ? std::optional<VertexColor>{sampled->color} : std::nullopt;
+  };
+  if (const auto *cached = cache.find(object_index, object.transform)) {
+    if (!cached->sample) {
+      return fallback;
+    }
+    if (const auto sampled = sample_reference(*cached->sample)) {
+      return *sampled;
+    }
+  }
+
+  auto nearest_vertical_distance = std::numeric_limits<double>::max();
+  auto result = fallback;
+  std::optional<LocalSceneLightingSample> nearest_reference;
+  const auto consider = [&](std::uint16_t model_index,
+                            std::uint16_t section_index,
+                            std::uint32_t polygon_index,
+                            const assets::EmdSection &section,
+                            const assets::EmdPolygon &polygon,
+                            std::span<const std::uint16_t> live_colors,
+                            std::array<std::size_t, 3U> corners) {
+    const auto sample =
+        sample_triangle(section, polygon, live_colors, corners);
+    if (!sample) {
       return;
     }
-    const auto vertical_distance = std::abs(sample->surface_y - origin.y);
     // Crate roots sit above their supporting plane. This bound spans the
     // complete retail crate while rejecting another storey of the map.
     constexpr auto maximum_vertical_distance = 768.0;
-    if (vertical_distance > maximum_vertical_distance ||
-        vertical_distance >= nearest_vertical_distance) {
+    if (sample->vertical_distance > maximum_vertical_distance ||
+        sample->vertical_distance >= nearest_vertical_distance) {
       return;
     }
-    nearest_vertical_distance = vertical_distance;
-    result = {sample->color.red, sample->color.green, sample->color.blue};
+    nearest_vertical_distance = sample->vertical_distance;
+    result = sample->color;
+    nearest_reference = LocalSceneLightingSample{
+        .model = model_index,
+        .section = section_index,
+        .polygon = polygon_index,
+        .corners = corners,
+    };
   };
   for (const auto model_index : gameplay.activeModels()) {
     if (model_index >= gameplay.models().size()) {
@@ -7833,17 +8033,24 @@ VertexColor localSceneBackColor(const game::GameplaySession &gameplay,
       const auto live_colors = liveWorldVertexColors(
           presentation, model_index, static_cast<std::uint16_t>(section_index),
           section.vertices.size());
-      for (const auto &polygon : section.polygons) {
+      for (std::size_t polygon_index = 0U;
+           polygon_index < section.polygons.size(); ++polygon_index) {
+        const auto &polygon = section.polygons[polygon_index];
         if (!polygon.renderable) {
           continue;
         }
-        consider(section, polygon, live_colors, {0U, 1U, 2U});
+        consider(model_index, static_cast<std::uint16_t>(section_index),
+                 static_cast<std::uint32_t>(polygon_index), section, polygon,
+                 live_colors, {0U, 1U, 2U});
         if (polygon.quad) {
-          consider(section, polygon, live_colors, {1U, 3U, 2U});
+          consider(model_index, static_cast<std::uint16_t>(section_index),
+                   static_cast<std::uint32_t>(polygon_index), section,
+                   polygon, live_colors, {1U, 3U, 2U});
         }
       }
     }
   }
+  cache.store(object_index, object.transform, nearest_reference);
   return result;
 }
 
@@ -7863,6 +8070,7 @@ void renderObjects(const game::GameplaySession &gameplay,
 #endif
                    std::vector<OT_TAG> &fire_ordering_table,
                    ActorShadowPresentationCache &shadow_cache,
+                   LocalSceneLightingCache &local_scene_lighting_cache,
                    HmdPoseScratch &pose_scratch, PrimitiveBuffer &primitives,
                    RenderStats &stats
 #if defined(SF_ENABLE_SURFACE_PICKER)
@@ -7876,6 +8084,19 @@ void renderObjects(const game::GameplaySession &gameplay,
       continue;
     }
     const auto &object = presentation.objects[object_index];
+    const auto &source_object = gameplay.objects()[object_index];
+    const auto scanner_subject =
+        source_object.model < gameplay.objectModels().size() &&
+        source_object.destroyed_model &&
+        *source_object.destroyed_model < gameplay.objectModels().size() &&
+        game::legacyVirusScannerMarker(
+            gameplay.missionIndex(), source_object.class_id,
+            gameplay.objectModels()[source_object.model].name,
+            gameplay.objectModels()[*source_object.destroyed_model].name);
+    if (scanner_subject) {
+      // Scanner markers never belong to the ordinary world pass.
+      continue;
+    }
     const auto *displayed_model = gameplay.displayedObjectModel(object_index);
     if (displayed_model == nullptr) {
       continue;
@@ -7915,12 +8136,13 @@ void renderObjects(const game::GameplaySession &gameplay,
       // emissive billboards/lightbars deliberately retain their own intensity.
       const auto back_color =
           object_model.visual_effect == game::ObjectVisualEffect::none
-              ? localSceneBackColor(gameplay, presentation, object,
-                                    guest_back_color)
+              ? localSceneBackColor(gameplay, presentation, object_index,
+                                    object, guest_back_color,
+                                    local_scene_lighting_cache)
               : guest_back_color;
       renderGmdObject(*model, object, object_model.visual_effect, texture_bank,
                       presentation.camera, view, ordering_table, primitives,
-                      stats, back_color, false
+                      stats, back_color, false, false
 #if defined(SF_ENABLE_SURFACE_PICKER)
                       ,
                       active_picker_context
@@ -7953,14 +8175,28 @@ void renderObjects(const game::GameplaySession &gameplay,
                               primitives.hmd_world_vertex_scratch);
       const auto world_vertices =
           std::span<const Vector3>{primitives.hmd_world_vertex_scratch};
+      auto weapon = gameplay.legacyDedicatedActorWeapon(object_index);
+      if (!weapon && state != nullptr && state->health != 0U) {
+        weapon = state->weapon;
+      }
+      const auto weapon_presentation =
+          weapon ? prepareActorWeaponPresentation(gameplay, *hmd_model, object,
+                                                  pose, *weapon, pose_scratch)
+                 : std::nullopt;
       if (state != nullptr || dedicated_presentation) {
         const auto &support_object = object_index < gameplay.objects().size()
                                          ? gameplay.objects()[object_index]
                                          : object;
         const auto support_origin =
             transformPoint(0.0, 0.0, 0.0, support_object.transform);
+        prepareActorShadowGeometry(
+            *hmd_model, world_vertices,
+            weapon_presentation ? &*weapon_presentation : nullptr, primitives);
         renderActorShadow(
-            gameplay, *hmd_model, object, world_vertices,
+            gameplay, *hmd_model, object,
+            primitives.actor_shadow_world_vertex_scratch,
+            primitives.actor_shadow_triangle_scratch,
+            weapon_presentation ? weapon_presentation->geometry : nullptr,
             {support_origin.x, support_origin.y, support_origin.z},
             object_index, presentation.guest_frame, interpolation_amount,
             shadow_cache, view, shadow_ordering_table, primitives, stats);
@@ -7973,20 +8209,16 @@ void renderObjects(const game::GameplaySession &gameplay,
         // in dark rooms, so use the surrounding active map light until the
         // exact retail value becomes available again.
         back_color =
-            localSceneBackColor(gameplay, presentation, object, back_color);
+            localSceneBackColor(gameplay, presentation, object_index, object,
+                                back_color, local_scene_lighting_cache);
       }
       renderHmdObject(*hmd_model, object, render_pose, texture_bank,
                       pose_scratch, view, ordering_table, primitives, stats,
                       back_color, world_vertices);
-      auto weapon = gameplay.legacyDedicatedActorWeapon(object_index);
-      if (!weapon && state != nullptr && state->health != 0U) {
-        weapon = state->weapon;
-      }
-      if (weapon) {
-        renderActorWeapon(gameplay, *hmd_model, object, pose, *weapon,
-                          game::resident_weapon_texture_bank, pose_scratch,
-                          presentation.camera, view, ordering_table, primitives,
-                          stats);
+      if (weapon_presentation) {
+        renderActorWeapon(
+            *weapon_presentation, object, game::resident_weapon_texture_bank,
+            presentation.camera, view, ordering_table, primitives, stats);
       }
     } else if (const auto *fire =
                    std::get_if<game::ObjectFireEmitter>(&geometry)) {
@@ -8001,8 +8233,9 @@ void renderObjects(const game::GameplaySession &gameplay,
 #if defined(SF_ENABLE_SURFACE_PICKER)
       picker_context.kind = SurfacePickerKind::emd_object;
 #endif
-      renderEmdObject(std::get<assets::EmdScene>(geometry), object, view,
-                      ordering_table, primitives, stats, false
+      renderEmdObject(std::get<assets::EmdScene>(geometry), object,
+                      texture_bank, view, ordering_table, primitives, stats,
+                      false
 #if defined(SF_ENABLE_SURFACE_PICKER)
                       ,
                       active_picker_context);
@@ -8011,6 +8244,43 @@ void renderObjects(const game::GameplaySession &gameplay,
 #endif
     }
   }
+}
+
+void renderVirusScannerMarker(const game::GameplaySession &gameplay,
+                              const RenderPresentationSnapshot &presentation,
+                              const MATRIX &view,
+                              std::vector<OT_TAG> &ordering_table,
+                              PrimitiveBuffer &primitives, RenderStats &stats) {
+  if (!virusScannerXrayActive(presentation.first_person_aim,
+                              gameplay.hud().inventory().current())) {
+    return;
+  }
+  const auto target = gameplay.legacyVirusScannerTargetObject();
+  const auto marker =
+      target ? gameplay.legacyVirusScannerMarkerObject(*target) : std::nullopt;
+  if (!marker || *marker >= gameplay.objects().size() ||
+      *marker >= presentation.objects.size()) {
+    return;
+  }
+  const auto &source = gameplay.objects()[*marker];
+  if (source.model >= gameplay.objectModels().size()) {
+    return;
+  }
+  const auto &marker_model = gameplay.objectModels()[source.model];
+  const auto *geometry = std::get_if<assets::GmdModel>(&marker_model.geometry);
+  if (geometry == nullptr) {
+    return;
+  }
+
+  // GRGLO is the authored four-triangle scanner reveal paired with BOMB.
+  // Submit it to the existing projected-overlay OT: it is drawn after the
+  // amber grade with world depth disabled, exactly where it can show through
+  // the enclosing crate without duplicating the 147-triangle corpse HMD.
+  renderGmdObject(*geometry, presentation.objects[*marker],
+                  game::ObjectVisualEffect::scanner_xray,
+                  gameplay.objectTextureBank(*marker), presentation.camera,
+                  view, ordering_table, primitives, stats, {220U, 104U, 36U},
+                  true);
 }
 
 void renderDroppedItemSprites(const HudTextureAtlas &textures,
@@ -8358,20 +8628,41 @@ void renderPresentedPlayer(
         transformPoint(0.0, 0.0, 0.0, support_player_object.transform);
     constexpr auto player_shadow_key =
         std::numeric_limits<std::uint64_t>::max();
-    renderActorShadow(gameplay, *player_model, player_object, world_vertices,
-                      {support_origin.x, support_origin.y, support_origin.z},
-                      player_shadow_key, presentation.guest_frame,
-                      interpolation_amount, shadow_cache, view,
-                      shadow_ordering_table, primitives, stats);
-    renderHmdObject(*player_model, player_object, &pose,
-                    game::resident_hmd_texture_bank, pose_scratch, view,
-                    ordering_table, primitives, stats, std::nullopt,
-                    world_vertices);
-    if (gameplay.playerAlive()) {
-      renderActorWeapon(gameplay, *player_model, player_object, pose,
-                        presented_weapon, game::resident_weapon_texture_bank,
-                        pose_scratch, presentation.camera, view, ordering_table,
-                        primitives, stats);
+    const auto weapon_presentation =
+        gameplay.playerAlive()
+            ? prepareActorWeaponPresentation(gameplay, *player_model,
+                                             player_object, pose,
+                                             presented_weapon, pose_scratch)
+            : std::nullopt;
+    prepareActorShadowGeometry(
+        *player_model, world_vertices,
+        weapon_presentation ? &*weapon_presentation : nullptr, primitives);
+    renderActorShadow(
+        gameplay, *player_model, player_object,
+        primitives.actor_shadow_world_vertex_scratch,
+        primitives.actor_shadow_triangle_scratch,
+        weapon_presentation ? weapon_presentation->geometry : nullptr,
+        {support_origin.x, support_origin.y, support_origin.z},
+        player_shadow_key, presentation.guest_frame, interpolation_amount,
+        shadow_cache, view, shadow_ordering_table, primitives, stats);
+    const auto visibility =
+        gameplay.playerAlive() && !gameplay.cinematic()
+            ? playerCameraVisibility(presentation.camera, presentation.player.x,
+                                     presentation.player.y,
+                                     presentation.player.z)
+            : PlayerCameraVisibility::opaque;
+    const auto translucent = visibility == PlayerCameraVisibility::translucent;
+    if (visibility != PlayerCameraVisibility::hidden) {
+      renderHmdObject(*player_model, player_object, &pose,
+                      game::resident_hmd_texture_bank, pose_scratch, view,
+                      ordering_table, primitives, stats, std::nullopt,
+                      world_vertices, translucent);
+    }
+    if (gameplay.playerAlive() &&
+        visibility != PlayerCameraVisibility::hidden && weapon_presentation) {
+      renderActorWeapon(*weapon_presentation, player_object,
+                        game::resident_weapon_texture_bank, presentation.camera,
+                        view, ordering_table, primitives, stats, translucent);
     }
   } else if (!gameplay.legacyRenderCommandsAuthoritative()) {
     renderPlayer(presentation.player, view, ordering_table, primitives, stats);
@@ -9297,6 +9588,16 @@ struct DynamicLightFrameScratch {
   std::vector<game::PersistentDynamicLightState> persistent;
   std::vector<game::TransientDynamicLightState> transient;
   std::vector<LegacyLightAccumulator> legacy_lights;
+  std::uint64_t guest_frame{std::numeric_limits<std::uint64_t>::max()};
+  bool valid{};
+
+  void reset() noexcept {
+    persistent.clear();
+    transient.clear();
+    legacy_lights.clear();
+    guest_frame = std::numeric_limits<std::uint64_t>::max();
+    valid = false;
+  }
 };
 
 void updateDynamicLightFrame(
@@ -9308,6 +9609,16 @@ void updateDynamicLightFrame(
         retail_muzzle_flashes,
     std::span<const game::GameplayEffect> native_muzzle_flashes,
     DynamicLightFrameScratch &scratch) {
+  // Retail lighting changes only on a 20 Hz guest update. Rebuilding and
+  // sorting it on every 120/240 Hz presentation repeated object, particle and
+  // muzzle scans up to twelve times for an identical scene state. Keeping the
+  // complete light frame also makes a one-tick muzzle flash last equally long
+  // at every configured presentation rate.
+  if (scratch.valid && scratch.guest_frame == presentation.guest_frame) {
+    return;
+  }
+  scratch.valid = true;
+  scratch.guest_frame = presentation.guest_frame;
   active_retail_vertex_lights.clear();
   active_retail_vertex_lights.reserve(presentation.vertex_lights.size());
   for (const auto &source : presentation.vertex_lights) {
@@ -9596,6 +9907,11 @@ void updateDynamicLightFrame(
       {presentation.camera.x, presentation.camera.y, presentation.camera.z},
       std::span{directional}.first(directional_count),
       presentation.guest_frame);
+  active_dynamic_shadow_lights = game::buildDynamicLightFrame(
+      persistent, std::span<const game::TransientDynamicLightState>{},
+      {presentation.camera.x, presentation.camera.y, presentation.camera.z},
+      std::span<const game::DirectionalDynamicLightState>{},
+      presentation.guest_frame);
   active_dynamic_light_observer = {presentation.camera.x, presentation.camera.y,
                                    presentation.camera.z};
 }
@@ -9670,6 +9986,7 @@ RenderStats renderWorld(
 #endif
     ActorShadowPresentationCache &shadow_cache,
     DynamicLightFrameScratch &dynamic_light_scratch,
+    LocalSceneLightingCache &local_scene_lighting_cache,
     WeaponEffectsScratch &weapon_effects_scratch, HmdPoseScratch &pose_scratch,
     PrimitiveBuffer &primitives
 #if defined(SF_ENABLE_SURFACE_PICKER)
@@ -9697,6 +10014,9 @@ RenderStats renderWorld(
   updateDynamicLightFrame(gameplay, actor_animations, presentation,
                           weapon_edges, retail_muzzle_flashes,
                           native_muzzle_flashes, dynamic_light_scratch);
+  local_scene_lighting_cache.beginFrame(gameplay.currentRoom(),
+                                        gameplay.activeModels(),
+                                        presentation.objects.size());
   const auto presented_player_weapon =
       presentation.flashlight_enabled ? game::WeaponId::flashlight
                                       : gameplay.hud().inventory().current();
@@ -9757,7 +10077,8 @@ RenderStats renderWorld(
       add_to_budget(object_polygon_count, scrim->polygonCount(),
                     "Retail SCRIM");
     }
-    const auto add_weapon_model = [&](game::WeaponId weapon) {
+    const auto add_weapon_model = [&](game::WeaponId weapon,
+                                      bool casts_shadow) {
       const auto *weapon_model = gameplay.weaponModel(weapon);
       if (weapon_model == nullptr) {
         return;
@@ -9767,6 +10088,9 @@ RenderStats renderWorld(
       if (geometry != nullptr) {
         add_to_budget(object_polygon_count, geometry->triangles().size(),
                       "Weapon model");
+        if (casts_shadow) {
+          add_shadow_budget(geometry->triangles().size(), "Weapon shadow");
+        }
       }
     };
     for (const auto object_index : gameplay.activeObjects()) {
@@ -9784,15 +10108,17 @@ RenderStats renderWorld(
         add_to_budget(object_polygon_count, hmd_model->triangles().size(),
                       "Actor model");
         const auto *state = gameplay.npcState(object_index);
-        if (state != nullptr ||
-            gameplay.legacyDedicatedActorPresentation(object_index)) {
+        const auto casts_shadow =
+            state != nullptr ||
+            gameplay.legacyDedicatedActorPresentation(object_index);
+        if (casts_shadow) {
           add_shadow_budget(hmd_model->triangles().size(), "Actor shadow");
         }
         if (const auto dedicated =
                 gameplay.legacyDedicatedActorWeapon(object_index)) {
-          add_weapon_model(*dedicated);
+          add_weapon_model(*dedicated, casts_shadow);
         } else if (state != nullptr && state->health != 0U) {
-          add_weapon_model(state->weapon);
+          add_weapon_model(state->weapon, casts_shadow);
         }
       } else if (std::holds_alternative<game::ObjectFireEmitter>(geometry)) {
         if (!gameplay.legacyEffectParticlesAuthoritative()) {
@@ -9805,13 +10131,33 @@ RenderStats renderWorld(
                       "Object scene");
       }
     }
+    // The scanner reveal is script-hidden from activeObjects. Reserve only its
+    // four authored GRGLO triangles; never duplicate the complete corpse HMD.
+    const auto scanner_active = virusScannerXrayActive(
+        presentation.first_person_aim, gameplay.hud().inventory().current());
+    if (const auto target = scanner_active
+                                ? gameplay.legacyVirusScannerTargetObject()
+                                : std::nullopt) {
+      const auto marker = gameplay.legacyVirusScannerMarkerObject(*target);
+      const auto model_index = marker && *marker < gameplay.objects().size()
+                                   ? gameplay.objects()[*marker].model
+                                   : std::numeric_limits<std::uint16_t>::max();
+      if (model_index < gameplay.objectModels().size()) {
+        const auto &geometry = gameplay.objectModels()[model_index].geometry;
+        if (const auto *gmd = std::get_if<assets::GmdModel>(&geometry)) {
+          add_to_budget(object_polygon_count, gmd->triangles().size(),
+                        "Virus scanner reveal");
+        }
+      }
+    }
     add_to_budget(object_polygon_count, glass_shards.size(), "Glass shards");
     if (const auto *player_model =
             std::get_if<assets::HmdModel>(&gameplay.playerModel().geometry)) {
       add_to_budget(object_polygon_count, player_model->triangles().size(),
                     "Player model");
       if (gameplay.playerAlive()) {
-        add_weapon_model(presented_player_weapon);
+        add_weapon_model(presented_player_weapon,
+                         !presentation.first_person_aim);
       }
       if (!presentation.first_person_aim) {
         add_shadow_budget(player_model->triangles().size(), "Player shadow");
@@ -10109,8 +10455,8 @@ RenderStats renderWorld(
     // excludes SCRIM from local vertex lights. Native presentation also gives
     // this semantic background its own non-depth-writing pass: the sky keeps
     // its retail painter order but can never compete with level geometry in Z.
-    renderEmdObject(*scrim, object, view, scrim_ordering_table, primitives,
-                    stats, true
+    renderEmdObject(*scrim, object, scrim->textureBank(), view,
+                    scrim_ordering_table, primitives, stats, true
 #if defined(SF_ENABLE_SURFACE_PICKER)
                     ,
                     surface_picker.active() ? &picker_context : nullptr
@@ -10127,8 +10473,8 @@ RenderStats renderWorld(
 #if defined(SF_ENABLE_SURFACE_PICKER)
                 surface_picker_ordering_table,
 #endif
-                fire_ordering_table, shadow_cache, pose_scratch, primitives,
-                stats
+                fire_ordering_table, shadow_cache, local_scene_lighting_cache,
+                pose_scratch, primitives, stats
 #if defined(SF_ENABLE_SURFACE_PICKER)
                 ,
                 surface_picker
@@ -10148,6 +10494,8 @@ RenderStats renderWorld(
   renderGuestCameraLists(gameplay, textures, presentation, retained_sprites,
                          retained_raw_packets, view, ordering_table,
                          guest_overlay_ordering_table, primitives, stats);
+  renderVirusScannerMarker(gameplay, presentation, view,
+                           guest_overlay_ordering_table, primitives, stats);
   renderPresentedPlayer(gameplay, actor_animations, player_animation_tick,
                         presented_player_weapon, interpolation_amount,
                         presentation, view, ordering_table,
@@ -10200,6 +10548,32 @@ void drawGameBrightness(std::uint8_t value) {
   // otherwise PsyCross re-enables PGXP depth while replaying the next split.
   DrawSync(0);
   GR_SetBlendMode(BM_NONE);
+}
+
+void drawVirusScannerFilter(bool active) {
+  if (!active) {
+    return;
+  }
+  // The retail scanner grades the scene into a dark amber inspection image.
+  // The separately rendered GRGLO/GDF pass remains untinted and therefore
+  // reads as the bright X-ray content behind otherwise opaque containers.
+  DrawSync(0);
+  GR_SetBlendMode(BM_AVERAGE);
+  GR_EnableDepth(0);
+  DR_TPAGE page{};
+  SetDrawTPage(&page, 1, 0, GetTPage(0, 0, 0, 0));
+  DrawPrim(&page);
+  TILE tile{};
+  setTile(&tile);
+  setSemiTrans(&tile, 1);
+  setRGB0(&tile, 112U, 62U, 18U);
+  setXY0(&tile, 0.0F, 0.0F);
+  setWH(&tile, static_cast<float>(screen_width),
+        static_cast<float>(screen_height));
+  DrawPrim(&tile);
+  DrawSync(0);
+  GR_SetBlendMode(BM_NONE);
+  GR_EnableDepth(1);
 }
 
 void drawRetailScreenFilter(
@@ -10264,7 +10638,8 @@ void drawMapFade(std::uint8_t intensity) {
 
 void drawHudSpriteAtResident(const assets::TimImage &image,
                              std::uint16_t resident_x, std::uint16_t resident_y,
-                             int x, int y, std::uint8_t brightness = 128U) {
+                             int x, int y, std::uint8_t brightness = 128U,
+                             bool raw_texture = false) {
   const auto page_x =
       static_cast<int>(resident_x & static_cast<std::uint16_t>(~63U));
   const auto page_y =
@@ -10291,6 +10666,7 @@ void drawHudSpriteAtResident(const assets::TimImage &image,
   setPolyFT4(&polygon);
   polygon.tpage = texture_page;
   polygon.clut = GetClut(hud_resident_clut_x, hud_resident_clut_y);
+  setShadeTex(&polygon, raw_texture ? 1 : 0);
   setRGB0(&polygon, brightness, brightness, brightness);
   setXY4(&polygon, static_cast<float>(x), static_cast<float>(y),
          static_cast<float>(x + width), static_cast<float>(y),
@@ -10307,14 +10683,15 @@ void drawHudSpriteAtResident(const assets::TimImage &image,
 }
 
 void drawHudSprite(const assets::TimImage &image, int x, int y,
-                   std::uint8_t brightness = 128U) {
+                   std::uint8_t brightness = 128U, bool raw_texture = false) {
   drawHudSpriteAtResident(image, hudResidentX(image.pixels().x),
-                          image.pixels().y, x, y, brightness);
+                          image.pixels().y, x, y, brightness, raw_texture);
 }
 
 void drawHudSpriteScaled(const assets::TimImage &image, float x, float y,
                          float width, float height,
-                         std::uint8_t brightness = 128U) {
+                         std::uint8_t brightness = 128U,
+                         bool raw_texture = false) {
   const auto resident_x = hudResidentX(image.pixels().x);
   const auto resident_y = image.pixels().y;
   const auto page_x =
@@ -10340,6 +10717,7 @@ void drawHudSpriteScaled(const assets::TimImage &image, float x, float y,
   setPolyFT4(&polygon);
   polygon.tpage = texture_page;
   polygon.clut = GetClut(hud_resident_clut_x, hud_resident_clut_y);
+  setShadeTex(&polygon, raw_texture ? 1 : 0);
   setRGB0(&polygon, brightness, brightness, brightness);
   setXY4(&polygon, x, y, x + width, y, x, y + height, x + width, y + height);
   setUV4(&polygon, static_cast<u_char>(u0), static_cast<u_char>(v0),
@@ -10867,9 +11245,19 @@ struct GameplayMessageLayout final {
   float block_height{8.0F};
 };
 
+struct WorldCalloutRevealState final {
+  std::uint16_t object{};
+  std::string text;
+  double visible_glyphs{};
+  bool present{};
+};
+
 struct GameplayHudScratch final {
   std::vector<std::optional<GameplayMessageLayout>> message_layouts;
   std::vector<std::uint8_t> retail_scope_messages;
+  std::vector<WorldCalloutRevealState> world_callout_reveals;
+  double reticle_reveal{1.0};
+  bool reticle_was_visible{};
 };
 
 std::size_t originalHudLineCount(std::string_view text) noexcept {
@@ -11201,7 +11589,7 @@ void drawOriginalStatusScale(int offset_x, int offset_y) {
 
 void drawOriginalRadar(const game::GameplaySession &gameplay,
                        const game::OriginalRadarGeometry &geometry,
-                       int offset_x, int offset_y) {
+                       std::int32_t heading, int offset_x, int offset_y) {
   constexpr int center_x = 39;
   constexpr int center_y = 200;
 
@@ -11303,8 +11691,7 @@ void drawOriginalRadar(const game::GameplaySession &gameplay,
   constexpr std::array<std::size_t, 8> compass_counts{1, 2, 1, 2, 1, 2, 1, 2};
   const auto compass_index =
       static_cast<std::size_t>(
-          (game::normalizeHeading(
-               static_cast<std::int64_t>(gameplay.player().yaw) + 1024) +
+          (game::normalizeHeading(static_cast<std::int64_t>(heading) + 1024) +
            256) /
           512) %
       compass.size();
@@ -11323,7 +11710,7 @@ void drawOriginalRadar(const game::GameplaySession &gameplay,
   constexpr double radar_range = 1920.0;
   const auto horizontal_radius = static_cast<double>(geometry.outer_half_width);
   const auto vertical_radius = static_cast<double>(geometry.outer_half_height);
-  const auto basis = game::headingBasis(gameplay.player().yaw);
+  const auto basis = game::headingBasis(heading);
   const auto target = gameplay.aimTarget();
   const auto &objects = gameplay.objects();
   const auto &models = gameplay.objectModels();
@@ -11398,11 +11785,15 @@ void drawOriginalRadar(const game::GameplaySession &gameplay,
   DrawPrim(&pointer);
 }
 
-void drawOriginalAimReticle(int center_x, int center_y, bool head_target) {
+void drawOriginalAimReticle(int center_x, int center_y, bool head_target,
+                            double reveal) {
   constexpr auto red = std::uint8_t{64U};
   constexpr auto green = std::uint8_t{255U};
   constexpr auto blue = std::uint8_t{64U};
   const auto geometry = game::originalAimReticleGeometry(head_target);
+  const auto eased_reveal = std::clamp(reveal, 0.0, 1.0);
+  const auto ray_slide =
+      static_cast<int>(std::lround((1.0 - eased_reveal * eased_reveal) * 12.0));
   const auto left = center_x - geometry.half_width;
   const auto right = center_x + geometry.half_width;
   const auto top = center_y - geometry.half_height;
@@ -11415,14 +11806,14 @@ void drawOriginalAimReticle(int center_x, int center_y, bool head_target) {
   drawSolidRect(left, bottom, right - left + 1, 1, red, green, blue);
   drawSolidRect(left, top, 1, bottom - top + 1, red, green, blue);
   drawSolidRect(right, top, 1, bottom - top + 1, red, green, blue);
-  drawSolidRect(left - geometry.horizontal_ray, center_y,
+  drawSolidRect(left - geometry.horizontal_ray - ray_slide, center_y,
                 geometry.horizontal_ray, 1, red, green, blue);
-  drawSolidRect(right + 1, center_y, geometry.horizontal_ray, 1, red, green,
-                blue);
-  drawSolidRect(center_x, top - geometry.vertical_ray, 1, geometry.vertical_ray,
+  drawSolidRect(right + 1 + ray_slide, center_y, geometry.horizontal_ray, 1,
                 red, green, blue);
-  drawSolidRect(center_x, bottom + 1, 1, geometry.vertical_ray, red, green,
-                blue);
+  drawSolidRect(center_x, top - geometry.vertical_ray - ray_slide, 1,
+                geometry.vertical_ray, red, green, blue);
+  drawSolidRect(center_x, bottom + 1 + ray_slide, 1, geometry.vertical_ray, red,
+                green, blue);
   drawSolidRect(center_x - 1, center_y, 3, 1, red, green, blue);
 }
 
@@ -11626,7 +12017,7 @@ void drawOriginalWeaponMenu(const HudTextureAtlas &textures,
                           (static_cast<int>(slot) - centre_slot) * spacing;
     for (std::size_t layer = 0; layer < layers.size(); ++layer) {
       drawHudSprite(textures.image(layers[layer]), centre_x + offsets[layer],
-                    origin_y + offset_y - heights[layer] / 2);
+                    origin_y + offset_y - heights[layer] / 2, 128U, true);
     }
   }
 }
@@ -11829,7 +12220,8 @@ void drawGameplayHud(const HudTextureAtlas &textures,
                      std::span<const WorldCalloutAnchor> world_callouts,
                      const KeyboardMouseBindings &bindings,
                      bool first_person_aim, std::int32_t aim_heading,
-                     double presented_weapon_switch_frames, int offset_x,
+                     double presented_weapon_switch_frames,
+                     double presentation_delta_seconds, int offset_x,
                      int offset_y, GameplayHudScratch &scratch) {
   const auto &hud = gameplay.hud();
   const auto target_locked = gameplay.targetLocked();
@@ -11918,7 +12310,7 @@ void drawGameplayHud(const HudTextureAtlas &textures,
   // This also makes the ARMOR/HEALTH label independent of radar visibility.
   DrawSync(0);
   drawOriginalRadar(gameplay, game::originalRadarGeometry(hud.revealFrame()),
-                    offset_x, offset_y);
+                    aim_heading, offset_x, offset_y);
   drawOriginalWeaponMenu(textures, hud, offset_x, offset_y);
 
   const auto &definition = hud.inventory().currentDefinition();
@@ -11964,7 +12356,7 @@ void drawGameplayHud(const HudTextureAtlas &textures,
                           icon_origin_y + static_cast<float>(offset_y) -
                               static_cast<float>(heights[index]) * 0.5F,
                           static_cast<float>(widths[index]),
-                          static_cast<float>(heights[index]));
+                          static_cast<float>(heights[index]), 128U, true);
     }
   }
   if (definition.shows_ammo) {
@@ -11984,6 +12376,21 @@ void drawGameplayHud(const HudTextureAtlas &textures,
   const auto scoped =
       first_person_aim && (weapon == game::WeaponId::nightvision_rifle ||
                            weapon == game::WeaponId::sniper_rifle);
+  const auto retail_optic_text =
+      first_person_aim && usesRetailEnglishOpticText(weapon);
+  const auto reticle_requested =
+      (first_person_aim || target_locked) && !thrown && !scoped;
+  if (reticle_requested != scratch.reticle_was_visible) {
+    scratch.reticle_was_visible = reticle_requested;
+    scratch.reticle_reveal = reticle_requested ? 0.0 : 1.0;
+  }
+  if (reticle_requested) {
+    constexpr double reticle_reveal_seconds = 0.14;
+    scratch.reticle_reveal =
+        std::min(1.0, scratch.reticle_reveal +
+                          std::max(0.0, presentation_delta_seconds) /
+                              reticle_reveal_seconds);
+  }
   if ((first_person_aim || target_locked) && !thrown) {
     if (scoped) {
       drawOriginalScope(textures, weapon, aim_heading,
@@ -12021,7 +12428,8 @@ void drawGameplayHud(const HudTextureAtlas &textures,
         }
       }
       if (reticle_visible) {
-        drawOriginalAimReticle(center_x, center_y, gameplay.headshotTargeted());
+        drawOriginalAimReticle(center_x, center_y, gameplay.headshotTargeted(),
+                               scratch.reticle_reveal);
         if (gameplay.headshotTargeted()) {
           const auto callout = std::ranges::find_if(
               world_callouts, [](const WorldCalloutAnchor &candidate) {
@@ -12055,15 +12463,43 @@ void drawGameplayHud(const HudTextureAtlas &textures,
     }
   }
 
+  for (auto &state : scratch.world_callout_reveals) {
+    state.present = false;
+  }
   for (const auto &callout : world_callouts) {
     if (callout.headshot) {
       continue;
     }
+    const auto localized = game::localizeTextCopy(callout.text);
+    auto state = std::ranges::find_if(
+        scratch.world_callout_reveals,
+        [&callout, &localized](const WorldCalloutRevealState &candidate) {
+          return candidate.object == callout.object &&
+                 candidate.text == localized;
+        });
+    if (state == scratch.world_callout_reveals.end()) {
+      scratch.world_callout_reveals.push_back(WorldCalloutRevealState{
+          .object = callout.object,
+          .text = localized,
+      });
+      state = std::prev(scratch.world_callout_reveals.end());
+    }
+    state->present = true;
+    constexpr double world_callout_glyphs_per_second = 20.0;
+    state->visible_glyphs = std::min(
+        static_cast<double>(originalHudDrawableGlyphCount(state->text)),
+        state->visible_glyphs + std::max(0.0, presentation_delta_seconds) *
+                                    world_callout_glyphs_per_second);
+    const auto visible_text = originalHudTextGlyphPrefix(
+        state->text, static_cast<std::size_t>(state->visible_glyphs));
     if (const auto projected = project_anchor(callout.point)) {
-      drawOriginalWorldCallout(textures, callout.text, projected->first,
+      drawOriginalWorldCallout(textures, visible_text, projected->first,
                                projected->second);
     }
   }
+  std::erase_if(
+      scratch.world_callout_reveals,
+      [](const WorldCalloutRevealState &state) { return !state.present; });
 
   // All locales retain the guest's lifetime, type-on colors and slide timing.
   // Native layout changes only wording/reflow and maps the live retail glyph
@@ -12082,12 +12518,16 @@ void drawGameplayHud(const HudTextureAtlas &textures,
   retail_scope_messages.clear();
   retail_scope_messages.reserve(messages.size());
   for (const auto &message : messages) {
-    const auto scope_message = isRetailScopeMessage(
-        scoped, message.channel, message.backdrop.has_value(),
-        message.glyphs.size());
-    const auto retail_scope_message = useRetailEnglishScopeFont(
-        scoped, game::russianLanguageActive(), message.channel,
-        message.backdrop.has_value(), message.glyphs.size());
+    const auto scope_message =
+        !message.force_gameplay_layout &&
+        isRetailScopeMessage(retail_optic_text, message.channel,
+                             message.backdrop.has_value(),
+                             message.glyphs.size());
+    const auto retail_scope_message =
+        !message.force_gameplay_layout &&
+        useRetailEnglishScopeFont(
+            retail_optic_text, game::russianLanguageActive(), message.channel,
+            message.backdrop.has_value(), message.glyphs.size());
     retail_scope_messages.push_back(retail_scope_message);
     message_layouts.push_back(scope_message
                                   ? std::nullopt
@@ -12842,7 +13282,8 @@ drawPauseWeaponIcon(const HudTextureAtlas &textures, std::uint32_t item,
         image,
         destination_center +
             (static_cast<float>(offsets[layer]) - group_center) * scale,
-        top + (draw_height - layer_height) * 0.5F, layer_width, layer_height);
+        top + (draw_height - layer_height) * 0.5F, layer_width, layer_height,
+        128U, true);
   }
   DrawSync(0);
 
@@ -12996,22 +13437,27 @@ bool drawPauseMenu(const game::PauseMenu &menu,
       continue;
     }
     const auto animated_bounds = animatedScreenCommandBounds(menu, command);
-    const auto drawn =
-        command.kind == game::PauseRenderKind::weapon_icon
-            ? drawPauseWeaponIcon(interface_textures, command.id,
-                                  animated_bounds)
-            : drawPauseTexture(textures, command.asset, animated_bounds);
-    const auto fallback =
-        !drawn && command.kind == game::PauseRenderKind::weapon_icon &&
-                !command.asset.empty()
-            ? drawPauseTexture(textures, command.asset, animated_bounds)
-            : std::optional<game::PauseRect>{};
-    if (drawn || fallback) {
+    auto drawn = std::optional<game::PauseRect>{};
+    if (command.kind == game::PauseRenderKind::weapon_icon) {
+      // MENU.HOG contains the original pre-rendered weapon artwork shown by
+      // the retail pause menu. HUD/pickup sprites are only a safe fallback
+      // for a damaged or incomplete archive.
+      drawn = command.asset.empty()
+                  ? std::nullopt
+                  : drawPauseTexture(textures, command.asset, animated_bounds);
+      if (!drawn) {
+        drawn = drawPauseWeaponIcon(interface_textures, command.id,
+                                    animated_bounds);
+      }
+    } else {
+      drawn = drawPauseTexture(textures, command.asset, animated_bounds);
+    }
+    if (drawn) {
       texture_uploaded = true;
       if (command.kind == game::PauseRenderKind::asset &&
           std::string_view{command.asset}.starts_with("MAP")) {
         map_command_bounds = animated_bounds;
-        map_draw_bounds = drawn ? *drawn : *fallback;
+        map_draw_bounds = *drawn;
       }
     } else {
       drawBorderedRect(animated_bounds, PauseRgb{0U, 0U, 0U},
@@ -13291,7 +13737,7 @@ void PsyCrossCampaignSaveRenderer::draw(const game::CampaignSaveMenu &menu,
          game::PauseTextAlignment::center);
     text("Save completed mission data", {236, 44, 109, 48});
     text("%x select", game::PauseAcdLayout::hint, normal);
-  } else {
+  } else if (menu.phase() == game::CampaignSavePhase::slots) {
     text("Memory Card", {52, 54, 165, 10}, selected,
          game::PauseTextAlignment::center);
     for (std::size_t index = 0; index < slots.size(); ++index) {
@@ -13312,6 +13758,19 @@ void PsyCrossCampaignSaveRenderer::draw(const game::CampaignSaveMenu &menu,
     }
     text("Choose a save slot", {236, 44, 109, 48});
     text("%x save   %t back", game::PauseAcdLayout::hint, normal);
+  } else {
+    text("Overwrite existing files?", {52, 76, 165, 12}, normal,
+         game::PauseTextAlignment::center);
+    drawBorderedRect({66, 101, 58, 17}, {0U, 0U, 0U},
+                     menu.overwriteSelected() ? selected : muted);
+    drawBorderedRect({144, 101, 58, 17}, {0U, 0U, 0U},
+                     menu.overwriteSelected() ? muted : selected);
+    text("Yes", {66, 106, 58, 9}, menu.overwriteSelected() ? selected : normal,
+         game::PauseTextAlignment::center);
+    text("No", {144, 106, 58, 9}, menu.overwriteSelected() ? normal : selected,
+         game::PauseTextAlignment::center);
+    text("Overwrite existing files?", {236, 44, 109, 48});
+    text("%x select   %t back", game::PauseAcdLayout::hint, normal);
   }
   DrawSync(0);
 }
@@ -13451,6 +13910,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
   PrimitiveBuffer primitives;
   ActorShadowPresentationCache actor_shadow_cache;
   DynamicLightFrameScratch dynamic_light_scratch;
+  LocalSceneLightingCache local_scene_lighting_cache;
   WeaponEffectsScratch weapon_effects_scratch;
   HmdPoseScratch hmd_pose_scratch;
   std::vector<WorldCalloutAnchor> world_callout_scratch;
@@ -13471,7 +13931,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
       1.0 / static_cast<double>(retail_audio_callback_hz);
   constexpr double maximum_frame_time_seconds = 0.25;
   constexpr unsigned int maximum_backlog_updates = 5U;
-  constexpr unsigned int maximum_updates_per_presentation = 2U;
+  constexpr unsigned int maximum_updates_per_presentation = 1U;
   constexpr unsigned int maximum_audio_backlog_updates = 30U;
   constexpr unsigned int maximum_audio_updates_per_presentation = 30U;
   constexpr double quick_turn_tap_seconds = 0.1;
@@ -13492,6 +13952,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
   double dpad_down_held_seconds = 0.0;
   double simulation_accumulator_seconds = 0.0;
   double audio_accumulator_seconds = 0.0;
+  double presentation_delta_seconds = 0.0;
   game::GameplayInput latched_gameplay_input{};
   sf::platform::PlayerLookLatch latched_player_look;
   sf::platform::PlayerLookDisplayIntegrator display_player_look;
@@ -13555,9 +14016,13 @@ SceneViewerResult PsyCrossSceneViewer::run(
   game::GameplayMuzzleFlashPresentationQueue muzzle_flash_edges;
   game::LegacyScrimCopyPresentationQueue scrim_copy_edges;
   GlassShatterPresentation glass_shatter;
+  game::LegacyDroppedItemPresentationCache dropped_item_presentation;
   glass_shatter.reset(gameplay);
   RenderPresentationSnapshot current_render_presentation;
   captureRenderPresentation(gameplay, current_render_presentation);
+  dropped_item_presentation.reconcile(
+      current_render_presentation.guest_frame,
+      current_render_presentation.dropped_items);
   auto current_weapon_switch_countdown = gameplay.hud().weaponSwitchFrames();
   auto previous_weapon_switch_countdown = current_weapon_switch_countdown;
   weapon_presentation_edges.observe(gameplay.legacyPresentationFrame());
@@ -13566,15 +14031,21 @@ SceneViewerResult PsyCrossSceneViewer::run(
   auto previous_render_presentation = current_render_presentation;
   auto interpolated_render_presentation = current_render_presentation;
   const auto reset_render_presentation = [&] {
+    dropped_item_presentation.reset();
     captureRenderPresentation(gameplay, current_render_presentation);
+    dropped_item_presentation.reconcile(
+        current_render_presentation.guest_frame,
+        current_render_presentation.dropped_items);
     previous_render_presentation = current_render_presentation;
     interpolated_render_presentation = current_render_presentation;
+    gameplay_hud_scratch = {};
     current_weapon_switch_countdown = gameplay.hud().weaponSwitchFrames();
     previous_weapon_switch_countdown = current_weapon_switch_countdown;
     weapon_presentation_edges.reset();
     muzzle_flash_edges.reset();
     glass_shatter.reset(gameplay);
     actor_shadow_cache.reset();
+    dynamic_light_scratch.reset();
     primitives.invalidateCapacityPlan();
     weapon_presentation_edges.observe(gameplay.legacyPresentationFrame());
     muzzle_flash_edges.observe(gameplay.effects());
@@ -13612,6 +14083,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
     pause_settings_initialized_ = true;
   }
   ui_audio.setVolumePercent(pause_settings.sound_effects_volume);
+  ui_audio.setVoiceVolumePercent(pause_settings.voice_volume);
   game::PauseMenu pause_menu;
   std::optional<game::RetailCheat> latched_pause_cheat;
   std::uint64_t pause_animation_tick = 0U;
@@ -13662,6 +14134,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
     // audible.  The UI source is independent from gameplay_audio for exactly
     // this reason.
     ui_audio.setVolumePercent(settings.sound_effects_volume);
+    ui_audio.setVoiceVolumePercent(settings.voice_volume);
     return true;
   };
   if (!apply_pause_settings(pause_settings)) {
@@ -13686,7 +14159,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
   };
   const auto retail_blackout_mission =
       mission.definition().resource_name == "CAVE2";
-  const auto draw_gameplay_frame = [&](bool advance_effects) {
+  const auto draw_gameplay_frame = [&](unsigned int effect_updates) {
     glass_shatter.observe(gameplay, current_render_presentation);
     // Reconcile streamed world ownership before every frame. Dynamic effects
     // live in dedicated native pages and never patch these mission slots.
@@ -13757,8 +14230,8 @@ SceneViewerResult PsyCrossSceneViewer::run(
 #if defined(SF_ENABLE_SURFACE_PICKER)
         surface_picker_ordering_table,
 #endif
-        actor_shadow_cache, dynamic_light_scratch, weapon_effects_scratch,
-        hmd_pose_scratch, primitives
+        actor_shadow_cache, dynamic_light_scratch, local_scene_lighting_cache,
+        weapon_effects_scratch, hmd_pose_scratch, primitives
 #if defined(SF_ENABLE_SURFACE_PICKER)
         ,
         surface_picker
@@ -13767,9 +14240,9 @@ SceneViewerResult PsyCrossSceneViewer::run(
 #if defined(SF_ENABLE_SURFACE_PICKER)
     surface_picker.finishFrame();
 #endif
-    if (advance_effects) {
+    if (effect_updates != 0U) {
       fire_animation.update();
-      glass_shatter.advance();
+      glass_shatter.advance(effect_updates);
       ++actor_tick;
     }
     // SCRIM is an unconditional background. Draw it first without reading or
@@ -13827,6 +14300,8 @@ SceneViewerResult PsyCrossSceneViewer::run(
     GR_SetPolygonOffset(0.0F, 0.0F);
     GR_SetDepthState(1, 1);
     GR_SetBlendMode(BM_NONE);
+    drawVirusScannerFilter(virusScannerXrayActive(
+        presentation.first_person_aim, gameplay.hud().inventory().current()));
     // Remaining non-world raw packets and non-particle retail sprites are
     // already projected presentation. Rain and other identified particles
     // were reprojected into the world OT above; only true screen-space data
@@ -13853,12 +14328,41 @@ SceneViewerResult PsyCrossSceneViewer::run(
     drawRetailScreenFilter(presentation.environment,
                            presentation.retail_environment_active);
     drawGameBrightness(pause_settings.brightness);
-    if (!gameplay.cinematic() && !gameplay.missionComplete()) {
+    const auto cinematic = gameplay.cinematic();
+    const auto letterboxed = gameplay.letterboxActive();
+    if (letterboxed) {
+      GR_SetBlendMode(BM_NONE);
+      GR_EnableDepth(0);
+      GR_SetDepthState(0, 0);
+      int output_width = 1;
+      int output_height = 1;
+      PsyX_GetScreenSize(&output_width, &output_height);
+      const auto presentation_scale = PsyX_CalculatePresentationScale(
+          output_width, output_height, g_cfg_aspectMode);
+      const auto horizontal_scale =
+          std::isfinite(presentation_scale.x) && presentation_scale.x > 0.001F
+              ? static_cast<double>(presentation_scale.x)
+              : 1.0;
+      const auto visible_width =
+          static_cast<double>(screen_width) / horizontal_scale;
+      const auto bar_left = static_cast<int>(std::floor(
+          (static_cast<double>(screen_width) - visible_width) * 0.5));
+      const auto bar_right = static_cast<int>(
+          std::ceil((static_cast<double>(screen_width) + visible_width) * 0.5));
+      const auto bar_width = std::max(bar_right - bar_left, screen_width);
+      drawSolidRect(bar_left, 0, bar_width, 18, 0U, 0U, 0U);
+      drawSolidRect(bar_left, screen_height - 18, bar_width, 18, 0U, 0U, 0U);
+      DrawSync(0);
+      GR_EnableDepth(1);
+      GR_SetDepthState(1, 1);
+    }
+    if (!cinematic && !gameplay.missionComplete()) {
       drawGameplayHud(
           hud_textures, gameplay, camera, target_anchor, world_callout_scratch,
           input_, presentation.first_person_aim, aim_heading,
-          presented_weapon_switch_frames, pause_settings.screen_center_x,
-          pause_settings.screen_center_y, gameplay_hud_scratch);
+          presented_weapon_switch_frames, presentation_delta_seconds,
+          pause_settings.screen_center_x, pause_settings.screen_center_y,
+          gameplay_hud_scratch);
       drawRetailGrenadeTrajectory(presentation, pause_settings.screen_center_x,
                                   pause_settings.screen_center_y);
     }
@@ -13998,6 +14502,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
                        : static_cast<double>(counter_delta) /
                              static_cast<double>(performance_frequency),
                    0.0, maximum_frame_time_seconds);
+    presentation_delta_seconds = elapsed_seconds;
     audio_accumulator_seconds =
         std::min(audio_accumulator_seconds + elapsed_seconds,
                  retail_audio_step_seconds * maximum_audio_backlog_updates);
@@ -14370,6 +14875,9 @@ SceneViewerResult PsyCrossSceneViewer::run(
               static_cast<unsigned char>(pause_settings.vibration ? 0x40U : 0U),
           };
           PadSetAct(0, motors, 2);
+        } else if (command.subject == static_cast<std::uint32_t>(
+                                          game::PauseSetting::voice_volume)) {
+          ui_audio.playVoicePreview();
         }
         break;
       case game::PauseCommandType::commit_settings:
@@ -14605,6 +15113,9 @@ SceneViewerResult PsyCrossSceneViewer::run(
       muzzle_flash_edges.observe(gameplay.effects());
       scrim_copy_edges.observe(gameplay.legacyPresentationFrame());
       captureRenderPresentation(gameplay, current_render_presentation);
+      dropped_item_presentation.reconcile(
+          current_render_presentation.guest_frame,
+          current_render_presentation.dropped_items);
       ++simulation_updates_this_frame;
       simulation_accumulator_seconds = std::max(
           0.0, simulation_accumulator_seconds - retail_simulation_step_seconds);
@@ -14795,18 +15306,15 @@ SceneViewerResult PsyCrossSceneViewer::run(
     }
     if (gameplay.currentRoom() != previous_room) {
       previous_room = gameplay.currentRoom();
-      actor_shadow_cache.reset();
+      actor_shadow_cache.transitionRoom();
       primitives.invalidateCapacityPlan();
-      textures.ensure(gameplay);
       log_next_frame = true;
     }
     if (gameplay.hud().inventory().current() != previous_weapon) {
       previous_weapon = gameplay.hud().inventory().current();
-      textures.ensure(gameplay);
     }
     if (gameplay.projectiles().size() != previous_projectile_count) {
       previous_projectile_count = gameplay.projectiles().size();
-      textures.ensure(gameplay);
     }
     const auto dynamic_fire = std::ranges::any_of(
         gameplay.projectiles(), [](const game::GameplayProjectile &projectile) {
@@ -14815,7 +15323,6 @@ SceneViewerResult PsyCrossSceneViewer::run(
         });
     if (dynamic_fire != previous_dynamic_fire) {
       previous_dynamic_fire = dynamic_fire;
-      textures.ensure(gameplay);
     }
     // If the renderer missed more than three VBlanks, move native visual
     // clocks to the final completed guest state before submitting it. The
@@ -14825,7 +15332,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
       ++actor_tick;
       gameplay.advanceAnimationClock();
     }
-    const auto stats = draw_gameplay_frame(simulation_updates_this_frame != 0U);
+    const auto stats = draw_gameplay_frame(simulation_updates_this_frame);
     submitted_presentation_sequence = presentation_sequence;
     if (simulation_updates_this_frame != 0U) {
       // Root motion and the rendered HMD pose must sample the same retail

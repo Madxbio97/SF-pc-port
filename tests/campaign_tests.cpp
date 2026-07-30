@@ -165,24 +165,45 @@ void testRetailSavePromptAndTransientCampaign() {
           "Retail scripted CUT movie catalog is incomplete or out of order");
 
   sf::game::CampaignSaveMenu menu;
+  sf::game::TitleSaveSlots empty_slots{};
   require(menu.phase() == sf::game::CampaignSavePhase::prompt &&
               menu.saveSelected(),
           "Mission-complete save prompt did not default to Save");
-  require(menu.update({.confirm = true}).decision ==
+  require(menu.update({.confirm = true}, empty_slots).decision ==
                   sf::game::CampaignSaveDecision::none &&
               menu.phase() == sf::game::CampaignSavePhase::slots,
           "Accepting the save prompt did not open the memory-card menu");
-  static_cast<void>(menu.update({.next = true}));
-  require(menu.update({.confirm = true}).decision ==
+  static_cast<void>(menu.update({.next = true}, empty_slots));
+  require(menu.update({.confirm = true}, empty_slots).decision ==
                   sf::game::CampaignSaveDecision::save &&
               menu.slotSelection() == 1U,
           "Memory-card menu did not return the selected save slot");
 
   sf::game::CampaignSaveMenu declined;
-  static_cast<void>(declined.update({.next = true}));
-  require(declined.update({.confirm = true}).decision ==
+  static_cast<void>(declined.update({.next = true}, empty_slots));
+  require(declined.update({.confirm = true}, empty_slots).decision ==
               sf::game::CampaignSaveDecision::continue_without_saving,
           "Declining the save prompt did not continue the campaign");
+
+  sf::game::TitleSaveSlots occupied_slots{};
+  occupied_slots[0] = sf::game::TitleSaveSlot{true, 8U, false};
+  sf::game::CampaignSaveMenu overwrite;
+  static_cast<void>(overwrite.update({.confirm = true}, occupied_slots));
+  require(overwrite.update({.confirm = true}, occupied_slots).decision ==
+                  sf::game::CampaignSaveDecision::none &&
+              overwrite.phase() == sf::game::CampaignSavePhase::overwrite &&
+              overwrite.overwriteSelected(),
+          "Occupied mission slot did not request overwrite confirmation");
+  static_cast<void>(overwrite.update({.next = true}, occupied_slots));
+  require(overwrite.update({.confirm = true}, occupied_slots).decision ==
+                  sf::game::CampaignSaveDecision::none &&
+              overwrite.phase() == sf::game::CampaignSavePhase::slots,
+          "Declining overwrite did not return to the slot picker");
+  static_cast<void>(overwrite.update({.confirm = true}, occupied_slots));
+  require(overwrite.update({.confirm = true}, occupied_slots).decision ==
+                  sf::game::CampaignSaveDecision::save &&
+              overwrite.slotSelection() == 0U,
+          "Confirmed overwrite did not return the occupied save slot");
 
   sf::game::TitleSaveSlots slots{};
   slots[3] = sf::game::TitleSaveSlot{true, 7U, false};
@@ -242,12 +263,11 @@ void testLoadedProgressSurvivesMissionReplay() {
       campaign->selectUnlockedMission(2U) && campaign->missionIndex() == 2U &&
           campaign->maximumUnlockedMission() == 6U && slots == durable_before,
       "Replaying an earlier mission lowered durable progress");
-  require(!campaign->stageMissionCompletion(slots) && slots == durable_before,
-          "Earlier replay overwrote the loaded save frontier");
   require(campaign->completeMissionWithoutSaving() ==
                   sf::game::CampaignAdvance::next_mission &&
               campaign->missionIndex() == 3U &&
-              campaign->maximumUnlockedMission() == 6U,
+              campaign->maximumUnlockedMission() == 6U &&
+              slots == durable_before,
           "Earlier replay did not advance inside the unlocked range");
   require(!campaign->selectUnlockedMission(7U),
           "Campaign replay accepted a mission beyond saved progress");
@@ -255,6 +275,17 @@ void testLoadedProgressSurvivesMissionReplay() {
   require(reloaded && reloaded->missionIndex() == 6U &&
               reloaded->maximumUnlockedMission() == 6U,
           "Reloading after a replay reset saved mission progress");
+
+  require(campaign->selectUnlockedMission(2U) &&
+              campaign->stageMissionCompletionInSlot(slots, 1U) &&
+              slots[1].pending_eol_mission == 2U,
+          "Explicit replay overwrite did not stage the completed mission");
+  require(campaign->completeMission(slots) ==
+                  sf::game::CampaignAdvance::next_mission &&
+              campaign->missionIndex() == 3U &&
+              campaign->maximumUnlockedMission() == 6U &&
+              slots[1] == sf::game::TitleSaveSlot{true, 3U, false},
+          "Explicit replay overwrite did not replace the selected slot");
 }
 
 void testSaveMigrationAndCompletedSlotUi() {

@@ -1957,7 +1957,10 @@ void LegacyGameplayVm::bindSyphonFilterUsaV11GameplayTextHooks(
       // allocation, sound/UI timing and the return value remain guest-
       // authored.
       context.continueGuestInstruction();
-      if (!profile_valid) {
+      if (!profile_valid || boundary.text_argument >= 4U ||
+          boundary.duration_argument >= 4U ||
+          (boundary.accepted_return_address != 0U &&
+           context.registerValue(31U) != boundary.accepted_return_address)) {
         return;
       }
       for (std::size_t word = 0U; word < boundary.instructions.size(); ++word) {
@@ -1972,14 +1975,27 @@ void LegacyGameplayVm::bindSyphonFilterUsaV11GameplayTextHooks(
       if (ui_messages_.size() >= profile.maximum_messages_per_frame) {
         return;
       }
+      auto channel = boundary.channel;
+      if (boundary.channel_from_slot) {
+        constexpr std::uint32_t status_text_slot = 6U;
+        const auto slot = context.argument(0U);
+        if (slot > status_text_slot) {
+          return;
+        }
+        channel = slot == status_text_slot ? LegacyUiMessageChannel::status
+                                           : LegacyUiMessageChannel::centered;
+      }
       std::string text;
-      if (!context.readCString(context.argument(0U), text,
+      if (!context.readCString(context.argument(boundary.text_argument), text,
                                profile.maximum_text_size) ||
           text.empty()) {
         return;
       }
       ui_messages_.push_back(LegacyUiMessageBridgeState{
-          boundary.channel, std::move(text), context.argument(1U)});
+          .channel = channel,
+          .text = std::move(text),
+          .duration = context.argument(boundary.duration_argument),
+          .force_gameplay_layout = boundary.force_gameplay_layout});
     });
   }
 
@@ -2268,11 +2284,6 @@ bool LegacyGameplayVm::finalizeDeadActorDropsBeforeRenderer(
       return false;
     }
 
-    const auto erase_pending_slot = [this](std::uint32_t slot) {
-      std::erase_if(pending_actor_drops_, [slot](const auto &candidate) {
-        return candidate.record_slot == slot;
-      });
-    };
     const auto remember_live_drop = [this](std::uint32_t slot,
                                            std::uint32_t instance,
                                            std::uint16_t attributes) {
@@ -2357,24 +2368,13 @@ bool LegacyGameplayVm::finalizeDeadActorDropsBeforeRenderer(
         continue;
       }
 
-      bool owner_read_ok{};
-      const auto already_attached =
-          actor_already_attached(instance, owner_read_ok);
-      if (!owner_read_ok) {
-        return false;
-      }
-      if (!already_attached &&
-          !invokeFrameCall(profile.dropped_item_attach_entry,
-                           std::array{instance}, execution_budget)
-               .completed()) {
-        return false;
-      }
-      if (!invokeFrameCall(profile.dropped_item_detach_entry,
-                           std::array{instance, 1U}, execution_budget)
-               .completed()) {
-        return false;
-      }
-      erase_pending_slot(slot);
+      // A live record still owns the retail death presentation. Do not
+      // manufacture an attach/detach edge merely because health reached
+      // zero: that puts the pickup at the pre-fall root and leaves weapons
+      // floating on ledges. The guarded owner pass above handles the exact
+      // retail attachment edge. Keep the cached identity only as recovery
+      // for overlays that actually retire the record before that edge.
+      continue;
     }
 
     // Some mission overlays clear record +0x34 (and occasionally the item
@@ -2401,6 +2401,15 @@ bool LegacyGameplayVm::finalizeDeadActorDropsBeforeRenderer(
       if (current_instance != 0U && current_instance != candidate.instance) {
         pending_actor_drops_.erase(pending_actor_drops_.begin() +
                                    static_cast<std::ptrdiff_t>(index));
+        continue;
+      }
+      const auto current_drop_bits_active =
+          (current_attributes & 0x00ffU) != 0U ||
+          (current_attributes & 0x7000U) != 0U;
+      if (current_instance == candidate.instance && current_drop_bits_active) {
+        // The actor is still owned by the overlay. Its normal death/update
+        // path must decide when the held weapon reaches the ground.
+        ++index;
         continue;
       }
 
@@ -2752,6 +2761,7 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
   std::uint32_t player_control_lock{};
   std::uint16_t current_room_bits{};
   std::uint8_t target_lock_active{};
+  std::int32_t virus_scanner_target_slot{-1};
   std::uint32_t flashlight_handle{};
   std::uint16_t headshot_text_handle{};
   std::int16_t primary_story_target_slot{-1};
@@ -2765,6 +2775,14 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
       !runtime_.read32(profile.player_control_lock, player_control_lock) ||
       !runtime_.read16(profile.current_room, current_room_bits) ||
       !runtime_.read8(profile.target_lock_active, target_lock_active) ||
+      !read_signed32(profile.virus_scanner_target,
+                     state.virus_scanner_target.x) ||
+      !read_signed32(profile.virus_scanner_target + 4U,
+                     state.virus_scanner_target.y) ||
+      !read_signed32(profile.virus_scanner_target + 8U,
+                     state.virus_scanner_target.z) ||
+      !read_signed32(profile.virus_scanner_target_slot,
+                     virus_scanner_target_slot) ||
       !runtime_.read32(profile.flashlight_enabled, flashlight_handle) ||
       !runtime_.read16(profile.taser_conductor_phase,
                        state.taser_conductor_phase) ||
@@ -3729,6 +3747,17 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
       (object_definition_count != 0 && object_definitions == 0U)) {
     return std::nullopt;
   }
+  const auto virus_scanner_target_coordinates_valid =
+      state.virus_scanner_target.x != 0 || state.virus_scanner_target.y != 0 ||
+      state.virus_scanner_target.z != 0;
+  if (virus_scanner_target_coordinates_valid &&
+      virus_scanner_target_slot >= 0 &&
+      virus_scanner_target_slot < object_count) {
+    state.virus_scanner_target_slot = virus_scanner_target_slot;
+    state.virus_scanner_target_valid = true;
+  }
+  // FUN_8003ce88 clears only the three coordinates. The slot word is stale
+  // after leaving scanner range and must never keep a carrier selected alone.
   state.objects.reserve(static_cast<std::size_t>(object_count));
   for (std::uint32_t slot = 0U; slot < static_cast<std::uint32_t>(object_count);
        ++slot) {

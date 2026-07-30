@@ -452,6 +452,8 @@ struct LegacyGameplayBridgeProfile {
   std::uint32_t grenade_charge_frame{0x80127da0U};
   std::uint32_t grenade_input_pending{0x80127d98U};
   std::uint32_t aim_target{0x80119550U};
+  std::uint32_t virus_scanner_target{0x80130d28U};
+  std::uint32_t virus_scanner_target_slot{0x80130d34U};
   std::uint32_t player_control_lock{0x80115e28U};
   std::uint32_t current_room{0x80116946U};
   std::uint32_t world_layout_pointer{0x80116a60U};
@@ -678,19 +680,27 @@ struct LegacyUiMessageHookBoundary {
   std::uint32_t address{};
   std::array<std::uint32_t, 4U> instructions{};
   LegacyUiMessageChannel channel{LegacyUiMessageChannel::status};
+  std::uint8_t text_argument{};
+  std::uint8_t duration_argument{1U};
+  bool channel_from_slot{};
+  std::uint32_t accepted_return_address{};
+  bool force_gameplay_layout{};
 };
 
 // Read-only hooks at the retail text builders. The original instructions and
 // glyph allocator still execute in guest code; the host only preserves source
 // strings which retail immediately compiles into transient glyph packets.
 struct LegacyGameplayTextHookProfile {
-  std::array<LegacyUiMessageHookBoundary, 2U> message_boundaries{{
+  std::array<LegacyUiMessageHookBoundary, 3U> message_boundaries{{
       {0x80017530U,
        {0x27bdffe0U, 0xafb10014U, 0x00808821U, 0xafb20018U},
        LegacyUiMessageChannel::centered},
       {0x80085d04U,
        {0x27bdffd8U, 0x00801021U, 0xafb00018U, 0x00a08021U},
        LegacyUiMessageChannel::status},
+      {0x8008582cU,
+       {0x27bdffc8U, 0xafb20028U, 0x00a09021U, 0xafb3002cU},
+       LegacyUiMessageChannel::centered, 1U, 2U, true, 0x80044fdcU, true},
   }};
   std::uint32_t attached_text_entry{0x80085eb0U};
   std::array<std::uint32_t, 4U> attached_text_instructions{

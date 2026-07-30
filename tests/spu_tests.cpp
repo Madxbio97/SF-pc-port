@@ -647,6 +647,19 @@ void testVabSoundUsesRetailSampleAndSpuPath() {
                           }),
           "VAB decoder did not render audible stereo SPU PCM");
 
+  // BEEPSX sound 4 uses 0x0e for the OPTIONS voice-preview routing while
+  // retaining an ordinary single-tone payload. Native playback owns the
+  // isolated mixer route, so decoding must produce the same PCM.
+  writeLe16(header.data() + descriptor_offset, 0x000eU);
+  const auto preview = sf::psx::decodeVabSound(header, body, 0U);
+  require(preview.succeeded() && preview.frames == decoded.frames,
+          "Retail OPTIONS voice-preview descriptor was not decoded");
+  writeLe16(header.data() + descriptor_offset, 0x0010U);
+  require(sf::psx::decodeVabSound(header, body, 0U).status ==
+              sf::psx::VabDecodeStatus::unsupported_sound,
+          "Unsupported layered VAB descriptor was accepted");
+  writeLe16(header.data() + descriptor_offset, 0U);
+
   const auto truncated = sf::psx::decodeVabSound(
       header, std::span<const std::byte>{body}.first(16U), 0U);
   require(truncated.status == sf::psx::VabDecodeStatus::invalid_sample &&

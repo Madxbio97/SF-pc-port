@@ -3,6 +3,62 @@
 All notable public-test changes are documented here. The project currently uses
 pre-release tags rather than a stable semantic-versioning promise.
 
+## 0.1.0-public-test.13 - 2026-07-30
+
+### Campaign and controls
+
+- Restored the post-mission save flow, occupied-slot overwrite confirmation,
+  FMV handoff and next-mission transition. Replaying an unlocked mission no
+  longer lowers the durable campaign frontier.
+- Made manual first-person aim atomically release a latched auto-target,
+  preserve Gabe's final sight heading and support the retail crouch transition
+  without moving his collision root.
+- Corrected diagonal movement, danger-meter release and the lifecycle of
+  enemy weapon drops across high-rate presentation frames.
+
+### Rendering and presentation
+
+- Restored the original pre-rendered MENU.HOG weapon artwork for every pause
+  menu entry instead of reusing HUD/pickup sprites.
+- Kept all three Georgia Street objective bombs alive across subway DAT
+  boundaries and resolved their BOMB-family materials from resident SPFX.
+- Rebuilt and published the complete mutable SCRIM copy ring atomically, so
+  train and sign polygons no longer sample different texture-copy phases after
+  a room transition.
+- Recreated the virus scanner's amber X-ray pass, infected-body reveal and
+  retail status-message routing for missions 15 and 16.
+- Extended geometry-driven character shadows to held weapons, stabilized light
+  selection and surface transitions, and excluded emissive lamp/glow effects
+  from ordinary scene darkening.
+- Added distance-based camera fading for Gabe, restored reticle and world-label
+  reveal animation, and limited letterbox bars to authored mission openings.
+- Cached local scene lighting and dynamic-light input per 20 Hz guest tick to
+  avoid repeating unchanged renderer work at 60–240 FPS.
+
+### Audio and localization
+
+- Reworked the native audio frame clock and VAB one-shot decoding to reduce
+  latency, underruns, skipped samples and restart artifacts at high frame rates.
+- Restored Gabe's voice preview when changing voice volume.
+- Kept original English optic captions for the sniper, night-vision rifle and
+  virus scanner under the Russian text pack; corrected gameplay-message
+  routing and prevented Cyrillic mission text from leaking into English UI.
+
+### Validation
+
+- Added regression coverage for campaign overwrite flow, mission replay,
+  manual-aim ownership, scanner bridge state, bomb residency, texture-bank
+  provenance, weapon art, dropped-item stability, audio decoding and camera
+  fade policy.
+- Validated complete MSVC and PsyCross Release suites, supported-ROM probes,
+  package manifest, internal hashes and forbidden-file rules.
+
+### Release artifact
+
+- File: `SyphonFilterPC-0.1.0-public-test.13-win64.zip`
+- Checksum: supplied in the accompanying `.zip.sha256` file.
+- Supported disc: *Syphon Filter* USA v1.1 (`SCUS-94240`), BIN/CUE.
+
 ## 0.1.0-public-test.12 - 2026-07-28
 
 ### Gameplay and input

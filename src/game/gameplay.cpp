@@ -3667,6 +3667,80 @@ GameplaySession::legacyPresentationFrame() const noexcept {
                                : nullptr;
 }
 
+std::optional<std::uint16_t>
+GameplaySession::legacyVirusScannerTargetObject() const noexcept {
+  if (legacy_first_mission_ == nullptr || !legacy_first_mission_->ready()) {
+    return std::nullopt;
+  }
+  const auto *bridge = legacy_first_mission_->bridge();
+  if (bridge == nullptr || !bridge->virus_scanner_target_valid ||
+      bridge->virus_scanner_target_slot < 0) {
+    return std::nullopt;
+  }
+  for (std::size_t scene_object = 0U;
+       scene_object < legacy_guest_slot_by_scene_object_.size();
+       ++scene_object) {
+    if (legacy_guest_slot_by_scene_object_[scene_object] !=
+        bridge->virus_scanner_target_slot) {
+      continue;
+    }
+    if (scene_object >= objects_.size() ||
+        scene_object > std::numeric_limits<std::uint16_t>::max() ||
+        objects_[scene_object].class_id != legacy_virus_scanner_target_class) {
+      return std::nullopt;
+    }
+    return static_cast<std::uint16_t>(scene_object);
+  }
+  return std::nullopt;
+}
+
+std::optional<std::uint16_t> GameplaySession::legacyVirusScannerMarkerObject(
+    std::uint16_t target_object) const noexcept {
+  if (target_object >= objects_.size() ||
+      objects_[target_object].class_id != legacy_virus_scanner_target_class ||
+      (mission_.definition().index != 14U &&
+       mission_.definition().index != 15U)) {
+    return std::nullopt;
+  }
+
+  const auto &target = objects_[target_object].transform;
+  auto nearest = std::optional<std::uint16_t>{};
+  auto nearest_distance_squared = std::numeric_limits<std::int64_t>::max();
+  for (std::size_t index = 0U; index < objects_.size(); ++index) {
+    const auto &candidate = objects_[index];
+    if (index > std::numeric_limits<std::uint16_t>::max() ||
+        candidate.model >= object_models_.size() ||
+        !candidate.destroyed_model ||
+        *candidate.destroyed_model >= object_models_.size() ||
+        !legacyVirusScannerMarker(
+            mission_.definition().index, candidate.class_id,
+            object_models_[candidate.model].name,
+            object_models_[*candidate.destroyed_model].name)) {
+      continue;
+    }
+    const auto dx = static_cast<std::int64_t>(candidate.transform.x) -
+                    static_cast<std::int64_t>(target.x);
+    const auto dy = static_cast<std::int64_t>(candidate.transform.y) -
+                    static_cast<std::int64_t>(target.y);
+    const auto dz = static_cast<std::int64_t>(candidate.transform.z) -
+                    static_cast<std::int64_t>(target.z);
+    const auto distance_squared = dx * dx + dy * dy + dz * dz;
+    if (distance_squared < nearest_distance_squared) {
+      nearest_distance_squared = distance_squared;
+      nearest = static_cast<std::uint16_t>(index);
+    }
+  }
+
+  // The largest authored BOMB/GRGLO offset in the two scanner missions is
+  // 122 world units. Leave room for integer transforms without ever pairing
+  // a marker from another corpse.
+  constexpr auto maximum_pair_distance = std::int64_t{192};
+  return nearest && nearest_distance_squared <=
+                        maximum_pair_distance * maximum_pair_distance
+             ? nearest
+             : std::nullopt;
+}
+
 std::uint64_t GameplaySession::legacyAimRayPatchCount() const noexcept {
   return legacy_first_mission_ ? legacy_first_mission_->hostAimRayPatchCount()
                                : 0U;
@@ -3679,6 +3753,18 @@ bool GameplaySession::legacyScriptedCameraActive() const noexcept {
   }
   const auto &camera = legacy_first_mission_->bridge()->camera;
   return camera.scripted || camera.locked;
+}
+
+bool GameplaySession::legacyCinematicPresentationActive() const noexcept {
+  if (legacy_first_mission_ == nullptr || !legacy_first_mission_->ready() ||
+      !legacy_first_mission_->bridge()) {
+    return false;
+  }
+  const auto &bridge = *legacy_first_mission_->bridge();
+  // Only retail camera mode 0x0b is an in-engine cinematic. camera.locked and
+  // player.control_locked are also asserted transiently by aim/action state
+  // changes and must never create presentation letterbox bars.
+  return bridge.camera.scripted;
 }
 
 std::optional<std::int32_t>
@@ -3709,12 +3795,16 @@ bool GameplaySession::legacyWeaponMenuReady() const noexcept {
 }
 
 bool GameplaySession::legacyRadioConversationActive() const noexcept {
-  const auto diagnostics = legacy_first_mission_ != nullptr
-                               ? legacy_first_mission_->audioDiagnostics()
-                               : std::nullopt;
-  // Gameplay music and effects are retail SPU voices. INGAME.XA is reserved
-  // for mission dialogue, including Lian's radio calls.
-  return diagnostics && diagnostics->xa_stream_set != 0U;
+  if (legacy_first_mission_ == nullptr || !legacy_first_mission_->ready() ||
+      !legacy_first_mission_->bridge()) {
+    return false;
+  }
+  const auto diagnostics = legacy_first_mission_->audioDiagnostics();
+  if (!diagnostics) {
+    return false;
+  }
+  return legacyRadioConversationPresentationActive(
+      diagnostics->xa_stream_set != 0U, diagnostics->spu_cd_frames != 0U);
 }
 
 GameplayInput GameplaySession::admittedFirstPersonAimInput(
@@ -3729,19 +3819,18 @@ GameplayInput GameplaySession::admittedFirstPersonAimInput(
   }
 
   const auto radio_active = legacyRadioConversationActive();
-  const auto transition_locked = (input.roll && !optic_circle) ||
-                                 first_person_aim_roll_block_updates_ != 0U ||
-                                 player_controller_.actionLocked();
-  if (input.aim && (transition_locked || radio_active)) {
-    first_person_aim_release_rearm_required_ = true;
-  } else if (!input.aim && !transition_locked && !radio_active) {
-    first_person_aim_release_rearm_required_ = false;
-  }
+  const auto aim_action_locked = player_controller_.actionLocksManualAim();
+  const auto roll_transition_locked =
+      (input.roll && !optic_circle) ||
+      first_person_aim_roll_block_updates_ != 0U;
+  first_person_aim_release_rearm_required_ =
+      legacyFirstPersonAimReleaseRearmRequired(
+          first_person_aim_release_rearm_required_, input.aim,
+          roll_transition_locked, radio_active);
 
   auto admitted = input;
   if (!legacyFirstPersonAimInputAllowed(
-          first_person_aim_roll_block_updates_,
-          player_controller_.actionLocked(), radio_active,
+          first_person_aim_roll_block_updates_, aim_action_locked, radio_active,
           first_person_aim_release_rearm_required_)) {
     admitted.aim = false;
     admitted.aim_peek = 0.0;
@@ -3770,15 +3859,18 @@ void GameplaySession::stageNativeFirstPersonAim(const GameplayInput &input) {
                                      : nullptr;
     const auto guest_control_available =
         release_bridge != nullptr && release_bridge->player.resident &&
-        !release_bridge->player.control_locked &&
-        !release_bridge->camera.scripted && !release_bridge->camera.locked;
+        legacyManualAimControlAvailable(release_bridge->player.control_locked,
+                                        release_bridge->target_lock_active,
+                                        release_bridge->camera.scripted,
+                                        release_bridge->camera.locked);
     if (host_manual_aim_body_heading_ && guest_control_available) {
-      pending_host_aim_heading_restore_ = *host_manual_aim_body_heading_;
+      const auto release_heading = player_controller_.aimHeading();
+      pending_host_aim_heading_restore_ = release_heading;
       auto body = player_controller_.state();
-      body.yaw = *host_manual_aim_body_heading_;
+      body.yaw = release_heading;
       player_controller_.synchronizeScriptedPose(body);
       // Seed the release frame so retail builds Gabe's absolute HMD
-      // bones from the preserved body heading. syncLegacyGameplayBridge
+      // bones from the final sight heading. syncLegacyGameplayBridge
       // repeats this narrow write after the frame, because L1 teardown
       // is still allowed to touch the root while that frame executes.
       if (legacyMissionAuthoritative() &&
@@ -3787,8 +3879,8 @@ void GameplaySession::stageNativeFirstPersonAim(const GameplayInput &input) {
         mission_failed_ = true;
       }
     } else {
-      // A cutscene/control takeover owns Gabe's new body heading. Never
-      // restore the pre-aim yaw across that ownership boundary.
+      // A cutscene/control takeover owns Gabe's body heading. Never commit
+      // the native sight yaw across that ownership boundary.
       host_manual_aim_body_heading_.reset();
       pending_host_aim_heading_restore_.reset();
     }
@@ -3801,8 +3893,9 @@ void GameplaySession::stageNativeFirstPersonAim(const GameplayInput &input) {
   }
   const auto *bridge = legacy_first_mission_->bridge();
   if (bridge == nullptr || !bridge->player.resident ||
-      bridge->player.control_locked || bridge->camera.scripted ||
-      bridge->camera.locked) {
+      !legacyManualAimControlAvailable(
+          bridge->player.control_locked, bridge->target_lock_active,
+          bridge->camera.scripted, bridge->camera.locked)) {
     if (player_controller_.aim() == PlayerAimState::first_person) {
       player_controller_.update(PlayerInput{}, *this);
     }
@@ -3824,6 +3917,7 @@ void GameplaySession::stageNativeFirstPersonAim(const GameplayInput &input) {
           .aim = input.aim,
           .look_yaw = input.aim ? input.look_yaw : 0.0,
           .look_pitch = input.aim ? input.look_pitch : 0.0,
+          .kneel = input.aim && input.kneel,
       },
       *this);
   const auto &current = player_controller_.state();
@@ -3870,8 +3964,9 @@ void GameplaySession::stageLegacyHostState(const GameplayInput &input) {
   const auto retail_aim_requested =
       input.aim && playerAim() == PlayerAimState::first_person &&
       aim_bridge != nullptr && aim_bridge->player.resident &&
-      !aim_bridge->player.control_locked && !aim_bridge->camera.scripted &&
-      !aim_bridge->camera.locked;
+      legacyManualAimControlAvailable(
+          aim_bridge->player.control_locked, aim_bridge->target_lock_active,
+          aim_bridge->camera.scripted, aim_bridge->camera.locked);
   if (retail_aim_requested != retail_host_aim_active_) {
     if (!legacy_first_mission_->applyHostFirstPersonAim(retail_aim_requested)) {
       legacy_runtime_faulted_ = true;
@@ -4476,7 +4571,10 @@ void GameplaySession::syncLegacyResidentObjects(
                     source_streamed, live_position_streamed, guest.pose_flags,
                     opening_actor, guest.simulated, retail_dormant,
                     actor_pose_available)
-              : source_streamed || live_position_streamed;
+              : legacyGuestStaticPropStreamVisible(
+                    source_streamed, live_position_streamed,
+                    mission_.definition().index, objects_[scene].source_index,
+                    guest.class_id, bridge.player.resident);
     // Destructible lights such as LIGHT/SPOTLT set both the generic destroyed
     // latch and the dormant bit, then retain the same object record to draw
     // their authored secondary (dark/broken) model. Treating dormant as an
@@ -5046,12 +5144,14 @@ void GameplaySession::syncLegacyGameplayBridge() {
   const auto native_aim_owns_body =
       host_manual_aim_ &&
       player_controller_.aim() == PlayerAimState::first_person &&
-      !bridge.player.control_locked && !bridge.camera.scripted &&
-      !bridge.camera.locked;
+      legacyManualAimControlAvailable(
+          bridge.player.control_locked, bridge.target_lock_active,
+          bridge.camera.scripted, bridge.camera.locked);
   const auto pending_restore_owns_body =
       pending_host_aim_heading_restore_.has_value() && bridge.player.resident &&
-      !bridge.player.control_locked && !bridge.camera.scripted &&
-      !bridge.camera.locked;
+      legacyManualAimControlAvailable(
+          bridge.player.control_locked, bridge.target_lock_active,
+          bridge.camera.scripted, bridge.camera.locked);
   const auto body_heading_override =
       native_aim_owns_body        ? host_manual_aim_body_heading_
       : pending_restore_owns_body ? pending_host_aim_heading_restore_
@@ -5061,16 +5161,19 @@ void GameplaySession::syncLegacyGameplayBridge() {
         host_manual_aim_ &&
         player_controller_.aim() == PlayerAimState::first_person &&
         std::abs(host_manual_aim_strafe_) <= 0.0001 &&
-        !bridge.player.control_locked && !bridge.camera.scripted &&
-        !bridge.camera.locked;
+        legacyManualAimControlAvailable(
+            bridge.player.control_locked, bridge.target_lock_active,
+            bridge.camera.scripted, bridge.camera.locked);
     if (neutral_manual_aim_sample) {
       // Physical L1 is retained while idle. Its guest camera is the exact
       // center reference from which L1+L2/R2 translate the whole view for a
       // corner peek; the player collision root intentionally remains still.
       legacy_manual_aim_neutral_camera_ = bridge.camera;
       legacy_manual_aim_neutral_player_root_ = bridge.player.position;
-    } else if (!host_manual_aim_ || bridge.player.control_locked ||
-               bridge.camera.scripted || bridge.camera.locked) {
+    } else if (!host_manual_aim_ ||
+               !legacyManualAimControlAvailable(
+                   bridge.player.control_locked, bridge.target_lock_active,
+                   bridge.camera.scripted, bridge.camera.locked)) {
       legacy_manual_aim_neutral_camera_.reset();
       legacy_manual_aim_neutral_player_root_ = {};
     }
@@ -5242,9 +5345,9 @@ void GameplaySession::syncLegacyGameplayBridge() {
       return;
     }
     // The release frame has already run. Writing now prevents retail's
-    // just-finished L1 teardown from overwriting the preserved body yaw;
-    // the current immutable presentation was overridden above and the
-    // next guest frame starts from this narrow rotation-only repair.
+    // just-finished L1 teardown from overwriting the final sight yaw; the
+    // current immutable presentation was overridden above and the next guest
+    // frame starts from this narrow rotation-only repair.
     if (!legacy_first_mission_->restoreHostPlayerHeading(
             *pending_host_aim_heading_restore_)) {
       fail_bridge("host-heading-restore");
@@ -5332,7 +5435,8 @@ void GameplaySession::syncLegacyUiProjection(
     headshot_targeted_ = ui.target.hit_result != 0U && ui.target.headshot;
   }
 
-  if (ui.target.active && (ui.target.target_flags & 0x01U) != 0U) {
+  if (!host_manual_aim_ && ui.target.active &&
+      (ui.target.target_flags & 0x01U) != 0U) {
     if (const auto scene = scene_for_guest(ui.target.target_slot)) {
       // A first-person ray hit and the retail R1 lock are independent.
       // Once lock-on is active its selected actor owns the frame anchor;
@@ -5848,6 +5952,10 @@ std::uint8_t GameplaySession::textureBankAt(double x, double z) const noexcept {
                                      containing_bank_mask);
 }
 
+std::uint32_t GameplaySession::missionIndex() const noexcept {
+  return mission_.definition().index;
+}
+
 std::uint8_t
 GameplaySession::objectTextureBank(std::uint16_t index) const noexcept {
   if (current_room_ >= models_.size()) {
@@ -5913,9 +6021,18 @@ std::uint8_t GameplaySession::displayedObjectTextureBank(
   const auto hmd_backed =
       model != nullptr &&
       std::holds_alternative<assets::HmdModel>(model->geometry);
-  const auto bank =
-      hmd_backed ? resident_hmd_texture_bank : objectTextureBank(index);
-  return resolveDisplayedObjectTextureBank(bank, hmd_backed);
+  // BOMB-family meshes are static DLF objects, but their materials live in
+  // COMMON/SPFX. A second streamed bank contains empty pages at the same
+  // addresses, making otherwise valid geometry entirely transparent.
+  const auto resident_gmd_backed =
+      model != nullptr &&
+      std::holds_alternative<assets::GmdModel>(model->geometry) &&
+      legacyResidentSpfxObjectTexture(model->name);
+  const auto bank = hmd_backed || resident_gmd_backed
+                        ? resident_spfx_object_texture_bank
+                        : objectTextureBank(index);
+  return resolveDisplayedObjectTextureBank(bank, hmd_backed,
+                                           resident_gmd_backed);
 }
 
 NpcAnimationRequest
@@ -6019,7 +6136,8 @@ PlayerAimState GameplaySession::playerAim() const noexcept {
                host_manual_aim_,
                player_controller_.aim() == PlayerAimState::first_person,
                bridge.camera.mode, bridge.player.control_locked,
-               bridge.camera.scripted, bridge.camera.locked)
+               bridge.target_lock_active, bridge.camera.scripted,
+               bridge.camera.locked)
                ? PlayerAimState::first_person
                : PlayerAimState::chase;
   }
@@ -6078,8 +6196,8 @@ CameraState GameplaySession::camera() const noexcept {
     if (legacyManualAimPresentationActive(
             host_manual_aim_,
             player_controller_.aim() == PlayerAimState::first_person,
-            camera.mode, bridge.player.control_locked, camera.scripted,
-            camera.locked)) {
+            camera.mode, bridge.player.control_locked,
+            bridge.target_lock_active, camera.scripted, camera.locked)) {
       auto native = player_controller_.camera();
       if (std::abs(host_manual_aim_strafe_) > 0.0001 &&
           legacy_manual_aim_neutral_camera_) {

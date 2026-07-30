@@ -46,53 +46,48 @@ constexpr std::array<std::uint16_t, 12U> semitone_pitch{
     0xb504U, 0xbfc8U, 0xcb2fU, 0xd744U, 0xe411U, 0xf1a1U,
 };
 constexpr std::array<std::uint16_t, 128U> fine_pitch{
-    0x8000U, 0x800eU, 0x801dU, 0x802cU, 0x803bU, 0x804aU, 0x8058U,
-    0x8067U, 0x8076U, 0x8085U, 0x8094U, 0x80a3U, 0x80b1U, 0x80c0U,
-    0x80cfU, 0x80deU, 0x80edU, 0x80fcU, 0x810bU, 0x811aU, 0x8129U,
-    0x8138U, 0x8146U, 0x8155U, 0x8164U, 0x8173U, 0x8182U, 0x8191U,
-    0x81a0U, 0x81afU, 0x81beU, 0x81cdU, 0x81dcU, 0x81ebU, 0x81faU,
-    0x8209U, 0x8218U, 0x8227U, 0x8236U, 0x8245U, 0x8254U, 0x8263U,
-    0x8272U, 0x8282U, 0x8291U, 0x82a0U, 0x82afU, 0x82beU, 0x82cdU,
-    0x82dcU, 0x82ebU, 0x82faU, 0x830aU, 0x8319U, 0x8328U, 0x8337U,
-    0x8346U, 0x8355U, 0x8364U, 0x8374U, 0x8383U, 0x8392U, 0x83a1U,
-    0x83b0U, 0x83c0U, 0x83cfU, 0x83deU, 0x83edU, 0x83fdU, 0x840cU,
-    0x841bU, 0x842aU, 0x843aU, 0x8449U, 0x8458U, 0x8468U, 0x8477U,
-    0x8486U, 0x8495U, 0x84a5U, 0x84b4U, 0x84c3U, 0x84d3U, 0x84e2U,
-    0x84f1U, 0x8501U, 0x8510U, 0x8520U, 0x852fU, 0x853eU, 0x854eU,
-    0x855dU, 0x856dU, 0x857cU, 0x858bU, 0x859bU, 0x85aaU, 0x85baU,
-    0x85c9U, 0x85d9U, 0x85e8U, 0x85f8U, 0x8607U, 0x8617U, 0x8626U,
-    0x8636U, 0x8645U, 0x8655U, 0x8664U, 0x8674U, 0x8683U, 0x8693U,
-    0x86a2U, 0x86b2U, 0x86c1U, 0x86d1U, 0x86e0U, 0x86f0U, 0x8700U,
-    0x870fU, 0x871fU, 0x872eU, 0x873eU, 0x874eU, 0x875dU, 0x876dU,
-    0x877dU, 0x878cU,
+    0x8000U, 0x800eU, 0x801dU, 0x802cU, 0x803bU, 0x804aU, 0x8058U, 0x8067U,
+    0x8076U, 0x8085U, 0x8094U, 0x80a3U, 0x80b1U, 0x80c0U, 0x80cfU, 0x80deU,
+    0x80edU, 0x80fcU, 0x810bU, 0x811aU, 0x8129U, 0x8138U, 0x8146U, 0x8155U,
+    0x8164U, 0x8173U, 0x8182U, 0x8191U, 0x81a0U, 0x81afU, 0x81beU, 0x81cdU,
+    0x81dcU, 0x81ebU, 0x81faU, 0x8209U, 0x8218U, 0x8227U, 0x8236U, 0x8245U,
+    0x8254U, 0x8263U, 0x8272U, 0x8282U, 0x8291U, 0x82a0U, 0x82afU, 0x82beU,
+    0x82cdU, 0x82dcU, 0x82ebU, 0x82faU, 0x830aU, 0x8319U, 0x8328U, 0x8337U,
+    0x8346U, 0x8355U, 0x8364U, 0x8374U, 0x8383U, 0x8392U, 0x83a1U, 0x83b0U,
+    0x83c0U, 0x83cfU, 0x83deU, 0x83edU, 0x83fdU, 0x840cU, 0x841bU, 0x842aU,
+    0x843aU, 0x8449U, 0x8458U, 0x8468U, 0x8477U, 0x8486U, 0x8495U, 0x84a5U,
+    0x84b4U, 0x84c3U, 0x84d3U, 0x84e2U, 0x84f1U, 0x8501U, 0x8510U, 0x8520U,
+    0x852fU, 0x853eU, 0x854eU, 0x855dU, 0x856dU, 0x857cU, 0x858bU, 0x859bU,
+    0x85aaU, 0x85baU, 0x85c9U, 0x85d9U, 0x85e8U, 0x85f8U, 0x8607U, 0x8617U,
+    0x8626U, 0x8636U, 0x8645U, 0x8655U, 0x8664U, 0x8674U, 0x8683U, 0x8693U,
+    0x86a2U, 0x86b2U, 0x86c1U, 0x86d1U, 0x86e0U, 0x86f0U, 0x8700U, 0x870fU,
+    0x871fU, 0x872eU, 0x873eU, 0x874eU, 0x875dU, 0x876dU, 0x877dU, 0x878cU,
 };
 
 [[nodiscard]] std::uint8_t byteValue(std::byte value) noexcept {
   return std::to_integer<std::uint8_t>(value);
 }
 
-[[nodiscard]] std::uint16_t readLe16(
-    std::span<const std::byte> bytes, std::size_t offset) noexcept {
+[[nodiscard]] std::uint16_t readLe16(std::span<const std::byte> bytes,
+                                     std::size_t offset) noexcept {
   return static_cast<std::uint16_t>(byteValue(bytes[offset])) |
          static_cast<std::uint16_t>(byteValue(bytes[offset + 1U]) << 8U);
 }
 
-[[nodiscard]] std::uint32_t readLe32(
-    std::span<const std::byte> bytes, std::size_t offset) noexcept {
+[[nodiscard]] std::uint32_t readLe32(std::span<const std::byte> bytes,
+                                     std::size_t offset) noexcept {
   return static_cast<std::uint32_t>(readLe16(bytes, offset)) |
          (static_cast<std::uint32_t>(readLe16(bytes, offset + 2U)) << 16U);
 }
 
-[[nodiscard]] bool isBeepHeader(
-    std::span<const std::byte> header) noexcept {
+[[nodiscard]] bool isBeepHeader(std::span<const std::byte> header) noexcept {
   constexpr std::array magic{std::byte{'B'}, std::byte{'E'}, std::byte{'E'},
                              std::byte{'P'}};
   return header.size() >= vab_header_size &&
          std::equal(magic.begin(), magic.end(), header.begin());
 }
 
-[[nodiscard]] std::uint16_t calculatePitch(std::uint8_t note,
-                                           std::uint8_t fine,
+[[nodiscard]] std::uint16_t calculatePitch(std::uint8_t note, std::uint8_t fine,
                                            std::uint8_t center,
                                            std::uint8_t shift) noexcept {
   auto fine_total = static_cast<std::int32_t>(fine) + shift;
@@ -121,16 +116,16 @@ constexpr std::array<std::uint16_t, 128U> fine_pitch{
   return static_cast<std::uint16_t>(rounded >> shift_right);
 }
 
-[[nodiscard]] std::uint16_t calculateVolume(
-    std::uint8_t sound_volume, std::uint8_t bank_volume,
-    std::uint8_t program_volume, std::uint8_t tone_volume) noexcept {
+[[nodiscard]] std::uint16_t calculateVolume(std::uint8_t sound_volume,
+                                            std::uint8_t bank_volume,
+                                            std::uint8_t program_volume,
+                                            std::uint8_t tone_volume) noexcept {
   constexpr std::uint32_t maximum_volume = 0x3fffU;
   constexpr std::uint32_t psyq_scale = 0x3f01U; // 127 * 127
-  const auto first =
-      static_cast<std::uint32_t>(sound_volume) * bank_volume * maximum_volume /
-      psyq_scale;
-  return static_cast<std::uint16_t>(
-      first * program_volume * tone_volume / psyq_scale);
+  const auto first = static_cast<std::uint32_t>(sound_volume) * bank_volume *
+                     maximum_volume / psyq_scale;
+  return static_cast<std::uint16_t>(first * program_volume * tone_volume /
+                                    psyq_scale);
 }
 
 [[nodiscard]] bool uploadSample(Spu &spu,
@@ -144,16 +139,11 @@ constexpr std::array<std::uint16_t, 128U> fine_pitch{
     return false;
   }
   for (std::size_t offset = 0U; offset < sample.size(); offset += 4U) {
-    const auto word = static_cast<std::uint32_t>(byteValue(sample[offset])) |
-                      (static_cast<std::uint32_t>(
-                           byteValue(sample[offset + 1U]))
-                       << 8U) |
-                      (static_cast<std::uint32_t>(
-                           byteValue(sample[offset + 2U]))
-                       << 16U) |
-                      (static_cast<std::uint32_t>(
-                           byteValue(sample[offset + 3U]))
-                       << 24U);
+    const auto word =
+        static_cast<std::uint32_t>(byteValue(sample[offset])) |
+        (static_cast<std::uint32_t>(byteValue(sample[offset + 1U])) << 8U) |
+        (static_cast<std::uint32_t>(byteValue(sample[offset + 2U])) << 16U) |
+        (static_cast<std::uint32_t>(byteValue(sample[offset + 3U])) << 24U);
     if (!spu.writeDmaWord(word)) {
       return false;
     }
@@ -171,19 +161,15 @@ VabDecodeResult decodeVabSound(std::span<const std::byte> header,
     return result;
   }
 
-  const auto descriptor_offset =
-      static_cast<std::size_t>(readLe32(header, 4U));
+  const auto descriptor_offset = static_cast<std::size_t>(readLe32(header, 4U));
   const auto sound_count = static_cast<std::size_t>(byteValue(header[12U]));
-  const auto program_count =
-      static_cast<std::size_t>(readLe16(header, 0x12U));
-  const auto sample_count =
-      static_cast<std::size_t>(readLe16(header, 0x16U));
+  const auto program_count = static_cast<std::size_t>(readLe16(header, 0x12U));
+  const auto sample_count = static_cast<std::size_t>(readLe16(header, 0x16U));
   const auto tone_bytes = program_count * tones_per_program * tone_entry_size;
   const auto size_table_offset = tone_table_offset + tone_bytes;
   if (program_count == 0U || program_count > program_entry_count ||
       sample_count == 0U || sample_count >= sample_size_entry_count ||
-      sound_index >= sound_count ||
-      descriptor_offset > header.size() ||
+      sound_index >= sound_count || descriptor_offset > header.size() ||
       sound_count >
           (header.size() - descriptor_offset) / sound_descriptor_size ||
       size_table_offset > header.size() ||
@@ -195,7 +181,17 @@ VabDecodeResult decodeVabSound(std::span<const std::byte> header,
   const auto descriptor =
       header.subspan(descriptor_offset + sound_index * sound_descriptor_size,
                      sound_descriptor_size);
-  if ((readLe16(descriptor, 0U) & 0x1fU) != 0U) {
+  const auto descriptor_flags = readLe16(descriptor, 0U) & 0x1fU;
+  // COMMON/BEEPSX descriptors 3 and 4 are the retail OPTIONS volume-test
+  // voice. They carry the engine's 0x0e one-shot routing flags, but retain
+  // the same single program/tone/sample payload as the three type-0 menu
+  // cues. The flags select guest mixer routing; native PCM decoding already
+  // supplies an isolated source and therefore needs no alternate synthesis
+  // path. Reject every other descriptor form so sequences and layered
+  // sounds are still never mis-decoded as a single tone.
+  constexpr auto retail_volume_preview_flags = std::uint16_t{0x0eU};
+  if (descriptor_flags != 0U &&
+      descriptor_flags != retail_volume_preview_flags) {
     result.status = VabDecodeStatus::unsupported_sound;
     return result;
   }
@@ -208,19 +204,18 @@ VabDecodeResult decodeVabSound(std::span<const std::byte> header,
     return result;
   }
 
-  const auto program_entry =
-      header.subspan(program_table_offset + program * program_entry_size,
-                     program_entry_size);
-  const auto tone_count = std::min<std::size_t>(
-      byteValue(program_entry[0U]), tones_per_program);
+  const auto program_entry = header.subspan(
+      program_table_offset + program * program_entry_size, program_entry_size);
+  const auto tone_count =
+      std::min<std::size_t>(byteValue(program_entry[0U]), tones_per_program);
   std::span<const std::byte> selected_tone;
   for (std::size_t tone = 0U; tone < tone_count; ++tone) {
     const auto candidate = header.subspan(
         tone_table_offset +
             (program * tones_per_program + tone) * tone_entry_size,
         tone_entry_size);
-    if (note >= byteValue(candidate[6U]) &&
-        note <= byteValue(candidate[7U]) && readLe16(candidate, 22U) != 0U) {
+    if (note >= byteValue(candidate[6U]) && note <= byteValue(candidate[7U]) &&
+        readLe16(candidate, 22U) != 0U) {
       selected_tone = candidate;
       break;
     }
@@ -240,14 +235,12 @@ VabDecodeResult decodeVabSound(std::span<const std::byte> header,
   for (std::size_t sample = 1U; sample < sample_number; ++sample) {
     sample_offset +=
         static_cast<std::size_t>(readLe16(
-            header,
-            size_table_offset + sample * sizeof(std::uint16_t))) *
+            header, size_table_offset + sample * sizeof(std::uint16_t))) *
         8U;
   }
   const auto sample_size =
       static_cast<std::size_t>(readLe16(
-          header,
-          size_table_offset + sample_number * sizeof(std::uint16_t))) *
+          header, size_table_offset + sample_number * sizeof(std::uint16_t))) *
       8U;
   if (sample_size == 0U || sample_offset > body.size() ||
       sample_size > body.size() - sample_offset) {
@@ -255,9 +248,8 @@ VabDecodeResult decodeVabSound(std::span<const std::byte> header,
     return result;
   }
 
-  const auto pitch = calculatePitch(
-      note, fine, byteValue(selected_tone[4U]),
-      byteValue(selected_tone[5U]));
+  const auto pitch = calculatePitch(note, fine, byteValue(selected_tone[4U]),
+                                    byteValue(selected_tone[5U]));
   if (pitch == 0U || byteValue(descriptor[10U]) != 0U ||
       byteValue(selected_tone[3U]) != 0x40U) {
     result.status = VabDecodeStatus::unsupported_sound;

@@ -610,6 +610,9 @@ struct LegacyUiMessageBridgeState {
   // by the guest's glyph/backdrop packets.
   std::string text;
   std::uint32_t duration{};
+  // The virus-scanner result shares the optic TEXT allocator but is ordinary
+  // gameplay copy. Keep it out of the untouched English optic-glyph route.
+  bool force_gameplay_layout{};
   std::vector<LegacyUiGlyphBridgeState> glyphs;
   std::optional<LegacyUiBackdropBridgeState> backdrop;
 
@@ -806,6 +809,9 @@ struct LegacyGameplayBridgeState {
   std::vector<std::uint16_t> active_world_models;
   std::vector<std::uint16_t> resident_world_models;
   bool target_lock_active{};
+  LegacyNativePoint virus_scanner_target;
+  std::int32_t virus_scanner_target_slot{-1};
+  bool virus_scanner_target_valid{};
   // True only when the DAT_8012f9b8 source owns a validated node in the retail
   // dynamic-light list. DAT_8012f9b8 itself is a 0x40-byte source, not a byte
   // latch; its first word is the allocator/list handle.

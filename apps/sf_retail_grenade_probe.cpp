@@ -37,7 +37,38 @@ int run(const std::filesystem::path &cue, std::uint32_t mission_index) {
     }
     stable = controlReady(gameplay) ? stable + 1U : 0U;
   }
-  if (stable != 8U || !gameplay.activateRetailAllWeaponsCheat()) {
+  if (stable != 8U) {
+    return 2;
+  }
+  if (mission_index == 0U) {
+    // Mission 0 starts its opening XA a few updates after control becomes
+    // available. Drain the complete active -> quiet radio cycle before
+    // holding aim; production correctly requires a release/re-arm when radio
+    // takes ownership of first-person input.
+    auto opening_radio_seen = false;
+    auto quiet_updates = std::uint32_t{};
+    for (std::uint32_t update = 0U; update < 2'000U && quiet_updates < 8U;
+         ++update) {
+      if (!step(gameplay)) {
+        return 14;
+      }
+      const auto diagnostics = gameplay.audioDiagnostics();
+      if (!diagnostics) {
+        return 14;
+      }
+      const auto radio_active =
+          sf::game::legacyRadioConversationPresentationActive(
+              diagnostics->xa_stream_set != 0U,
+              diagnostics->spu_cd_frames != 0U);
+      opening_radio_seen = opening_radio_seen || radio_active;
+      quiet_updates =
+          opening_radio_seen && !radio_active ? quiet_updates + 1U : 0U;
+    }
+    if (!opening_radio_seen || quiet_updates != 8U) {
+      return 14;
+    }
+  }
+  if (!gameplay.activateRetailAllWeaponsCheat()) {
     return 2;
   }
 
@@ -133,9 +164,8 @@ int run(const std::filesystem::path &cue, std::uint32_t mission_index) {
           projectile_moved_horizontally ||
           position.x != first_projectile_position.x ||
           position.z != first_projectile_position.z;
-      projectile_moved_vertically =
-          projectile_moved_vertically ||
-          position.y != first_projectile_position.y;
+      projectile_moved_vertically = projectile_moved_vertically ||
+                                    position.y != first_projectile_position.y;
     }
     if (gameplay.projectiles().size() != 1U ||
         !gameplay.projectiles().front().retail_transform ||

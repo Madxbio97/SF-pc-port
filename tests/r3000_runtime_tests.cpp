@@ -2145,8 +2145,7 @@ void testLegacyGameplayVmBoundary() {
               vm.runtime().write8(cdrom_register_base + 3U, 0x1fU) &&
               vm.runtime().write8(cdrom_register_base, 0U),
           "Could not acknowledge the command-complete interrupt fixture");
-  const auto acknowledged_command_cdrom =
-      vm.machine().cdrom().captureState();
+  const auto acknowledged_command_cdrom = vm.machine().cdrom().captureState();
   require((acknowledged_command_cdrom.interrupt_flags & 0x07U) == 0U &&
               acknowledged_command_cdrom.response_position == 0U &&
               acknowledged_command_cdrom.response_count == 0U,
@@ -2160,10 +2159,10 @@ void testLegacyGameplayVmBoundary() {
   vm.machine().advanceTicks(audio_ticks_per_frame * 2U);
   const auto overdue_target = overdue_start + audio_ticks_per_frame * 2U;
   require(
-          vm.advanceAudioFrameClock(audio_profile) &&
-              vm.machine().currentTick() >= overdue_target &&
-              vm.machine().currentTick() <= overdue_target + 16U &&
-              audio_callback_count == 14U,
+      vm.advanceAudioFrameClock(audio_profile) &&
+          vm.machine().currentTick() >= overdue_target &&
+          vm.machine().currentTick() <= overdue_target + 16U &&
+          audio_callback_count == 14U,
       "Overdue retail audio IRQs were not coalesced at a streaming boundary");
 
   vm.clearPcm();
@@ -2446,6 +2445,8 @@ void testLegacyGameplayVmBoundary() {
   bridge_profile.object_handler_table = 0x80032100U;
   bridge_profile.dynamic_first_slot = 0x80032038U;
   bridge_profile.target_lock_active = 0x8003203aU;
+  bridge_profile.virus_scanner_target = 0x8004a420U;
+  bridge_profile.virus_scanner_target_slot = 0x8004a42cU;
   bridge_profile.flashlight_enabled = 0x8004a2c0U;
   bridge_profile.dynamic_light_list = 0x800320e0U;
   bridge_profile.taser_conductor_phase = 0x80032084U;
@@ -2735,6 +2736,12 @@ void testLegacyGameplayVmBoundary() {
                                legacy_common_npc_handler) &&
           vm.runtime().write16(bridge_profile.dynamic_first_slot, 1U) &&
           vm.runtime().write8(bridge_profile.target_lock_active, 1U) &&
+          vm.runtime().write32(bridge_profile.virus_scanner_target, 1234U) &&
+          vm.runtime().write32(bridge_profile.virus_scanner_target + 4U,
+                               std::bit_cast<std::uint32_t>(-567)) &&
+          vm.runtime().write32(bridge_profile.virus_scanner_target + 8U,
+                               890U) &&
+          vm.runtime().write32(bridge_profile.virus_scanner_target_slot, 1U) &&
           vm.runtime().write16(bridge_profile.taser_conductor_phase, 2U) &&
           vm.runtime().write16(bridge_profile.taser_target_slot, 1U) &&
           vm.runtime().write32(bridge_profile.target_hit_result, 0x8004a000U) &&
@@ -3050,19 +3057,41 @@ void testLegacyGameplayVmBoundary() {
       retail_text_hooks.message_boundaries[1].instructions[0] == 0x27bdffd8U &&
       retail_text_hooks.message_boundaries[1].channel ==
           sf::game::LegacyUiMessageChannel::status &&
+      retail_text_hooks.message_boundaries[2].address == 0x8008582cU &&
+      retail_text_hooks.message_boundaries[2].instructions ==
+          std::array<std::uint32_t, 4U>{0x27bdffc8U, 0xafb20028U, 0x00a09021U,
+                                        0xafb3002cU} &&
+      retail_text_hooks.message_boundaries[2].channel ==
+          sf::game::LegacyUiMessageChannel::centered &&
+      retail_text_hooks.message_boundaries[2].text_argument == 1U &&
+      retail_text_hooks.message_boundaries[2].duration_argument == 2U &&
+      retail_text_hooks.message_boundaries[2].channel_from_slot &&
+      retail_text_hooks.message_boundaries[2].accepted_return_address ==
+          0x80044fdcU &&
+      retail_text_hooks.message_boundaries[2].force_gameplay_layout &&
       retail_text_hooks.attached_text_entry == 0x80085eb0U &&
       retail_text_hooks.attached_text_instructions[0] == 0x27bdffc8U);
   constexpr std::uint32_t centered_text_hook = 0x80020200U;
   constexpr std::uint32_t status_text_hook = 0x80020240U;
   constexpr std::uint32_t attached_text_hook = 0x80020280U;
+  constexpr std::uint32_t scanner_text_hook = 0x800202c0U;
+  constexpr std::uint32_t scanner_text_caller = 0x80020300U;
   constexpr std::array text_hook_words{
       encodeI(0x09U, 4U, 2U, 1U),      0U, 0U, 0U,
       encodeR(31U, 0U, 0U, 0U, 0x08U), 0U,
   };
+  constexpr std::array scanner_text_caller_words{
+      encodeR(31U, 0U, 8U, 0U, 0x21U), encodeJ(0x03U, scanner_text_hook), 0U,
+      encodeR(8U, 0U, 31U, 0U, 0x21U), encodeR(31U, 0U, 0U, 0U, 0x08U),   0U,
+  };
   const auto text_hook_code = instructionBytes(text_hook_words);
+  const auto scanner_text_caller_code =
+      instructionBytes(scanner_text_caller_words);
   require(vm.loadOverlay(centered_text_hook, text_hook_code) &&
               vm.loadOverlay(status_text_hook, text_hook_code) &&
-              vm.loadOverlay(attached_text_hook, text_hook_code),
+              vm.loadOverlay(attached_text_hook, text_hook_code) &&
+              vm.loadOverlay(scanner_text_hook, text_hook_code) &&
+              vm.loadOverlay(scanner_text_caller, scanner_text_caller_code),
           "Could not install retail gameplay-text hook fixtures");
   auto text_hook_profile = retail_text_hooks;
   const std::array<std::uint32_t, 4U> text_hook_prefix{
@@ -3081,6 +3110,16 @@ void testLegacyGameplayVmBoundary() {
       text_hook_prefix,
       sf::game::LegacyUiMessageChannel::status,
   };
+  text_hook_profile.message_boundaries[2] = {
+      scanner_text_hook,
+      text_hook_prefix,
+      sf::game::LegacyUiMessageChannel::centered,
+      1U,
+      2U,
+      true,
+      scanner_text_caller + 0x0cU,
+      true,
+  };
   text_hook_profile.attached_text_entry = attached_text_hook;
   text_hook_profile.attached_text_instructions = text_hook_prefix;
   text_hook_profile.active_text_list = bridge_profile.active_text_list;
@@ -3096,6 +3135,7 @@ void testLegacyGameplayVmBoundary() {
   constexpr std::uint32_t generic_text_address = 0x80010800U;
   constexpr std::uint32_t second_generic_text_address = 0x80010900U;
   constexpr std::uint32_t duplicate_text_address = 0x80010a00U;
+  constexpr std::uint32_t scanner_text_address = 0x80010b00U;
   const auto write_guest_text = [&vm](std::uint32_t address,
                                       std::string_view text) {
     for (std::size_t index = 0U; index < text.size(); ++index) {
@@ -3112,6 +3152,7 @@ void testLegacyGameplayVmBoundary() {
               write_guest_text(generic_text_address, "Open Crate") &&
               write_guest_text(second_generic_text_address, "Use Keycard") &&
               write_guest_text(duplicate_text_address, "Wrong Replacement") &&
+              write_guest_text(scanner_text_address, "Plant beacon\non body") &&
               vm.runtime().write8(text_hook_profile.text_pool_cursor, 1U),
           "Could not seed gameplay-text source strings");
   vm.bindSyphonFilterUsaV11GameplayTextHooks(text_hook_profile);
@@ -3204,6 +3245,52 @@ void testLegacyGameplayVmBoundary() {
               vm.captureSnapshot().ui_messages.size() == 2U &&
               vm.loadOverlay(status_text_hook, text_hook_code),
           "Gameplay message observer faulted retail on an unknown opcode");
+
+  vm.clearUiMessages();
+  const std::array scanner_text_arguments{2U, scanner_text_address, 0xffffffffU,
+                                          0U};
+  const auto scanner_text_result =
+      vm.invoke(scanner_text_caller, scanner_text_arguments);
+  const auto scanner_text_state = vm.captureSnapshot();
+  require(scanner_text_result.completed() &&
+              scanner_text_result.return_value == 3U &&
+              scanner_text_state.ui_messages.size() == 1U &&
+              scanner_text_state.ui_messages[0].channel ==
+                  sf::game::LegacyUiMessageChannel::centered &&
+              scanner_text_state.ui_messages[0].text ==
+                  "Plant beacon\non body" &&
+              scanner_text_state.ui_messages[0].force_gameplay_layout &&
+              scanner_text_state.ui_messages[0].duration == 0xffffffffU,
+          "Scanner message hook lost its source, slot channel or duration");
+  const auto rejected_scanner_text_result =
+      vm.invoke(scanner_text_hook, scanner_text_arguments);
+  require(rejected_scanner_text_result.completed() &&
+              rejected_scanner_text_result.return_value == 3U &&
+              vm.captureSnapshot().ui_messages.size() == 1U,
+          "Scanner message hook accepted an unrelated retail caller");
+  const auto scanner_status_result = vm.invoke(
+      scanner_text_caller, std::array{6U, scanner_text_address, 29U, 0U});
+  const auto scanner_status_state = vm.captureSnapshot();
+  require(scanner_status_result.completed() &&
+              scanner_status_result.return_value == 7U &&
+              scanner_status_state.ui_messages.size() == 2U &&
+              scanner_status_state.ui_messages[1].channel ==
+                  sf::game::LegacyUiMessageChannel::status &&
+              scanner_status_state.ui_messages[1].duration == 29U,
+          "Slot-derived gameplay message channel was not preserved");
+  const auto invalid_scanner_slot_result = vm.invoke(
+      scanner_text_caller, std::array{7U, scanner_text_address, 17U, 0U});
+  require(invalid_scanner_slot_result.completed() &&
+              invalid_scanner_slot_result.return_value == 8U &&
+              vm.captureSnapshot().ui_messages.size() == 2U,
+          "Gameplay message hook accepted an invalid retail text slot");
+  const auto aliased_scanner_slot_result = vm.invoke(
+      scanner_text_caller, std::array{0x100U, scanner_text_address, 17U, 0U});
+  require(aliased_scanner_slot_result.completed() &&
+              aliased_scanner_slot_result.return_value == 0x101U &&
+              vm.captureSnapshot().ui_messages.size() == 2U,
+          "Gameplay message hook truncated an invalid slot into slot zero");
+  vm.clearUiMessages();
 
   constexpr std::uint32_t thrown_projectile_descriptor = 0x8004a540U;
   constexpr std::uint32_t thrown_projectile_object = 0x8004a580U;
@@ -3347,6 +3434,11 @@ void testLegacyGameplayVmBoundary() {
           bridge->player.position.z == 933 &&
           bridge->player.guest_rotation[2] == 4096 &&
           bridge->target_lock_active && bridge->taser_conductor_phase == 2U &&
+          bridge->virus_scanner_target_valid &&
+          bridge->virus_scanner_target.x == 1234 &&
+          bridge->virus_scanner_target.y == -567 &&
+          bridge->virus_scanner_target.z == 890 &&
+          bridge->virus_scanner_target_slot == 1 &&
           bridge->taser_target_slot == 1 && bridge->taserConductorActive() &&
           bridge->target_hit_result == 0x8004a000U &&
           bridge->aimed_target_slot == 0 &&
@@ -3423,6 +3515,33 @@ void testLegacyGameplayVmBoundary() {
           bridge->expl_particles[3].frame == 4U &&
           bridge->park2_flamethrower_ribbons.empty(),
       "Legacy typed gameplay bridge mismatch");
+
+  require(
+      vm.runtime().write32(bridge_profile.virus_scanner_target, 0U) &&
+          vm.runtime().write32(bridge_profile.virus_scanner_target + 4U, 0U) &&
+          vm.runtime().write32(bridge_profile.virus_scanner_target + 8U, 0U) &&
+          vm.runtime().write32(bridge_profile.virus_scanner_target_slot, 99U),
+      "Could not seed cleared virus-scanner target state");
+  const auto cleared_scanner_target = vm.readBridgeState(bridge_profile);
+  require(cleared_scanner_target &&
+              !cleared_scanner_target->virus_scanner_target_valid &&
+              cleared_scanner_target->virus_scanner_target_slot == -1,
+          "A stale scanner slot survived cleared retail coordinates");
+  require(vm.runtime().write32(bridge_profile.virus_scanner_target, 1U),
+          "Could not seed transient invalid virus-scanner target state");
+  const auto transient_scanner_target = vm.readBridgeState(bridge_profile);
+  require(transient_scanner_target &&
+              !transient_scanner_target->virus_scanner_target_valid &&
+              transient_scanner_target->virus_scanner_target_slot == -1,
+          "A transient invalid scanner slot faulted the gameplay bridge");
+  require(
+      vm.runtime().write32(bridge_profile.virus_scanner_target, 1234U) &&
+          vm.runtime().write32(bridge_profile.virus_scanner_target + 4U,
+                               std::bit_cast<std::uint32_t>(-567)) &&
+          vm.runtime().write32(bridge_profile.virus_scanner_target + 8U,
+                               890U) &&
+          vm.runtime().write32(bridge_profile.virus_scanner_target_slot, 1U),
+      "Could not restore virus-scanner target state");
 
   auto park2_bridge_profile = bridge_profile;
   auto &park2_flame = park2_bridge_profile.park2_flamethrower;
@@ -4078,28 +4197,20 @@ void testLegacyGameplayVmBoundary() {
   require(vm.runtime().read32(player_motion, locomotion_words[0]) &&
               vm.runtime().read32(player_motion + 4U, locomotion_words[1]) &&
               vm.runtime().read32(player_motion + 8U, locomotion_words[2]) &&
-              vm.runtime().read32(player_motion + 0x40U,
-                                  locomotion_words[3]) &&
-              vm.runtime().read32(player_motion + 0x44U,
-                                  locomotion_words[4]) &&
-              vm.runtime().read32(player_motion + 0x48U,
-                                  locomotion_words[5]) &&
-              vm.runtime().read32(player_matrix + 0x14U,
-                                  locomotion_words[6]) &&
-              vm.runtime().read32(player_matrix + 0x18U,
-                                  locomotion_words[7]) &&
-              vm.runtime().read32(player_matrix + 0x1cU,
-                                  locomotion_words[8]),
+              vm.runtime().read32(player_motion + 0x40U, locomotion_words[3]) &&
+              vm.runtime().read32(player_motion + 0x44U, locomotion_words[4]) &&
+              vm.runtime().read32(player_motion + 0x48U, locomotion_words[5]) &&
+              vm.runtime().read32(player_matrix + 0x14U, locomotion_words[6]) &&
+              vm.runtime().read32(player_matrix + 0x18U, locomotion_words[7]) &&
+              vm.runtime().read32(player_matrix + 0x1cU, locomotion_words[8]),
           "Could not inspect the narrow first-person locomotion write");
   std::array<std::uint16_t, 4U> preserved_player_words{};
-  require(vm.runtime().read16(player_matrix, preserved_player_words[0]) &&
-              vm.runtime().read16(player_health + 6U,
-                                  preserved_player_words[1]) &&
-              vm.runtime().read16(player_health + 8U,
-                                  preserved_player_words[2]) &&
-              vm.runtime().read16(third_record + 0x40U,
-                                  preserved_player_words[3]),
-          "Could not inspect pose/vitals after first-person locomotion");
+  require(
+      vm.runtime().read16(player_matrix, preserved_player_words[0]) &&
+          vm.runtime().read16(player_health + 6U, preserved_player_words[1]) &&
+          vm.runtime().read16(player_health + 8U, preserved_player_words[2]) &&
+          vm.runtime().read16(third_record + 0x40U, preserved_player_words[3]),
+      "Could not inspect pose/vitals after first-person locomotion");
   const auto signed_word = [](std::uint32_t value) {
     return std::bit_cast<std::int32_t>(value);
   };
@@ -6117,9 +6228,10 @@ void testGuestPadBridge() {
 
   const auto pad = sf::game::legacyPadStateFromPlayerInput(input);
   constexpr std::uint16_t expected_buttons =
-      0x0100U | 0x0400U | 0x1000U | 0x2000U | 0x8000U;
+      0x0100U | 0x0400U | 0x1000U | 0x2000U | 0x4000U | 0x8000U;
   require(pad.buttons == expected_buttons,
-          "Manual aim lost retail strafe or leaked a forbidden PAD action");
+          "Manual aim lost retail strafe/crouch or leaked a forbidden PAD "
+          "action");
   require(pad.left_x == 128U && pad.left_y == 128U && pad.right_x == 128U &&
               pad.right_y == 128U,
           "Host first-person locomotion leaked into the retail sight axes");
@@ -6172,8 +6284,7 @@ void testGuestPadBridge() {
               (aim_turn_left.buttons & 0x0400U) != 0U &&
               (aim_turn_right.buttons & 0x0400U) != 0U &&
               (aim_move_right.buttons & 0x0300U) == 0U &&
-              aim_turn_left.left_x == 0x80U &&
-              aim_turn_right.left_x == 0x80U,
+              aim_turn_left.left_x == 0x80U && aim_turn_right.left_x == 0x80U,
           "Manual-aim peek or host locomotion PAD isolation mismatch");
 
   input = {};
@@ -6185,6 +6296,27 @@ void testGuestPadBridge() {
   require((chase_target_lock.buttons & 0x0800U) != 0U &&
               (manual_aim_target_lock.buttons & 0x0800U) == 0U,
           "Retail auto-lock was not isolated from direct manual aim");
+
+  input = {};
+  input.move = 1.0;
+  input.strafe = 1.0;
+  input.run = true;
+  const auto diagonal_run = sf::game::legacyPadStateFromPlayerInput(input);
+  require(diagonal_run.left_y == 0x01U &&
+              (diagonal_run.buttons & 0x0300U) == 0x0200U,
+          "Forward run and right strafe did not reach the retail PAD "
+          "simultaneously");
+
+  constexpr std::uint16_t latched_target_lock_and_fire = 0x0800U | 0x8000U;
+  const auto manual_aim_transition = sf::game::legacyManualAimTransitionButtons(
+      manual_aim_target_lock.buttons, latched_target_lock_and_fire, true);
+  const auto chase_transition = sf::game::legacyManualAimTransitionButtons(
+      chase_target_lock.buttons, latched_target_lock_and_fire, false);
+  require((manual_aim_transition & 0x0400U) != 0U &&
+              (manual_aim_transition & 0x0800U) == 0U &&
+              (manual_aim_transition & 0x8000U) != 0U &&
+              (chase_transition & 0x0800U) != 0U,
+          "Latched auto-lock was not atomically retired by manual aim");
 
   input = {};
   input.run = true;

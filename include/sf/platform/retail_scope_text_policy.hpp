@@ -1,10 +1,32 @@
 #pragma once
 
+#include "sf/game/hud.hpp"
 #include "sf/game/legacy_bridge_types.hpp"
 
 #include <cstddef>
 
 namespace sf::platform {
+
+// These utilities keep their authored English captions inside the original
+// optic. The Russian font atlas reuses the same glyph UVs for Cyrillic, so
+// drawing the untouched retail TEXT packets through that atlas produces
+// transliterated garbage. The virus scanner uses the same packet path as the
+// two rifle scopes even though it has no custom SCOPED.TIM frame.
+[[nodiscard]] constexpr bool
+usesRetailEnglishOpticText(game::WeaponId weapon) noexcept {
+  return weapon == game::WeaponId::nightvision_rifle ||
+         weapon == game::WeaponId::sniper_rifle ||
+         weapon == game::WeaponId::virus_scanner;
+}
+
+// Retail mode 4 keeps the ordinary first-person overlay, then adds a separate
+// presentation pass that reveals biological subjects through the scene.
+// Keeping the predicate independent from scope artwork prevents the depth
+// override from leaking into the sniper and night-vision rifles.
+[[nodiscard]] constexpr bool
+virusScannerXrayActive(bool first_person_aim, game::WeaponId weapon) noexcept {
+  return first_person_aim && weapon == game::WeaponId::virus_scanner;
+}
 
 // Retail scope captions live in the centered TEXT slots and have no backdrop.
 // Classify the live packet itself instead of its optional source string:
