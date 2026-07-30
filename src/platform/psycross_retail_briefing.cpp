@@ -14,9 +14,9 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <cmath>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -160,8 +160,7 @@ void drawOutlinePrefix(const std::array<Point, Size> &points,
 
 void drawBriefingSurround(std::uint32_t retail_tick,
                           double animation_progress) {
-  const auto transition_tick =
-      std::min(retail_tick, surround_transition_ticks);
+  const auto transition_tick = std::min(retail_tick, surround_transition_ticks);
   const auto visible_frame = static_cast<std::size_t>(
       transition_tick * surround_frame_elements / surround_transition_ticks);
   const auto visible_grid = static_cast<std::size_t>(
@@ -229,8 +228,8 @@ void drawBriefingSurround(std::uint32_t retail_tick,
   drawLine({245, 202}, {245, 212}, panel_outline);
   drawLine({245, 212}, {139, 212}, panel_outline);
   drawLine({139, 212}, {139, 202}, panel_outline);
-  const auto progress_width = static_cast<int>(std::lround(
-      std::clamp(animation_progress, 0.0, 1.0) * 94.0));
+  const auto progress_width = static_cast<int>(
+      std::lround(std::clamp(animation_progress, 0.0, 1.0) * 94.0));
   if (progress_width > 0) {
     drawSolidRect(145, 205, progress_width, 3, panel_progress);
   }
@@ -356,8 +355,8 @@ TextLayout layoutTextObject(std::string_view text, int left, int top, int right,
   return layout;
 }
 
-double briefingTextProgress(const assets::MissionBriefing &briefing,
-                            int left, int top, int right, int bottom,
+double briefingTextProgress(const assets::MissionBriefing &briefing, int left,
+                            int top, int right, int bottom,
                             double retail_time) {
   auto y = top;
   auto animation_steps = std::size_t{};
@@ -369,9 +368,9 @@ double briefingTextProgress(const assets::MissionBriefing &briefing,
     }
     const auto glyphs_per_tick =
         static_cast<std::size_t>(std::max(layout.lines, 1));
-    animation_steps = std::max(
-        animation_steps,
-        (layout.glyphs.size() + glyphs_per_tick - 1U) / glyphs_per_tick);
+    animation_steps = std::max(animation_steps,
+                               (layout.glyphs.size() + glyphs_per_tick - 1U) /
+                                   glyphs_per_tick);
   };
   include(briefing.retailTitle());
   for (const auto directive : briefing.retailDirectives()) {
@@ -382,10 +381,9 @@ double briefingTextProgress(const assets::MissionBriefing &briefing,
   if (animation_steps == 0U) {
     return 1.0;
   }
-  return std::clamp(
-      (std::max(retail_time, 0.0) + 1.0) /
-          static_cast<double>(animation_steps),
-      0.0, 1.0);
+  return std::clamp((std::max(retail_time, 0.0) + 1.0) /
+                        static_cast<double>(animation_steps),
+                    0.0, 1.0);
 }
 
 std::uint8_t settleChannel(std::uint8_t target,
@@ -411,19 +409,21 @@ int drawTextObject(const assets::TimImage &font, std::string_view text,
   const auto glyphs_per_tick =
       static_cast<std::size_t>(std::max(layout.lines, 1));
   const auto leading = static_cast<std::size_t>(retail_tick) * glyphs_per_tick;
-  const auto visible = std::min(layout.glyphs.size(), leading + glyphs_per_tick);
+  const auto visible =
+      std::min(layout.glyphs.size(), leading + glyphs_per_tick);
   if (animation_complete != nullptr) {
-    *animation_complete = *animation_complete && visible == layout.glyphs.size();
+    *animation_complete =
+        *animation_complete && visible == layout.glyphs.size();
   }
   for (std::size_t index = 0U; index < visible; ++index) {
-    const auto first_tick =
-        static_cast<std::uint32_t>(index / glyphs_per_tick);
+    const auto first_tick = static_cast<std::uint32_t>(index / glyphs_per_tick);
     const auto settle_ticks = retail_tick - first_tick;
-    const auto color = settle_ticks == 0U
-                           ? Rgb{255U, 255U, 255U}
-                           : Rgb{settleChannel(briefing_color.red, settle_ticks),
-                                 settleChannel(briefing_color.green, settle_ticks),
-                                 settleChannel(briefing_color.blue, settle_ticks)};
+    const auto color =
+        settle_ticks == 0U
+            ? Rgb{255U, 255U, 255U}
+            : Rgb{settleChannel(briefing_color.red, settle_ticks),
+                  settleChannel(briefing_color.green, settle_ticks),
+                  settleChannel(briefing_color.blue, settle_ticks)};
     const auto &entry = layout.glyphs[index];
     drawTextureRegion(font, entry.x, entry.y, entry.glyph.u, entry.glyph.v,
                       entry.glyph.width, entry.glyph.height(), color);
@@ -432,7 +432,7 @@ int drawTextObject(const assets::TimImage &font, std::string_view text,
 }
 
 void drawPrompt(const std::vector<BriefingTexture> &textures,
-                std::uint32_t retail_tick,
+                std::uint32_t prompt_tick,
                 const PsyCrossFontTexture *native_font,
                 const KeyboardMouseBindings &bindings) {
   const auto find = [&](std::string_view name) -> const assets::TimImage & {
@@ -447,9 +447,8 @@ void drawPrompt(const std::vector<BriefingTexture> &textures,
     return match->image;
   };
 
-  const auto color = game::MissionStartGate::brightPrompt(retail_tick)
-                         ? Rgb{200U, 200U, 255U}
-                         : Rgb{};
+  const auto brightness = game::MissionStartGate::promptBrightness(prompt_tick);
+  const auto color = Rgb{brightness, brightness, brightness};
   const auto right = screen_center_x + assets::RetailBriefingLayout::prompt_x;
   const auto source = keyboardMouseHintText(
       game::localizeTextCopy(assets::RetailBriefingLayout::prompt), bindings);
@@ -485,10 +484,10 @@ struct PsyCrossRetailBriefing::Impl final {
         std::string_view{"SYMBOL.TIM"},
     };
     for (const auto name : required) {
-      const auto localized = name != "SYMBOL.TIM"
-                                 ? game::readLocalizedAsset(
-                                       std::string{"fonts/"} + std::string{name})
-                                 : std::nullopt;
+      const auto localized =
+          name != "SYMBOL.TIM" ? game::readLocalizedAsset(
+                                     std::string{"fonts/"} + std::string{name})
+                               : std::nullopt;
       auto image = assets::TimImage::parse(
           localized ? std::span<const std::byte>{*localized}
                     : mission.interfaceAssets().file(name));
@@ -545,6 +544,7 @@ struct PsyCrossRetailBriefing::Impl final {
   std::vector<BriefingTexture> textures;
   std::unique_ptr<PsyCrossFontTexture> native_font;
   KeyboardMouseBindings input;
+  mutable std::optional<std::uint32_t> prompt_start_tick;
 };
 
 PsyCrossRetailBriefing::PsyCrossRetailBriefing(
@@ -555,8 +555,8 @@ PsyCrossRetailBriefing::~PsyCrossRetailBriefing() = default;
 
 bool PsyCrossRetailBriefing::draw(const assets::MissionBriefing &briefing,
                                   double retail_time) const {
-  const auto retail_tick = static_cast<std::uint32_t>(
-      std::max(std::floor(retail_time), 0.0));
+  const auto retail_tick =
+      static_cast<std::uint32_t>(std::max(std::floor(retail_time), 0.0));
   GR_SetBlendMode(BM_NONE);
   GR_EnableDepth(0);
   drawSolidRect(0, 0, screen_width, screen_height, {});
@@ -585,8 +585,13 @@ bool PsyCrossRetailBriefing::draw(const assets::MissionBriefing &briefing,
          retail_line_height;
   }
   if (text_animation_complete) {
-    drawPrompt(impl_->textures, retail_tick, impl_->native_font.get(),
-               impl_->input);
+    if (!impl_->prompt_start_tick) {
+      impl_->prompt_start_tick = retail_tick;
+    }
+    drawPrompt(impl_->textures, retail_tick - *impl_->prompt_start_tick,
+               impl_->native_font.get(), impl_->input);
+  } else {
+    impl_->prompt_start_tick.reset();
   }
 
   DrawSync(0);

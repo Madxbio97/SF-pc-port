@@ -503,6 +503,46 @@ droppedItemIconLayers(std::uint16_t item) noexcept {
   }
 }
 
+double droppedItemPresentationScale(std::uint16_t item) noexcept {
+  if (item == 0x80U) {
+    return compact_dropped_item_scale;
+  }
+  if (item >= weapon_slot_count) {
+    return 1.0;
+  }
+  switch (static_cast<WeaponId>(item)) {
+  case WeaponId::silenced_9mm:
+  case WeaponId::pistol_9mm:
+  case WeaponId::unused_357:
+  case WeaponId::pistol_45:
+  case WeaponId::g_18:
+  case WeaponId::fragmentation_grenade:
+  case WeaponId::gas_grenade:
+    return compact_dropped_item_scale;
+  default:
+    return 1.0;
+  }
+}
+
+double advanceWorldCalloutOpacity(double current, bool present,
+                                  double delta_seconds) noexcept {
+  current = std::clamp(current, 0.0, 1.0);
+  const auto elapsed = std::max(0.0, delta_seconds);
+  const auto duration =
+      present ? world_callout_fade_in_seconds : world_callout_fade_out_seconds;
+  if (duration <= 0.0) {
+    return present ? 1.0 : 0.0;
+  }
+  const auto direction = present ? 1.0 : -1.0;
+  return std::clamp(current + direction * elapsed / duration, 0.0, 1.0);
+}
+
+std::uint8_t worldCalloutBrightness(double opacity) noexcept {
+  constexpr auto maximum_brightness = 224.0;
+  return static_cast<std::uint8_t>(
+      std::lround(maximum_brightness * std::clamp(opacity, 0.0, 1.0)));
+}
+
 PlayerInventory::PlayerInventory() { resetFirstMission(); }
 
 void PlayerInventory::resetFirstMission() noexcept {

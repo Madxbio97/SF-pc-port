@@ -57,6 +57,10 @@ struct GameplayAudioVolumes {
              const GameplayAudioVolumes &) noexcept = default;
 };
 
+[[nodiscard]] std::uint8_t
+composeMapFadeIntensity(std::uint8_t native_intensity,
+                        const LegacyFadeBridgeState *guest_fade) noexcept;
+
 struct WorldModel {
   std::string name;
   assets::EmdScene scene;
@@ -198,14 +202,14 @@ legacyGuestActorPoseAvailable(bool current_pose_complete,
 // in the host's native active-room envelope. Keep exactly those retail source
 // identities alive; widening this to arbitrary resident props retains whole
 // room texture sets and can exhaust the native VRAM alias pool.
-[[nodiscard]] constexpr bool legacyGeorgiaStreetObjectiveBomb(
-    std::uint32_t mission_index, std::uint16_t source_index,
-    std::int16_t class_id) noexcept {
+[[nodiscard]] constexpr bool
+legacyGeorgiaStreetObjectiveBomb(std::uint32_t mission_index,
+                                 std::uint16_t source_index,
+                                 std::int16_t class_id) noexcept {
   if (mission_index != 0U) {
     return false;
   }
-  return ((source_index == 28U || source_index == 29U) &&
-          class_id == 0x2e) ||
+  return ((source_index == 28U || source_index == 29U) && class_id == 0x2e) ||
          (source_index == 30U && class_id == 0x58);
 }
 
@@ -260,14 +264,9 @@ legacyManualAimControlAvailable(bool control_locked, bool target_lock_active,
                                          camera_scripted, camera_locked);
 }
 
-[[nodiscard]] constexpr bool legacyChaseControlLockPresentationActive(
-    bool control_locked, bool target_lock_active,
-    std::uint8_t first_person_aim_mode) noexcept {
-  return control_locked && !target_lock_active && first_person_aim_mode == 0U;
-}
-
-[[nodiscard]] constexpr bool legacyRadioConversationPresentationActive(
-    bool xa_stream_active, bool xa_samples_queued) noexcept {
+[[nodiscard]] constexpr bool
+legacyRadioConversationPresentationActive(bool xa_stream_active,
+                                          bool xa_samples_queued) noexcept {
   return xa_stream_active || xa_samples_queued;
 }
 
@@ -668,14 +667,12 @@ legacyResidentSpfxObjectTexture(std::string_view model_name) noexcept {
 }
 
 [[nodiscard]] constexpr std::uint8_t
-resolveDisplayedObjectTextureBank(std::uint8_t object_bank,
-                                  bool hmd_backed,
+resolveDisplayedObjectTextureBank(std::uint8_t object_bank, bool hmd_backed,
                                   bool resident_gmd_backed = false) noexcept {
   if (hmd_backed) {
     return resident_hmd_texture_bank;
   }
-  return resident_gmd_backed ? resident_spfx_object_texture_bank
-                             : object_bank;
+  return resident_gmd_backed ? resident_spfx_object_texture_bank : object_bank;
 }
 
 // A native checkpoint is only the presentation half of one guest snapshot.

@@ -140,38 +140,6 @@ private:
   bool prebuffering_{true};
 };
 
-// Converts the retail callback cadence into an exact host sample budget.
-// Guest CPU work may advance hardware by a variable number of cycles inside a
-// fixed 20 Hz update. The realtime sink must nevertheless submit exactly one
-// second of PCM per second instead of accumulating that excess as latency.
-class AudioOutputCadencePolicy final {
-public:
-  constexpr AudioOutputCadencePolicy(std::uint32_t sample_rate,
-                                     std::uint32_t callback_hz) noexcept
-      : whole_frames_(callback_hz == 0U ? 0U : sample_rate / callback_hz),
-        remainder_per_callback_(callback_hz == 0U ? 0U
-                                                  : sample_rate % callback_hz),
-        callback_hz_(callback_hz) {}
-
-  [[nodiscard]] constexpr std::size_t advanceCallback() noexcept {
-    if (callback_hz_ == 0U) {
-      return 0U;
-    }
-    remainder_ += remainder_per_callback_;
-    const auto carried_frames = remainder_ / callback_hz_;
-    remainder_ %= callback_hz_;
-    return static_cast<std::size_t>(whole_frames_ + carried_frames);
-  }
-
-  constexpr void reset() noexcept { remainder_ = 0U; }
-
-private:
-  std::uint32_t whole_frames_{};
-  std::uint32_t remainder_per_callback_{};
-  std::uint32_t callback_hz_{};
-  std::uint32_t remainder_{};
-};
-
 // Smooths host-owned source gain without touching queued PCM. A stopped
 // source adopts the target immediately, while a playing source moves by a
 // bounded percentage on each presentation update.

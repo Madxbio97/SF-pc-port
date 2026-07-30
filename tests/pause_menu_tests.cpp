@@ -1129,10 +1129,24 @@ void testCompoundRussianMenuLocalization() {
       sf::game::localizeTextCopy("Slot 2  Campaign Complete");
   require(completed_slot.find("Slot") == std::string::npos &&
           completed_slot.find("Campaign") == std::string::npos);
+  const auto parameter_failed =
+      sf::game::localizeTextCopy("Mission Parameter Failed");
+  require(parameter_failed != "Mission Parameter Failed");
+  require(sf::game::localizeTextCopy("MISSION PARAMETER FAILED") ==
+          parameter_failed);
+  const auto objective_failed =
+      sf::game::localizeTextCopy("Mission Objective Failed");
+  require(objective_failed != "Mission Objective Failed");
+  require(sf::game::localizeTextCopy("MISSION OBJECTIVE FAILED") ==
+          objective_failed);
   require(sf::game::completeGameplayTextSource("Scope Pwr O") ==
           std::optional<std::string_view>{"Scope Pwr On"});
   require(sf::game::completeGameplayTextSource("No Target Avail") ==
           std::optional<std::string_view>{"No Target Available"});
+  require(sf::game::completeGameplayTextSource("MISSION PARAMETER FAI") ==
+          std::optional<std::string_view>{"Mission Parameter Failed"});
+  require(sf::game::completeGameplayTextSource("MISSION OBJECTIVE FAI") ==
+          std::optional<std::string_view>{"Mission Objective Failed"});
   require(!sf::game::completeGameplayTextSource("No"));
   for (
       const auto description : {

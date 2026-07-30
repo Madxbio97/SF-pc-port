@@ -3,6 +3,43 @@
 All notable public-test changes are documented here. The project currently uses
 pre-release tags rather than a stable semantic-versioning promise.
 
+## 0.1.0-public-test.14 - 2026-07-30
+
+### Mission flow and localization
+
+- Restored the authored mission-failure screen for scripted objective and
+  parameter failures, including the original fade, type-on text and a single
+  reliable restart path instead of an unlabelled black screen.
+- Added complete Russian translations for mission-parameter and
+  mission-objective failure messages, including partial type-on states, and
+  synchronized the editable localization review documents.
+- Polished mission startup with a calmer prompt reveal, a short transition into
+  gameplay and correct composition of native and retail fades.
+
+### Presentation and performance
+
+- Corrected compact pickup sizing and made world callouts reveal and fade at a
+  consistent speed from 30 through 240 presentation FPS.
+- Added a smoothed presentation FPS and frame-time counter for diagnosing real
+  host rendering performance independently of the original 20 Hz game logic.
+- Split the monolithic PsyCross scene viewer into focused runtime, render,
+  world, model, texture, HUD, pause, effects, save and presentation modules.
+- Reduced repeated scene allocations and calculations while preserving the
+  existing renderer, audio, texture-residency and Surface Picker release gates.
+
+### Validation
+
+- Extended regression coverage for mission failure, localization, HUD, audio
+  output and R3000 runtime behavior.
+- Validated complete MSVC and PsyCross Release suites, supported-ROM probes,
+  package manifest, internal hashes and forbidden-file rules.
+
+### Release artifact
+
+- File: `SyphonFilterPC-0.1.0-public-test.14-win64.zip`
+- Checksum: supplied in the accompanying `.zip.sha256` file.
+- Supported disc: *Syphon Filter* USA v1.1 (`SCUS-94240`), BIN/CUE.
+
 ## 0.1.0-public-test.13 - 2026-07-30
 
 ### Campaign and controls

@@ -80,31 +80,6 @@ void testStoppedSourcePrebufferIsNotRecycled() {
           "Explicit reset did not protect the new prebuffer");
 }
 
-void testExactRetailAudioCadence() {
-  sf::platform::AudioOutputCadencePolicy cadence{44'100U, 120U};
-  std::size_t first_second{};
-  for (auto callback = 0U; callback < 120U; ++callback) {
-    const auto frames = cadence.advanceCallback();
-    require(frames == (callback % 2U == 0U ? 367U : 368U),
-            "44.1 kHz cadence did not alternate fractional callback frames");
-    first_second += frames;
-  }
-  require(first_second == 44'100U,
-          "Retail callback cadence drifted over one second");
-
-  cadence.reset();
-  std::size_t retail_frame{};
-  for (auto callback = 0U; callback < 6U; ++callback) {
-    retail_frame += cadence.advanceCallback();
-  }
-  require(retail_frame == 2'205U,
-          "Six retail callbacks did not produce one exact 20 Hz PCM frame");
-
-  sf::platform::AudioOutputCadencePolicy invalid{44'100U, 0U};
-  require(invalid.advanceCallback() == 0U,
-          "Invalid callback rate produced a PCM budget");
-}
-
 void testBoundedGainRamp() {
   sf::platform::AudioOutputGainPolicy policy{100U, 5U};
   policy.setTargetPercent(0U);
@@ -201,7 +176,6 @@ int main() {
     testStartupAndStableRecovery();
     testRealtimeFrameRingWrapsWithoutBlockingOrReordering();
     testStoppedSourcePrebufferIsNotRecycled();
-    testExactRetailAudioCadence();
     testBoundedGainRamp();
     testRetailVolumeMapping();
     testMovieFrameTimingUsesOneAbsoluteClock();

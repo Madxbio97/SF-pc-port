@@ -6075,8 +6075,7 @@ void testLegacyGameplayVmBoundary() {
   failed_mission.failure_transition = true;
   require(
       !sf::game::legacyMissionFailureRestartReady(0U, failed_mission) &&
-          sf::game::legacyMissionFailureRestartReady(2U, failed_mission) &&
-          sf::game::legacyFirstMissionFailureRestartReady(2U, failed_mission),
+          sf::game::legacyMissionFailureRestartReady(2U, failed_mission),
       "Retail failure fade must finish before requesting restart");
   failed_mission.failure = false;
   failed_mission.success = true;

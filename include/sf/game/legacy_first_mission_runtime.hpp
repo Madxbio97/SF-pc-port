@@ -73,13 +73,6 @@ legacyManualAimTransitionButtons(std::uint16_t current_buttons,
   return mission.failure && application_state == 2U;
 }
 
-// Compatibility name used by the original H4 surface.
-[[nodiscard]] constexpr bool legacyFirstMissionFailureRestartReady(
-    std::uint32_t application_state,
-    const LegacyMissionBridgeState &mission) noexcept {
-  return legacyMissionFailureRestartReady(application_state, mission);
-}
-
 // A terminal failure deliberately stops at state 2 so the host can restore
 // the captured checkpoint. Active transitions and SILO's successful terminal
 // preamble must still run the retail state-stack dispatcher.

@@ -6381,28 +6381,27 @@ double GameplaySession::manualAimReticleVerticalOffset() const noexcept {
              : manual_aim_reticle_vertical_offset;
 }
 
+std::uint8_t
+composeMapFadeIntensity(std::uint8_t native_intensity,
+                        const LegacyFadeBridgeState *guest_fade) noexcept {
+  if (guest_fade == nullptr) {
+    return native_intensity;
+  }
+  const auto guest_intensity = static_cast<std::uint8_t>(
+      std::clamp(std::lround(guest_fade->blackOpacity() * 255.0), 0L, 255L));
+  return std::max(native_intensity, guest_intensity);
+}
+
 std::uint8_t GameplaySession::mapFade() const noexcept {
   if (legacy_runtime_faulted_) {
     return 0xffU;
   }
+  const LegacyFadeBridgeState *guest_fade = nullptr;
   if (legacy_first_mission_ != nullptr && legacy_first_mission_->ready() &&
       legacy_first_mission_->bridge()) {
-    const auto &fade = legacy_first_mission_->bridge()->fade;
-    constexpr auto opening_profile =
-        syphonFilterUsaV11FirstMissionOpeningProfile();
-    // Native loading and mission-start screens have already completed before
-    // the world renderer takes ownership. Retail starts that first world
-    // frame under an almost opaque subtractive fade (248/255); replaying it
-    // hides a valid PC frame. Suppress only this identified opening callback,
-    // while leaving failure, checkpoint and scripted transition fades exact.
-    if (fade.callback == opening_profile.fade_completion_callback &&
-        fade.step < 0) {
-      return 0U;
-    }
-    const auto intensity = std::lround(fade.blackOpacity() * 255.0);
-    return static_cast<std::uint8_t>(std::clamp(intensity, 0L, 255L));
+    guest_fade = &legacy_first_mission_->bridge()->fade;
   }
-  return map_fade_.intensity();
+  return composeMapFadeIntensity(map_fade_.intensity(), guest_fade);
 }
 
 std::string_view GameplaySession::runtimeFaultReason() const noexcept {

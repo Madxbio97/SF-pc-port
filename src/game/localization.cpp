@@ -138,6 +138,10 @@ constexpr std::array base_utf8_translations{
     Utf8Translation{"N/A", u8"Н/Д"},
     Utf8Translation{"Infinite", u8"БЕСКОНЕЧНО"},
     Utf8Translation{"Mission Failed", u8"МИССИЯ ПРОВАЛЕНА"},
+    Utf8Translation{"Mission Parameter Failed",
+                    u8"УСЛОВИЕ МИССИИ НАРУШЕНО"},
+    Utf8Translation{"Mission Objective Failed",
+                    u8"ЦЕЛЬ МИССИИ НЕ ВЫПОЛНЕНА"},
     Utf8Translation{"MISSION FAILED", u8"МИССИЯ ПРОВАЛЕНА"},
     Utf8Translation{"FIRE OR ACTION TO RETRY", u8"НАЖМИТЕ ОГОНЬ ИЛИ ДЕЙСТВИЕ"},
     Utf8Translation{"Objective", u8"ЦЕЛЬ"},
@@ -1703,6 +1707,8 @@ completeGameplayTextSource(std::string_view observed) noexcept {
   constexpr std::array candidates{
       std::string_view{"Scope Pwr On"},
       std::string_view{"No Target Available"},
+      std::string_view{"Mission Parameter Failed"},
+      std::string_view{"Mission Objective Failed"},
       std::string_view{"Sniper Rifle"},
       std::string_view{"Nightvision Rifle"},
   };

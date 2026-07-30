@@ -681,3759 +681,3771 @@ SOURCE: proofread common catalogue
 COMMENT:
 
 [SF-RU-0114] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+EN: Mission Parameter Failed
+RU: УСЛОВИЕ МИССИИ НАРУШЕНО
+SOURCE: proofread common catalogue
+COMMENT:
+
+[SF-RU-0115] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+EN: Mission Objective Failed
+RU: ЦЕЛЬ МИССИИ НЕ ВЫПОЛНЕНА
+SOURCE: proofread common catalogue
+COMMENT:
+
+[SF-RU-0116] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: MISSION FAILED
 RU: МИССИЯ ПРОВАЛЕНА
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0115] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0117] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: FIRE OR ACTION TO RETRY
 RU: НАЖМИТЕ ОГОНЬ ИЛИ ДЕЙСТВИЕ
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0116] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0118] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Objective
 RU: ЦЕЛЬ
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0117] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0119] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Parameter
 RU: УСЛОВИЕ
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0118] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0120] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Complete
 RU: ВЫПОЛНЕНО
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0119] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0121] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Press START to see objectives
 RU: НАЖМИТЕ %t ДЛЯ ПРОСМОТРА ЦЕЛЕЙ
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0120] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0122] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Playing on HARD difficulty
 RU: СЛОЖНОСТЬ: ВЫСОКАЯ
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0121] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0123] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Target Lock
 RU: ЗАХВАТ ЦЕЛИ
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0122] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0124] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Head Shot
 RU: ВЫСТРЕЛ В ГОЛОВУ
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0123] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0125] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Checkpoint
 RU: КОНТРОЛЬНАЯ ТОЧКА
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0124] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0126] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Briefing Updated
 RU: БРИФИНГ ОБНОВЛЁН
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0125] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0127] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Objective Added
 RU: ДОБАВЛЕНА ЦЕЛЬ
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0126] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0128] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Objective Complete
 RU: ЦЕЛЬ ВЫПОЛНЕНА
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0127] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0129] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Objectives Incomplete
 RU: ЦЕЛИ НЕ ВЫПОЛНЕНЫ
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0128] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0130] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Level alerted
 RU: ПОДНЯТА ТРЕВОГА
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0129] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0131] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Electronically Locked
 RU: ЭЛЕКТРОННЫЙ ЗАМОК
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0130] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0132] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Lock Code Required
 RU: ТРЕБУЕТСЯ КОД ДОСТУПА
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0131] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0133] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Elevator Call Switch
 RU: КНОПКА ВЫЗОВА ЛИФТА
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0132] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0134] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Power Switch
 RU: ВЫКЛЮЧАТЕЛЬ ПИТАНИЯ
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0133] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0135] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: No Target Available
 RU: НЕТ ДОСТУПНЫХ ЦЕЛЕЙ
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0134] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0136] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Body Armor
 RU: БРОНЕЖИЛЕТ
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0135] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0137] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Georgia Street
 RU: ДЖОРДЖИЯ-СТРИТ
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0136] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0138] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Destroyed subway
 RU: РАЗРУШЕННОЕ МЕТРО
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0137] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0139] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Main subway line
 RU: ГЛАВНАЯ ЛИНИЯ МЕТРО
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0138] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0140] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Washington Park
 RU: ВАШИНГТОН-ПАРК
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0139] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0141] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Freedom Memorial
 RU: МЕМОРИАЛ СВОБОДЫ
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0140] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0142] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Expo Center Reception
 RU: ПРИЁМНАЯ ЭКСПОЦЕНТРА
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0141] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0143] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Expo Center Dinorama
 RU: ДИНОРАМА ЭКСПОЦЕНТРА
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0142] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0144] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Rhoemer's Base
 RU: БАЗА РОМЕРА
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0143] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0145] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Base Bunker
 RU: БУНКЕР БАЗЫ
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0144] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0146] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Base Tower
 RU: БАШНЯ БАЗЫ
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0145] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0147] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Base Escape
 RU: ПОБЕГ С БАЗЫ
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0146] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0148] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Rhoemer's Stronghold
 RU: КРЕПОСТЬ РОМЕРА
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0147] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0149] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Stronghold lower level
 RU: НИЖНИЙ УРОВЕНЬ КРЕПОСТИ
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0148] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0150] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Stronghold catacombs
 RU: КАТАКОМБЫ КРЕПОСТИ
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0149] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0151] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: PHARCOM warehouses
 RU: СКЛАДЫ ФАРКОМ
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0150] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0152] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: PHARCOM elite guards
 RU: ЭЛИТНАЯ ОХРАНА ФАРКОМ
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0151] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0153] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Warehouse 76
 RU: СКЛАД 76
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0152] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0154] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Silo access tunnels
 RU: ТОННЕЛИ К РАКЕТНОЙ ШАХТЕ
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0153] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0155] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Tunnel blackout
 RU: ОБЕСТОЧЕННЫЕ ТОННЕЛИ
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0154] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0156] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Missile Silo
 RU: РАКЕТНАЯ ШАХТА
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0155] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0157] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: C4 Explosives
 RU: ВЗРЫВЧАТКА С4
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0156] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0158] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Flak Jacket
 RU: БРОНЕЖИЛЕТ
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0157] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0159] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Viral Scanner
 RU: ДЕТЕКТОР ВИРУСА
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0158] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0160] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Flashlight
 RU: ФОНАРЬ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0159] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0161] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Gas Grenade
 RU: ГАЗОВАЯ ГРАНАТА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0160] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0162] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Sniper rifle
 RU: СНАЙПЕРСКАЯ ВИНТОВКА
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0161] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0163] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Nightvision rifle
 RU: ВИНТОВКА С НОЧНЫМ ПРИЦЕЛОМ
 SOURCE: proofread common catalogue
 COMMENT:
 
-[SF-RU-0162] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0164] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Combat Shotgun
 RU: БОЕВОЙ ДРОБОВИК
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0163] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0165] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Silenced 9mm
 RU: 9-ММ ПИСТОЛЕТ С ГЛУШИТЕЛЕМ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0164] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0166] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: ARMOR
 RU: БРОНЯ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0165] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0167] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: HEALTH
 RU: ЗДОРОВЬЕ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0166] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0168] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: DANGER
 RU: ОПАСНОСТЬ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0167] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0169] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: TARGET
 RU: ЦЕЛЬ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0168] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0170] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: HEAD SHOT
 RU: В ГОЛОВУ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0169] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0171] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: HEADSHOT
 RU: В ГОЛОВУ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0170] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0172] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: BOMB
 RU: БОМБА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0171] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0173] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: health
 RU: ЗДОРОВЬЕ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0172] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0174] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: armor
 RU: БРОНЯ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0173] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0175] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: danger
 RU: ОПАСНОСТЬ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0174] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0176] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: target
 RU: ЦЕЛЬ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0175] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0177] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: head
 RU: ГОЛОВА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0176] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0178] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: weapon
 RU: ОРУЖИЕ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0177] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0179] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: hand
 RU: РУКА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0178] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0180] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: body
 RU: ТЕЛО
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0179] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0181] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: limb
 RU: КОНЕЧНОСТЬ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0180] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0182] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Switch
 RU: ПЕРЕКЛЮЧАТЕЛЬ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0181] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0183] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Bomb
 RU: БОМБА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0182] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0184] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Locked
 RU: ЗАКРЫТО
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0183] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0185] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: No Weapon
 RU: БЕЗ ОРУЖИЯ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0184] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0186] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: 9mm
 RU: 9 ММ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0185] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0187] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: 9 mm
 RU: 9 ММ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0186] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0188] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: .45
 RU: .45
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0187] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0189] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: G-18
 RU: G-18
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0188] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0190] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Shotgun
 RU: ДРОБОВИК
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0189] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0191] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: PK-102
 RU: PK-102
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0190] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0192] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: M-16
 RU: M-16
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0191] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0193] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: BIZ-2
 RU: BIZ-2
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0192] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0194] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: HK-5
 RU: HK-5
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0193] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0195] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Nightvision Rifle
 RU: ВИНТОВКА С НОЧНЫМ ПРИЦЕЛОМ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0194] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0196] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Sniper Rifle
 RU: СНАЙПЕРСКАЯ ВИНТОВКА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0195] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0197] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Taser
 RU: ШОКЕР
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0196] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0198] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Flamethrower
 RU: ОГНЕМЁТ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0197] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0199] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: M-79
 RU: М-79
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0198] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0200] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: K3G4
 RU: K3G4
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0199] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0201] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Virus Scanner
 RU: ДЕТЕКТОР ВИРУСА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0200] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0202] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Grenade
 RU: ГРАНАТА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0201] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0203] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Grenades
 RU: ГРАНАТЫ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0202] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0204] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Granade
 RU: ГРАНАТА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0203] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0205] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Granades
 RU: ГРАНАТЫ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0204] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0206] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Gas Grenades
 RU: ГАЗОВЫЕ ГРАНАТЫ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0205] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0207] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Gas Granade
 RU: ГАЗОВАЯ ГРАНАТА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0206] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0208] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Gas Granades
 RU: ГАЗОВЫЕ ГРАНАТЫ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0207] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0209] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Chopper Gun
 RU: БОРТОВОЙ ПУЛЕМЁТ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0208] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0210] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Keycard
 RU: КЛЮЧ-КАРТА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0209] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0211] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Cardkey
 RU: КЛЮЧ-КАРТА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0210] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0212] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Viral Antigen
 RU: АНТИГЕН
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0211] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0213] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Antigen
 RU: АНТИГЕН
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0212] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0214] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Objective Updated
 RU: ЦЕЛЬ ОБНОВЛЕНА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0213] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0215] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: OBJECTIVE UPDATED
 RU: ЦЕЛЬ ОБНОВЛЕНА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0214] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0216] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: OBJECTIVE ADDED
 RU: ДОБАВЛЕНА ЦЕЛЬ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0215] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0217] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: BRIEFING UPDATED
 RU: БРИФИНГ ОБНОВЛЁН
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0216] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0218] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Mission locked
 RU: МИССИЯ ЗАКРЫТА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0217] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0219] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Cannot change weapons while performing current action
 RU: СЕЙЧАС НЕЛЬЗЯ СМЕНИТЬ ОРУЖИЕ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0218] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0220] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Controller missing. Please reinsert controller into controller port 1 and press the %t button to continue
 RU: КОНТРОЛЛЕР НЕ ПОДКЛЮЧЁН. ПОДКЛЮЧИТЕ ЕГО И НАЖМИТЕ %t
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0219] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0221] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Weapons - Ratings
 RU: ОРУЖИЕ - ХАРАКТЕРИСТИКИ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0220] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0222] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Weapons - Description
 RU: ОРУЖИЕ - ОПИСАНИЕ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0221] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0223] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: No description available
 RU: НЕТ ОПИСАНИЯ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0222] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0224] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: No weapons available
 RU: НЕТ ОРУЖИЯ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0223] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0225] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: A/D page
 RU: A/D СТРАНИЦА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0224] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0226] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: W/S weapon
 RU: W/S ОРУЖИЕ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0225] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0227] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: A/D map
 RU: A/D КАРТА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0226] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0228] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: %x info
 RU: %x ИНФО
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0227] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0229] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: %x Save
 RU: %x СОХРАНИТЬ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0228] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0230] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: %t Cancel
 RU: %t ОТМЕНА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0229] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0231] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Do you really want to restart at the last checkpoint?
 RU: НАЧАТЬ С ПОСЛЕДНЕЙ КОНТРОЛЬНОЙ ТОЧКИ?
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0230] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0232] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Do you really want to restart this mission?
 RU: НАЧАТЬ МИССИЮ ЗАНОВО?
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0231] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0233] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Do you really want to abort this game?
 RU: ВЫЙТИ ИЗ ТЕКУЩЕЙ ИГРЫ?
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0232] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0234] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Pause
 RU: ПАУЗА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0233] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0235] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Confirmation
 RU: ПОДТВЕРЖДЕНИЕ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0234] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0236] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Notification
 RU: УВЕДОМЛЕНИЕ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0235] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0237] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Unknown
 RU: НЕИЗВЕСТНО
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0236] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0238] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Change Weapon
 RU: СМЕНА ОРУЖИЯ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0237] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0239] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Shoot
 RU: ОГОНЬ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0238] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0240] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Kneel
 RU: ПРИСЕСТЬ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0239] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0241] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Roll/Zoom Out
 RU: КУВЫРОК/ОТДАЛИТЬ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0240] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0242] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Step Right
 RU: ШАГ ВПРАВО
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0241] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0243] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Step Left
 RU: ШАГ ВЛЕВО
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0242] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0244] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Use/Zoom In
 RU: ДЕЙСТВИЕ/ПРИБЛИЗИТЬ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0243] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0245] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Aim
 RU: ПРИЦЕЛ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0244] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0246] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Acknowledge
 RU: ПОДТВЕРДИТЬ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0245] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0247] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Mara Aramov
 RU: МАРА АРАМОВА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0246] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0248] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Aramov
 RU: АРАМОВА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0247] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0249] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Anton Girdeux
 RU: АНТОН ГИРДО
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0248] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0250] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Girdeux
 RU: ГИРДО
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0249] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0251] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Gabriel Logan
 RU: ГАБРИЭЛЬ ГЕЙБ ЛОГАН
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0250] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0252] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Gabe Logan
 RU: ГЕЙБ ЛОГАН
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0251] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0253] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Gabe
 RU: ГЕЙБ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0252] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0254] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Lian Xing
 RU: ЛИАН СИН
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0253] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0255] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Lian
 RU: ЛИАН СИН
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0254] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0256] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Jonathan Phagan
 RU: ДЖОНАТАН ФЭЙГАН
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0255] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0257] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Phagan
 RU: ФЭЙГАН
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0256] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0258] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Erich Rhoemer
 RU: ЭРИХ РОМЕР
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0257] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0259] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Rhoemer
 RU: РОМЕР
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0258] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0260] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Jorge Marcos
 RU: ХОРХЕ МАРКОС
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0259] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0261] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Pavel Kravitch
 RU: ПАВЕЛ КРАВИЧ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0260] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0262] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Thomas Markinson
 RU: ТОМАС МАРКИНСОН
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0261] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0263] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Markinson
 RU: ТОМАС МАРКИНСОН
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0262] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0264] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Edward Benton
 RU: ЭДВАРД БЕНТОН
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0263] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0265] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: CBDC Agent
 RU: АГЕНТ ХИМЗАЩИТЫ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0264] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0266] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Communications array
 RU: АНТЕННА СВЯЗИ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0265] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0267] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Computer
 RU: КОМПЬЮТЕР
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0266] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0268] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Elevator
 RU: ЛИФТ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0267] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0269] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Message
 RU: СООБЩЕНИЕ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0268] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0270] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Plant beacon
 RU: УСТАНОВИТЬ МАЯК
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0269] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0271] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Viral detector
 RU: ДЕТЕКТОР ВИРУСА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0270] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0272] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: remaining
 RU: ОСТАЛОСЬ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0271] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0273] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Press %s to Contact %s
-RU: НАЖМИТЕ %s, ЧТОБЫ СВЯЗАТЬСЯ С ЛИАН СИН
+RU: НАЖМИТЕ %x, ЧТОБЫ СВЯЗАТЬСЯ С ЛИАН
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0272] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0274] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: %s undamaged
 RU: БРОНЕЖИЛЕТ НЕ ПОВРЕЖДЁН
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0273] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0275] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Complete Objectives
 RU: ВЫПОЛНИТЬ ЦЕЛИ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0274] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0276] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Debug Display
 RU: ОТЛАДОЧНЫЙ ЭКРАН
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0275] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0277] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: End Level
 RU: ЗАВЕРШИТЬ УРОВЕНЬ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0276] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0278] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: NPCs on Radar
 RU: ПЕРСОНАЖИ НА РАДАРЕ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0277] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0279] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Poly Debug
 RU: ОТЛАДКА ПОЛИГОНОВ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0278] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0280] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Resurrect Gabriel
 RU: ВОСКРЕСИТЬ ГЕЙБА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0279] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0281] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Select Level
 RU: ВЫБОР УРОВНЯ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0280] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0282] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: To first zoom point
 RU: К ПЕРВОЙ ТОЧКЕ МАСШТАБА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0281] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0283] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: To second zoom point
 RU: КО ВТОРОЙ ТОЧКЕ МАСШТАБА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0282] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0284] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Toggle CObj drawing
 RU: ПЕРЕКЛЮЧИТЬ ОТРИСОВКУ ОБЪЕКТОВ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0283] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0285] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: New York City
 RU: НЬЮ-ЙОРК
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0284] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0286] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Washington DC
 RU: ВАШИНГТОН, ОКРУГ КОЛУМБИЯ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0285] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0287] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Almaty, Kazakhstan
 RU: АЛМАТЫ, КАЗАХСТАН
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0286] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0288] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Rozovka, Kazakhstan
 RU: РОЗОВКА, КАЗАХСТАН
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0287] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0289] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Uzhhorod, Ukraine
 RU: УЖГОРОД, УКРАИНА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0288] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0290] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Overwrite existing files?
 RU: ПЕРЕЗАПИСАТЬ СУЩЕСТВУЮЩИЕ ФАЙЛЫ?
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0289] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0291] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: This MEMORY CARD is full.  Syphon Filter requires one block on the MEMORY CARD.  You will not be able to save your game to this MEMORY CARD.  Continue anyway?
 RU: КАРТА ПАМЯТИ ЗАПОЛНЕНА. ДЛЯ СОХРАНЕНИЯ НУЖЕН ОДИН СВОБОДНЫЙ БЛОК. ПРОДОЛЖИТЬ БЕЗ СОХРАНЕНИЯ?
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0290] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0292] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Lots o' Bullets
 RU: МНОГО ПАТРОНОВ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0291] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0293] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: stereo
 RU: СТЕРЕО
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0292] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0294] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: diagnostic: ok
 RU: ДИАГНОСТИКА: НОРМА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0293] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0295] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: power: ok
 RU: ПИТАНИЕ: НОРМА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0294] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0296] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Status: ok
 RU: СОСТОЯНИЕ: НОРМА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0295] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0297] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Scope Pwr On
 RU: ПРИЦЕЛ ВКЛЮЧЁН
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0296] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0298] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: on body
 RU: НА ТЕЛЕ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0297] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0299] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Paul is dead.
 RU: ПОЛ МЁРТВ.
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0298] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0300] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Turn off power to terminal security doors
 RU: ОТКЛЮЧИТЬ ПИТАНИЕ ДВЕРЕЙ ТЕРМИНАЛА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0299] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0301] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Locate explosives cache
 RU: НАЙТИ СКЛАД ВЗРЫВЧАТКИ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0300] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0302] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Do not kill Aramov
 RU: НЕ УБИВАТЬ МАРУ АРАМОВУ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0301] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0303] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Tag bomb in terminal
 RU: ПОМЕТИТЬ БОМБУ В ТЕРМИНАЛЕ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0302] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0304] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Protect CBDC bomb squad
 RU: ЗАЩИТИТЬ САПЁРОВ ХИМЗАЩИТЫ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0303] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0305] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Eliminate Kravitch and destroy comm. array
 RU: ЛИКВИДИРОВАТЬ ПАВЛА КРАВИЧА И УНИЧТОЖИТЬ АНТЕННУ СВЯЗИ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0304] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0306] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Avoid damaging viral delivery systems or explosive bombs
 RU: НЕ ПОВРЕДИТЬ СИСТЕМЫ ДОСТАВКИ ВИРУСА И ВЗРЫВНЫЕ УСТРОЙСТВА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0305] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0307] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Do not eliminate any CBDC agent
 RU: НЕ УБИВАТЬ АГЕНТОВ ХИМЗАЩИТЫ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0306] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0308] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Kravitch
 RU: ПАВЕЛ КРАВИЧ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0307] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0309] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Blow open passage to street and protect CBDC agent
 RU: ВЗОРВАТЬ ПРОХОД НА УЛИЦУ И ЗАЩИТИТЬ АГЕНТА ХИМЗАЩИТЫ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0308] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0310] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Do not damage any bomb
 RU: НЕ ПОВРЕДИТЬ БОМБЫ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0309] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0311] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Do not kill any CBDC agent
 RU: НЕ УБИВАТЬ АГЕНТОВ ХИМЗАЩИТЫ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0310] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0312] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: C4 taken
 RU: ВЗРЫВЧАТКА С4 ВЗЯТА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0311] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0313] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Need Explosives
 RU: НУЖНА ВЗРЫВЧАТКА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0312] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0314] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Blocked Passage
 RU: ПРОХОД ЗАВАЛЕН
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0313] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0315] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Gas Mains
 RU: ГАЗОВАЯ МАГИСТРАЛЬ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0314] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0316] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Gas Mains Closed
 RU: ГАЗ ПЕРЕКРЫТ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0315] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0317] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Bomb Detonated
 RU: БОМБА ВЗОРВАНА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0316] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0318] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Eliminate Aramov
 RU: ЛИКВИДИРОВАТЬ МАРУ АРАМОВУ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0317] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0319] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Do not use grenades or train lines may be damaged
 RU: НЕ ИСПОЛЬЗОВАТЬ ГРАНАТЫ: МОЖНО ПОВРЕДИТЬ ПУТИ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0318] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0320] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Reach Freedom Memorial
 RU: ДОБРАТЬСЯ ДО МЕМОРИАЛА СВОБОДЫ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0319] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0321] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Eliminate trigger man Marcos
 RU: ЛИКВИДИРОВАТЬ ПОДРЫВНИКА ХОРХЕ МАРКОСА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0320] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0322] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Secure terrorist comm. array
 RU: ВЗЯТЬ ПОД КОНТРОЛЬ АНТЕННУ СВЯЗИ ТЕРРОРИСТОВ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0321] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0323] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Rescue CBDC hostages
 RU: ОСВОБОДИТЬ ЗАЛОЖНИКОВ ХИМЗАЩИТЫ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0322] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0324] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Do not damage the comm. array
 RU: НЕ ПОВРЕДИТЬ АНТЕННУ СВЯЗИ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0323] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0325] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: All bombs must be defused in under 20 minutes
 RU: ОБЕЗВРЕДИТЬ ВСЕ БОМБЫ МЕНЕЕ ЧЕМ ЗА 20 МИНУТ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0324] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0326] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Do not kill any member of the strike team
 RU: НЕ УБИВАТЬ БОЙЦОВ ШТУРМОВОЙ ГРУППЫ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0325] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0327] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Locate and disarm %d%s viral bomb%s
 RU: НАЙТИ И ОБЕЗВРЕДИТЬ ВИРУСНЫЕ БОМБЫ: %d
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0326] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0328] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: them
 RU: ИХ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0327] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0329] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: %d Bomb%s Remaining
 RU: ОСТАЛОСЬ БОМБ: %d
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0328] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0330] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Communications array damaged
 RU: АНТЕННА СВЯЗИ ПОВРЕЖДЕНА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0329] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0331] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Marcos
 RU: ХОРХЕ МАРКОС
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0330] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0332] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Kill Girdeux
 RU: ЛИКВИДИРОВАТЬ АНТОНА ГИРДО
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0331] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0333] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Do not use grenades or Girdeux's bomb may be damaged
 RU: НЕ ИСПОЛЬЗОВАТЬ ГРАНАТЫ: МОЖНО ПОВРЕДИТЬ БОМБУ АНТОНА ГИРДО
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0332] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0334] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Capture Phagan alive
 RU: ЗАХВАТИТЬ ДЖОНАТАНА ФЭЙГАНА ЖИВЫМ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0333] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0335] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Shadow Phagan to secret meeting
 RU: ПРОСЛЕДИТЬ ЗА ДЖОНАТАНОМ ФЭЙГАНОМ ДО ТАЙНОЙ ВСТРЕЧИ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0334] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0336] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Do not allow yourself to be spotted until you reach the meeting.  Do not shoot Phagan.
 RU: НЕ ПОПАДАТЬСЯ НА ГЛАЗА ДО МЕСТА ВСТРЕЧИ. НЕ СТРЕЛЯТЬ В ДЖОНАТАНА ФЭЙГАНА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0335] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0337] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Benton
 RU: ЭДВАРД БЕНТОН
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0336] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0338] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Gate Control Panel
 RU: ПУЛЬТ УПРАВЛЕНИЯ ВОРОТАМИ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0337] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0339] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Capture Aramov and Phagan alive
 RU: ЗАХВАТИТЬ МАРУ АРАМОВУ И ДЖОНАТАНА ФЭЙГАНА ЖИВЫМИ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0338] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0340] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Do not allow Phagan to die
 RU: НЕ ДАТЬ ДЖОНАТАНУ ФЭЙГАНУ ПОГИБНУТЬ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0339] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0341] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Escape through main gate
 RU: ВЫЙТИ ЧЕРЕЗ ГЛАВНЫЕ ВОРОТА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0340] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0342] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Reach missile bunker
 RU: ДОБРАТЬСЯ ДО РАКЕТНОГО БУНКЕРА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0341] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0343] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Disable power to motion sensors
 RU: ОТКЛЮЧИТЬ ПИТАНИЕ ДАТЧИКОВ ДВИЖЕНИЯ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0342] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0344] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Eliminate Gabrek and collect cardkey
 RU: ЛИКВИДИРОВАТЬ ГАБРЕКА И ЗАБРАТЬ КЛЮЧ-КАРТУ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0343] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0345] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Get out of base before timer runs out on explosives
 RU: ПОКИНУТЬ БАЗУ ДО ВЗРЫВА ЗАРЯДОВ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0344] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0346] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Do not damage the missiles
 RU: НЕ ПОВРЕДИТЬ РАКЕТЫ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0345] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0347] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Do not damage the explosive charges
 RU: НЕ ПОВРЕДИТЬ ВЗРЫВНЫЕ ЗАРЯДЫ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0346] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0348] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Reach comm. building roof
 RU: ДОБРАТЬСЯ ДО КРЫШИ ЦЕНТРА СВЯЗИ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0347] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0349] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Plant C4 charges at %d%s fuel tank%s
 RU: УСТАНОВИТЬ С4 НА ТОПЛИВНЫЕ ЦИСТЕРНЫ: %d
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0348] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0350] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Catalog %d%s enemy missile%s
 RU: ЗАРЕГИСТРИРОВАТЬ РАКЕТЫ: %d
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0349] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0351] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN:  more
 RU:  ЕЩЁ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0350] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0352] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Gabrek
 RU: ГАБРЕК
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0351] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0353] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Place explosive here
 RU: УСТАНОВИТЬ ЗАРЯД ЗДЕСЬ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0352] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0354] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: %d more explosive%s to plant
 RU: ОСТАЛОСЬ УСТАНОВИТЬ ЗАРЯДОВ: %d
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0353] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0355] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Motion Sensor Power
 RU: ПИТАНИЕ ДАТЧИКОВ ДВИЖЕНИЯ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0354] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0356] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Missile Access Control
 RU: КОНТРОЛЬ ДОСТУПА К РАКЕТАМ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0355] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0357] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Missile Access Initiated
 RU: ДОСТУП К РАКЕТАМ ОТКРЫТ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0356] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0358] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: SS-23 Missile
 RU: РАКЕТА SS-23
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0357] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0359] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Missile indexed.\n%d remaining
 RU: РАКЕТА ЗАРЕГИСТРИРОВАНА\nОСТАЛОСЬ: %d
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0358] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0360] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Shoot down attack helicopter
 RU: СБИТЬ БОЕВОЙ ВЕРТОЛЁТ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0359] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0361] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Disable radar tracking
 RU: ОТКЛЮЧИТЬ РАДАР СОПРОВОЖДЕНИЯ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0360] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0362] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Radar Tracking Override.
 RU: УПРАВЛЕНИЕ РАДАРОМ ПЕРЕХВАЧЕНО
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0361] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0363] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Find entrance to catacombs
 RU: НАЙТИ ВХОД В КАТАКОМБЫ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0362] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0364] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Do not kill any human test subjects
 RU: НЕ УБИВАТЬ ПОДОПЫТНЫХ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0363] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0365] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Eliminate Rhoemer's %d%s scientist%s
 RU: ЛИКВИДИРОВАТЬ УЧЁНЫХ ЭРИХА РОМЕРА: %d
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0364] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0366] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Administer antigen to %d%s test subject%s
 RU: ВВЕСТИ АНТИГЕН ПОДОПЫТНЫМ: %d
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0365] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0367] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: %d scientist%s left to kill
 RU: ОСТАЛОСЬ УЧЁНЫХ: %d
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0366] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0368] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Antigen administered\n%d subject%s remaining
 RU: АНТИГЕН ВВЕДЁН\nОСТАЛОСЬ ПОДОПЫТНЫХ: %d
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0367] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0369] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Test Subject
 RU: ПОДОПЫТНЫЙ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0368] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0370] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Door lock
 RU: ЗАМОК ДВЕРИ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0369] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0371] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Door unlocked
 RU: ДВЕРЬ ОТКРЫТА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0370] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0372] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Get Lian Xing out of the catacombs
 RU: ВЫВЕСТИ ЛИАН СИН ИЗ КАТАКОМБ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0371] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0373] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Follow Phagan to Lian Xing's cell
 RU: ПРОСЛЕДИТЬ ЗА ДЖОНАТАНОМ ФЭЙГАНОМ ДО КАМЕРЫ ЛИАН СИН
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0372] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0374] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Find Phagan
 RU: НАЙТИ ДЖОНАТАНА ФЭЙГАНА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0373] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0375] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Do not allow Lian Xing to die
 RU: ЗАЩИТИТЬ ЛИАН СИН
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0374] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0376] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Do not leave Phagan unguarded or allow him to die
 RU: НЕ ОСТАВЛЯТЬ ДЖОНАТАНА ФЭЙГАНА БЕЗ ОХРАНЫ И НЕ ДАТЬ ЕМУ ПОГИБНУТЬ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0375] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0377] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Do not be spotted until the scientist has opened Phagan's cell
 RU: НЕ ПОПАДАТЬСЯ НА ГЛАЗА, ПОКА УЧЁНЫЙ НЕ ОТКРОЕТ КАМЕРУ ДЖОНАТАНА ФЭЙГАНА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0376] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0378] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Get to warehouse 76
 RU: ДОБРАТЬСЯ ДО СКЛАДА 76
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0377] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0379] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Turn off power to electric fences
 RU: ОТКЛЮЧИТЬ ПИТАНИЕ ЭЛЕКТРИЧЕСКИХ ОГРАЖДЕНИЙ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0378] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0380] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Find and interrogate Erikson
 RU: НАЙТИ И ДОПРОСИТЬ ЭРИКСОНА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0379] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0381] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Do not kill Erikson before you've gotten the computer codes
 RU: НЕ УБИВАТЬ ЭРИКСОНА ДО ПОЛУЧЕНИЯ КОДОВ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0380] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0382] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Get to freight elevator
 RU: ДОБРАТЬСЯ ДО ГРУЗОВОГО ЛИФТА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0381] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0383] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Get out before the building collapses in 15 minutes
 RU: ПОКИНУТЬ ЗДАНИЕ ЗА 15 МИНУТ, ДО ЕГО ОБРУШЕНИЯ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0382] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0384] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Locate and tag %d%s viral carrier%s
 RU: НАЙТИ И ПОМЕТИТЬ НОСИТЕЛЕЙ ВИРУСА: %d
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0383] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0385] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Viral carrier tagged. %d remaining
 RU: НОСИТЕЛЬ ПОМЕЧЕН. ОСТАЛОСЬ: %d
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0384] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0386] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Erikson
 RU: ЭРИКСОН
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0385] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0387] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Shut down power room
 RU: ОТКЛЮЧИТЬ ЭНЕРГОБЛОК
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0386] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0388] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Reroute power to elevator
 RU: ПЕРЕНАПРАВИТЬ ПИТАНИЕ НА ЛИФТ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0387] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0389] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Access missile command computer
 RU: ПОЛУЧИТЬ ДОСТУП К КОМПЬЮТЕРУ УПРАВЛЕНИЯ РАКЕТОЙ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0388] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0390] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Retrieve missile destruct codes
 RU: ПОЛУЧИТЬ КОДЫ САМОУНИЧТОЖЕНИЯ РАКЕТЫ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0389] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0391] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Command computer must be accessed within 3 minutes after launch
 RU: ПОЛУЧИТЬ ДОСТУП К КОМПЬЮТЕРУ В ТЕЧЕНИЕ 3 МИНУТ ПОСЛЕ ЗАПУСКА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0390] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0392] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Destruct codes must be retrieved before the missile launches
 RU: ПОЛУЧИТЬ КОДЫ ДО ЗАПУСКА РАКЕТЫ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0391] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0393] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Do not shoot at the missile
 RU: НЕ СТРЕЛЯТЬ ПО РАКЕТЕ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0392] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0394] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Find missile silo
 RU: НАЙТИ РАКЕТНУЮ ШАХТУ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0393] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0395] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: No Power
 RU: НЕТ ПИТАНИЯ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0394] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0396] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Power Relay
 RU: СИЛОВОЕ РЕЛЕ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0395] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0397] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Elevator Control Panel
 RU: ПУЛЬТ УПРАВЛЕНИЯ ЛИФТОМ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0396] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0398] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Elevator activated
 RU: ЛИФТ ВКЛЮЧЁН
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0397] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0399] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Control Panel
 RU: ПУЛЬТ УПРАВЛЕНИЯ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0398] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0400] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Safety Released
 RU: БЛОКИРОВКА СНЯТА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0399] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0401] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Need missile codes
 RU: НУЖНЫ КОДЫ САМОУНИЧТОЖЕНИЯ РАКЕТЫ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0400] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0402] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: R-9 Devyatka Missile
 RU: РАКЕТА R-9 ДЕВЯТКА
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0401] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0403] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Command Computer
 RU: КОМПЬЮТЕР УПРАВЛЕНИЯ
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0402] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0404] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: The 9mm handgun is the standard issue side-arm for NATO and all five branches of the US armed forces since passing the 1979 MRBF (Mean Rounds Before operational Failure) performance test, expending 35,000 rounds, six times the pistol's service life.
 RU: 9-ММ ПИСТОЛЕТ - ШТАТНОЕ ЛИЧНОЕ ОРУЖИЕ НАТО И ВСЕХ ПЯТИ РОДОВ ВОЙСК США. В 1979 ГОДУ ОН ПРОШЁЛ ИСПЫТАНИЕ НА НАДЁЖНОСТЬ, ВЫДЕРЖАВ 35 000 ВЫСТРЕЛОВ - ВШЕСТЕРО БОЛЬШЕ РАСЧЁТНОГО РЕСУРСА.
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0403] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0405] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: This tough, durable pistol has been in production for almost a century. It has tremendous stopping power, and in spite of it's strong recoil and heavy slide and bolt, in the hands of a seasoned professional, it is a deadly weapon.
 RU: ЭТОТ ПРОЧНЫЙ И НАДЁЖНЫЙ ПИСТОЛЕТ ВЫПУСКАЕТСЯ ПОЧТИ СТО ЛЕТ. ОН ОБЛАДАЕТ ОГРОМНОЙ ОСТАНАВЛИВАЮЩЕЙ СИЛОЙ. НЕСМОТРЯ НА СИЛЬНУЮ ОТДАЧУ И ТЯЖЁЛЫЙ ЗАТВОР, В РУКАХ ОПЫТНОГО СТРЕЛКА ЭТО СМЕРТОНОСНОЕ ОРУЖИЕ.
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0404] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0406] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: With a rate of fire topping 60 rounds per second, the G-18 is perhaps the most deadly pistol-machinegun in the world. It's only weakness is it's tendency to expend ammunition faster than most shooters are prepared for, leaving them defenseless during a reload.
 RU: СКОРОСТРЕЛЬНОСТЬ G-18 ПРЕВЫШАЕТ 60 ВЫСТРЕЛОВ В СЕКУНДУ, ЧТО ДЕЛАЕТ ЕГО ОДНИМ ИЗ САМЫХ ОПАСНЫХ АВТОМАТИЧЕСКИХ ПИСТОЛЕТОВ В МИРЕ. ЕГО ЕДИНСТВЕННЫЙ НЕДОСТАТОК - БОЕПРИПАСЫ КОНЧАЮТСЯ ТАК БЫСТРО, ЧТО СТРЕЛОК ОСТАЁТСЯ БЕЗЗАЩИТНЫМ ВО ВРЕМЯ ПЕРЕЗАРЯДКИ.
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0405] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0407] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: The overly heavy recoil of this 12 gauge shotgun is more than compensated for by it's unparalleled stopping power and its recoil-inertia operation which is significantly faster than the gas operated system found in most autoloading shotguns.
 RU: ЧРЕЗМЕРНАЯ ОТДАЧА ЭТОГО РУЖЬЯ 12-ГО КАЛИБРА КОМПЕНСИРУЕТСЯ НЕПРЕВЗОЙДЁННОЙ ОСТАНАВЛИВАЮЩЕЙ СИЛОЙ. ИНЕРЦИОННАЯ АВТОМАТИКА РАБОТАЕТ ЗНАЧИТЕЛЬНО БЫСТРЕЕ ГАЗООТВОДНОЙ СИСТЕМЫ БОЛЬШИНСТВА САМОЗАРЯДНЫХ РУЖЕЙ.
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0406] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0408] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: The 12-gauge modified choke shotgun is standard issue for the DEA, FBI and USSS. In firing tests using tactical 00 shot with nine lead on an ISCP regulation target at 25 yards, the payload was delivered into the "A" kill zone with limited collateral damage.
 RU: РУЖЬЁ 12-ГО КАЛИБРА СО СМЕННЫМ ДУЛЬНЫМ СУЖЕНИЕМ СОСТОИТ НА ВООРУЖЕНИИ АНТИНАРКОТИЧЕСКОГО УПРАВЛЕНИЯ, ФБР И СЕКРЕТНОЙ СЛУЖБЫ США. НА ИСПЫТАНИЯХ КАРТЕЧЬ УВЕРЕННО ПОРАЖАЛА УБОЙНУЮ ЗОНУ МИШЕНИ С 25 ЯРДОВ, НЕ НАНОСЯ ЛИШНЕГО УЩЕРБА.
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0407] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0409] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: A variant of the popular Vokinhsilak system (one of the most widely used and modified designs in the world) the PK102 is a compact, lightweight, full assault rifle that is easy to conceal, making it a popular choice for terrorists.
 RU: PK-102 - КОМПАКТНЫЙ ВАРИАНТ СИСТЕМЫ КАЛАШНИКОВА, ОДНОЙ ИЗ САМЫХ РАСПРОСТРАНЁННЫХ И ЧАСТО МОДИФИЦИРУЕМЫХ В МИРЕ. ЭТА КОМПАКТНАЯ И ЛЁГКАЯ ШТУРМОВАЯ ВИНТОВКА, КОТОРУЮ ЛЕГКО СПРЯТАТЬ, ПОЭТОМУ ОНА ПОЛЬЗУЕТСЯ СПРОСОМ У ТЕРРОРИСТОВ.
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0408] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0410] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: This weapon is lightweight, accurate, and has very low recoil. The preeminent assault rifle in the world, it was developed by the US Army in 1965, and has since become a mainstay for armed forces, police, and personal defense enthusiasts.
 RU: ЭТА ВИНТОВКА ЛЕГКАЯ, ТОЧНАЯ И ПОЧТИ НЕ ИМЕЕТ ОТДАЧИ. M-16 БЫЛА РАЗРАБОТАНА ДЛЯ АРМИИ США В 1965 ГОДУ И СТАЛА ОДНОЙ ИЗ ГЛАВНЫХ ШТУРМОВЫХ ВИНТОВОК ВООРУЖЁННЫХ СИЛ, ПОЛИЦИИ И ГРАЖДАНСКИХ СТРЕЛКОВ.
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0409] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0411] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: This pistol-machine gun is designed to deliver sustained firepower in tight quarters. The unconventional design of its large capacity magazine keeps the weapon compact but still provides a near-bottomless source of ammunition.
 RU: ЭТОТ ПИСТОЛЕТ-ПУЛЕМЁТ СОЗДАН ДЛЯ ДЛИТЕЛЬНОГО ОГНЯ В ТЕСНЫХ ПОМЕЩЕНИЯХ. НЕОБЫЧНАЯ КОНСТРУКЦИЯ ВМЕСТИТЕЛЬНОГО МАГАЗИНА СОХРАНЯЕТ КОМПАКТНОСТЬ ОРУЖИЯ И ОБЕСПЕЧИВАЕТ ПОЧТИ НЕИСЧЕРПАЕМЫЙ БОЕЗАПАС.
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0410] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0412] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: The HK5's modular design and small size makes it very popular with both military special forces and terrorists. With over 23 officially recognized variants, it is fast becoming the most widely used pistol-machine gun in the world.
 RU: МОДУЛЬНАЯ КОНСТРУКЦИЯ И НЕБОЛЬШИЕ РАЗМЕРЫ HK-5 СДЕЛАЛИ ЕГО ПОПУЛЯРНЫМ КАК У ВОЕННОГО СПЕЦНАЗА, ТАК И У ТЕРРОРИСТОВ. СУЩЕСТВУЕТ БОЛЕЕ 23 ОФИЦИАЛЬНЫХ ВАРИАНТОВ, И ЭТОТ ПИСТОЛЕТ-ПУЛЕМЁТ БЫСТРО СТАНОВИТСЯ ОДНИМ ИЗ САМЫХ РАСПРОСТРАНЁННЫХ В МИРЕ.
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0411] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0413] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: A Russian rifle capable of high accuracy, it is often used by Russian Army snipers. It excels in engaging fleeting, moving, open and masked single targets. This model comes standard equipped with an SVDN2 night sight and silencer.
 RU: ЭТА ВЫСОКОТОЧНАЯ РОССИЙСКАЯ ВИНТОВКА ЧАСТО ИСПОЛЬЗУЕТСЯ СНАЙПЕРАМИ. ОНА ЭФФЕКТИВНА ПРОТИВ БЫСТРО ПОЯВЛЯЮЩИХСЯ, ДВИЖУЩИХСЯ, ОТКРЫТЫХ И ЗАМАСКИРОВАННЫХ ОДИНОЧНЫХ ЦЕЛЕЙ. ШТАТНО ОСНАЩЕНА НОЧНЫМ ПРИЦЕЛОМ СВДН-2 И ГЛУШИТЕЛЕМ.
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0412] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0414] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: This high-caliber, silenced rifle comes equipped with a classified digital scope with basic optical character recognition, making it a highly accurate weapon capable of identifying and classifying human targets and impact points prior to firing.
 RU: ЭТА КРУПНОКАЛИБЕРНАЯ ВИНТОВКА С ГЛУШИТЕЛЕМ ОСНАЩЕНА СЕКРЕТНЫМ ЦИФРОВЫМ ПРИЦЕЛОМ С БАЗОВЫМ ОПТИЧЕСКИМ РАСПОЗНАВАНИЕМ. ПРИЦЕЛ ОПРЕДЕЛЯЕТ ТИП ЦЕЛИ И РАСЧЁТНУЮ ТОЧКУ ПОПАДАНИЯ ДО ВЫСТРЕЛА, ОБЕСПЕЧИВАЯ ВЫСОКУЮ ТОЧНОСТЬ.
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0413] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0415] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Using CO2 cartridges, this weapon fires a probe that lodges one inch deep in the victim's body. Then a charge of 500,000 volts is passed along a wire connecting the weapon to the probe. This charge can be sustained indefinitely.
 RU: С ПОМОЩЬЮ БАЛЛОНА С УГЛЕКИСЛЫМ ГАЗОМ ШОКЕР ВЫСТРЕЛИВАЕТ ЗОНД, КОТОРЫЙ ВХОДИТ В ТЕЛО ЖЕРТВЫ НА ГЛУБИНУ ОКОЛО ДЮЙМА. ПО ПРОВОДУ К ЗОНДУ ПОДАЁТСЯ НАПРЯЖЕНИЕ 500 000 ВОЛЬТ. РАЗРЯД МОЖНО ПОДДЕРЖИВАТЬ НЕОГРАНИЧЕННО ДОЛГО.
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0414] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0416] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: This single-barreled, break-action grenade launcher was developed during the Vietnam war. Commonly referred to as the "Blooper", it fires 40mm HE grenades that contain enough explosives to produce over 300 fragments with a lethal radius of up to five meters.
 RU: ЭТОТ ОДНОСТВОЛЬНЫЙ ПЕРЕЛАМЫВАЮЩИЙСЯ ГРАНАТОМЁТ БЫЛ РАЗРАБОТАН ВО ВРЕМЯ ВОЙНЫ ВО ВЬЕТНАМЕ. М-79 СТРЕЛЯЕТ 40-ММ ОСКОЛОЧНЫМИ ГРАНАТАМИ, КАЖДАЯ ИЗ КОТОРЫХ ОБРАЗУЕТ БОЛЕЕ 300 ОСКОЛКОВ С РАДИУСОМ ПОРАЖЕНИЯ ДО ПЯТИ МЕТРОВ.
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0415] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0417] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: A popular assault rifle, the K3G4 is commonly armed with Teflon-coated bullets, making it a deadly weapon capable of cutting through most standard-issue flak jackets like a hot knife through butter.
 RU: K3G4 - ПОПУЛЯРНАЯ ШТУРМОВАЯ ВИНТОВКА. ДЛЯ НЕЁ ЧАСТО ИСПОЛЬЗУЮТ ПУЛИ С ТЕФЛОНОВЫМ ПОКРЫТИЕМ, КОТОРЫЕ ЛЕГКО ПРОБИВАЮТ БОЛЬШИНСТВО ШТАТНЫХ БРОНЕЖИЛЕТОВ.
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0416] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0418] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Developed in secret by the viral research branch of PHARCOM Inc., this device is capable of detecting trace particles of the Syphon Filter virus from up to 50 meters away. It can also scan through some solid objects and provide visual feedback of their contents.
 RU: ЭТО УСТРОЙСТВО БЫЛО ТАЙНО РАЗРАБОТАНО ВИРУСОЛОГИЧЕСКИМ ОТДЕЛОМ КОРПОРАЦИИ ФАРКОМ. ОНО ОБНАРУЖИВАЕТ СЛЕДЫ ВИРУСА СИФОН ФИЛЬТР НА РАССТОЯНИИ ДО 50 МЕТРОВ, А ТАКЖЕ СКАНИРУЕТ НЕКОТОРЫЕ ТВЁРДЫЕ ОБЪЕКТЫ И ПОКАЗЫВАЕТ ИХ СОДЕРЖИМОЕ.
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0417] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0419] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Upon detonation, this incendiary weapon spreads ammonium perchlorate three meters outwards from the blast point. It is instantly ignited by the explosion and quickly burns out, fatally burning anyone nearby, but leaving little collateral damage in the terrain.
 RU: ПРИ ВЗРЫВЕ ЭТА ЗАЖИГАТЕЛЬНАЯ ГРАНАТА РАЗБРАСЫВАЕТ ПЕРХЛОРАТ АММОНИЯ В РАДИУСЕ ТРЁХ МЕТРОВ. ВЕЩЕСТВО МГНОВЕННО ВОСПЛАМЕНЯЕТСЯ И БЫСТРО ВЫГОРАЕТ, СМЕРТЕЛЬНО ОБЖИГАЯ ВСЕХ ПОБЛИЗОСТИ, НО ПОЧТИ НЕ ПОВРЕЖДАЯ ОКРУЖЕНИЕ.
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0418] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0420] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Primarily used as a stealth weapon against multiple targets, this grenade releases trace amounts of Soman nerve agent into the air. The gas quickly dissipates, but not before rendering victims unconscious. If no antidote is administered, death follows within 15 minutes.
 RU: ЭТА ГРАНАТА ПРЕДНАЗНАЧЕНА ДЛЯ СКРЫТНОГО ПОРАЖЕНИЯ НЕСКОЛЬКИХ ЦЕЛЕЙ И ВЫДЕЛЯЕТ В ВОЗДУХ НЕРВНО-ПАРАЛИТИЧЕСКИЙ ГАЗ ЗОМАН. ГАЗ БЫСТРО РАССЕИВАЕТСЯ, НО УСПЕВАЕТ ЛИШИТЬ ЖЕРТВ СОЗНАНИЯ. БЕЗ АНТИДОТА СМЕРТЬ НАСТУПАЕТ В ТЕЧЕНИЕ 15 МИНУТ.
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0419] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0421] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Standard equipment for all agency operatives, this flashlight is shockproof and charged by a 300 hour battery.
 RU: СТАНДАРТНОЕ СНАРЯЖЕНИЕ ВСЕХ ОПЕРАТИВНИКОВ АГЕНТСТВА. УДАРОПРОЧНЫЙ ФОНАРЬ РАБОТАЕТ ОТ БАТАРЕИ, РАССЧИТАННОЙ НА 300 ЧАСОВ.
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0420] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0422] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: A standard magnetic-strip card key.
 RU: СТАНДАРТНАЯ КЛЮЧ-КАРТА С МАГНИТНОЙ ПОЛОСОЙ.
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0421] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0423] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: These incendiary blocks are made of a putty-like material which can be molded to the user's liking. The C4 explosive putty is then wired to a fuse and a friction igniter, allowing the user to detonate the explosive from a distant or protected position.
 RU: ПЛАСТИЧНЫЕ ЗАРЯДЫ С4 МОЖНО ФОРМОВАТЬ ПО МЕСТУ УСТАНОВКИ. К ВЗРЫВЧАТКЕ ПОДКЛЮЧАЮТСЯ ДЕТОНАТОР И ЗАПАЛ, ЧТО ПОЗВОЛЯЕТ ПОДОРВАТЬ ЗАРЯД С БЕЗОПАСНОГО РАССТОЯНИЯ ИЛИ ИЗ УКРЫТИЯ.
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0422] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0424] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: This device is used to subcutanelously inject a fine stream of fluid under high pressure without puncturing the skin, and is loaded with an experimental serum capable of counteracting the effects of the Syphon Filter virus.
 RU: ЭТО БЕЗЫГОЛЬНЫЙ ИНЪЕКТОР, КОТОРЫЙ ВВОДИТ ПОД КОЖУ ТОНКУЮ СТРУЮ ЖИДКОСТИ ПОД ВЫСОКИМ ДАВЛЕНИЕМ. ОН ЗАРЯЖЕН ЭКСПЕРИМЕНТАЛЬНОЙ СЫВОРОТКОЙ, СПОСОБНОЙ ПРОТИВОДЕЙСТВОВАТЬ ВИРУСУ СИФОН ФИЛЬТР.
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0423] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0425] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Standard Agency side-arm with a sound suppressor.
 RU: ШТАТНЫЙ ПИСТОЛЕТ АГЕНТСТВА С ГЛУШИТЕЛЕМ.
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0424] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0426] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Fires a probe and delivers a sustained electrical charge.
 RU: ВЫСТРЕЛИВАЕТ ЗОНД И ПОДАЁТ ДЛИТЕЛЬНЫЙ ЭЛЕКТРИЧЕСКИЙ РАЗРЯД.
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0425] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0427] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Shockproof Agency flashlight with a long-life battery.
 RU: УДАРОПРОЧНЫЙ ФОНАРЬ АГЕНТСТВА С ДОЛГОВЕЧНОЙ БАТАРЕЕЙ.
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0426] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0428] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Detects trace particles of the Syphon Filter virus.
 RU: ОБНАРУЖИВАЕТ СЛЕДЫ ВИРУСА СИФОН ФИЛЬТР.
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0427] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0429] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Incendiary grenade with a short lethal blast radius.
 RU: ЗАЖИГАТЕЛЬНАЯ ГРАНАТА С НЕБОЛЬШИМ РАДИУСОМ ПОРАЖЕНИЯ.
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0428] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0430] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Releases a rapidly dissipating incapacitating nerve agent.
 RU: ВЫДЕЛЯЕТ БЫСТРО РАССЕИВАЮЩИЙСЯ НЕРВНО-ПАРАЛИТИЧЕСКИЙ ГАЗ.
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0429] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
+[SF-RU-0431] STATIC_UI_GAMEPLAY — menus, HUD, prompts and notifications
 EN: Agency field weapon.
 RU: ПОЛЕВОЕ ОРУЖИЕ АГЕНТСТВА.
 SOURCE: proofread gameplay catalogue
 COMMENT:
 
-[SF-RU-0430] DYNAMIC_GAMEPLAY — item pickup template
+[SF-RU-0432] DYNAMIC_GAMEPLAY — item pickup template
 EN: %s taken
 RU: ПОЛУЧЕНО: %s
 SOURCE: native composition rule
 COMMENT:
 
-[SF-RU-0431] DYNAMIC_GAMEPLAY — ammunition pickup template
+[SF-RU-0433] DYNAMIC_GAMEPLAY — ammunition pickup template
 EN: %s bullet(s)/shell(s) taken
 RU: ПАТРОНЫ: %s
 SOURCE: native composition rule
 COMMENT:
 
-[SF-RU-0432] DYNAMIC_GAMEPLAY — full inventory notification
+[SF-RU-0434] DYNAMIC_GAMEPLAY — full inventory notification
 EN: %s%ss maxed
 RU: ЗАПАС ПОЛОН
 SOURCE: native composition rule
 COMMENT:
 
-[SF-RU-0433] DYNAMIC_GAMEPLAY — generic elimination objective
+[SF-RU-0435] DYNAMIC_GAMEPLAY — generic elimination objective
 EN: Eliminate %s
 RU: ЛИКВИДИРОВАТЬ ЦЕЛЬ
 SOURCE: native composition rule
 COMMENT:
 
-[SF-RU-0434] DYNAMIC_GAMEPLAY — generic security-item objective
+[SF-RU-0436] DYNAMIC_GAMEPLAY — generic security-item objective
 EN: Find security %s%s
 RU: НАЙТИ КЛЮЧ-КАРТУ ОХРАНЫ
 SOURCE: native composition rule
 COMMENT:
 
-[SF-RU-0435] MISSION_TEXT — mission 01, entry 01
+[SF-RU-0437] MISSION_TEXT — mission 01, entry 01
 EN: Tag bomb in terminal
 RU: ПОМЕТИТЬ БОМБУ В ТЕРМИНАЛЕ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0436] MISSION_TEXT — mission 01, entry 02
+[SF-RU-0438] MISSION_TEXT — mission 01, entry 02
 EN: Turn off power to terminal security doors
 RU: ОТКЛЮЧИТЬ ПИТАНИЕ ДВЕРЕЙ ТЕРМИНАЛА
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0437] MISSION_TEXT — mission 01, entry 03
+[SF-RU-0439] MISSION_TEXT — mission 01, entry 03
 EN: Protect CBDC bomb squad
 RU: ЗАЩИТИТЬ САПЁРОВ ХИМЗАЩИТЫ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0438] MISSION_TEXT — mission 01, entry 04
+[SF-RU-0440] MISSION_TEXT — mission 01, entry 04
 EN: Eliminate Kravitch and destroy comm. array
 RU: ЛИКВИДИРОВАТЬ ПАВЛА КРАВИЧА И УНИЧТОЖИТЬ АНТЕННУ СВЯЗИ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0439] MISSION_TEXT — mission 01, entry 05
+[SF-RU-0441] MISSION_TEXT — mission 01, entry 05
 EN: Avoid damaging viral delivery systems or explosive bombs
 RU: НЕ ПОВРЕДИТЬ СИСТЕМЫ ДОСТАВКИ ВИРУСА И ВЗРЫВНЫЕ УСТРОЙСТВА
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0440] MISSION_TEXT — mission 01, entry 06
+[SF-RU-0442] MISSION_TEXT — mission 01, entry 06
 EN: Do not eliminate any CBDC agent
 RU: НЕ УБИВАТЬ АГЕНТОВ ХИМЗАЩИТЫ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0441] MISSION_TEXT — mission 01, entry 07
+[SF-RU-0443] MISSION_TEXT — mission 01, entry 07
 EN: Kravitch
 RU: ПАВЕЛ КРАВИЧ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0442] MISSION_TEXT — mission 02, entry 01
+[SF-RU-0444] MISSION_TEXT — mission 02, entry 01
 EN: Blow open passage to street and protect CBDC agent
 RU: ВЗОРВАТЬ ПРОХОД НА УЛИЦУ И ЗАЩИТИТЬ АГЕНТА ХИМЗАЩИТЫ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0443] MISSION_TEXT — mission 02, entry 02
+[SF-RU-0445] MISSION_TEXT — mission 02, entry 02
 EN: Locate explosives cache
 RU: НАЙТИ СКЛАД ВЗРЫВЧАТКИ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0444] MISSION_TEXT — mission 02, entry 03
+[SF-RU-0446] MISSION_TEXT — mission 02, entry 03
 EN: Do not damage any bomb
 RU: НЕ ПОВРЕДИТЬ БОМБЫ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0445] MISSION_TEXT — mission 02, entry 04
+[SF-RU-0447] MISSION_TEXT — mission 02, entry 04
 EN: Do not kill any CBDC agent
 RU: НЕ УБИВАТЬ АГЕНТОВ ХИМЗАЩИТЫ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0446] MISSION_TEXT — mission 02, entry 05
+[SF-RU-0448] MISSION_TEXT — mission 02, entry 05
 EN: C4 taken
 RU: ВЗРЫВЧАТКА С4 ВЗЯТА
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0447] MISSION_TEXT — mission 02, entry 06
+[SF-RU-0449] MISSION_TEXT — mission 02, entry 06
 EN: Need Explosives
 RU: НУЖНА ВЗРЫВЧАТКА
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0448] MISSION_TEXT — mission 02, entry 07
+[SF-RU-0450] MISSION_TEXT — mission 02, entry 07
 EN: Blocked Passage
 RU: ПРОХОД ЗАВАЛЕН
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0449] MISSION_TEXT — mission 02, entry 08
+[SF-RU-0451] MISSION_TEXT — mission 02, entry 08
 EN: Gas Mains
 RU: ГАЗОВАЯ МАГИСТРАЛЬ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0450] MISSION_TEXT — mission 02, entry 09
+[SF-RU-0452] MISSION_TEXT — mission 02, entry 09
 EN: Gas Mains Closed
 RU: ГАЗ ПЕРЕКРЫТ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0451] MISSION_TEXT — mission 02, entry 10
+[SF-RU-0453] MISSION_TEXT — mission 02, entry 10
 EN: Bomb Detonated
 RU: БОМБА ВЗОРВАНА
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0452] MISSION_TEXT — mission 03, entry 01
+[SF-RU-0454] MISSION_TEXT — mission 03, entry 01
 EN: Eliminate Aramov
 RU: ЛИКВИДИРОВАТЬ МАРУ АРАМОВУ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0453] MISSION_TEXT — mission 03, entry 02
+[SF-RU-0455] MISSION_TEXT — mission 03, entry 02
 EN: Do not use grenades or train lines may be damaged
 RU: НЕ ИСПОЛЬЗОВАТЬ ГРАНАТЫ: МОЖНО ПОВРЕДИТЬ ПУТИ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0454] MISSION_TEXT — mission 04, entry 01
+[SF-RU-0456] MISSION_TEXT — mission 04, entry 01
 EN: Reach Freedom Memorial
 RU: ДОБРАТЬСЯ ДО МЕМОРИАЛА СВОБОДЫ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0455] MISSION_TEXT — mission 04, entry 02
+[SF-RU-0457] MISSION_TEXT — mission 04, entry 02
 EN: Eliminate trigger man Marcos
 RU: ЛИКВИДИРОВАТЬ ПОДРЫВНИКА ХОРХЕ МАРКОСА
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0456] MISSION_TEXT — mission 04, entry 03
+[SF-RU-0458] MISSION_TEXT — mission 04, entry 03
 EN: Secure terrorist comm. array
 RU: ВЗЯТЬ ПОД КОНТРОЛЬ АНТЕННУ СВЯЗИ ТЕРРОРИСТОВ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0457] MISSION_TEXT — mission 04, entry 04
+[SF-RU-0459] MISSION_TEXT — mission 04, entry 04
 EN: Rescue CBDC hostages
 RU: ОСВОБОДИТЬ ЗАЛОЖНИКОВ ХИМЗАЩИТЫ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0458] MISSION_TEXT — mission 04, entry 05
+[SF-RU-0460] MISSION_TEXT — mission 04, entry 05
 EN: Do not damage the comm. array
 RU: НЕ ПОВРЕДИТЬ АНТЕННУ СВЯЗИ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0459] MISSION_TEXT — mission 04, entry 06
+[SF-RU-0461] MISSION_TEXT — mission 04, entry 06
 EN: All bombs must be defused in under 20 minutes
 RU: ОБЕЗВРЕДИТЬ ВСЕ БОМБЫ МЕНЕЕ ЧЕМ ЗА 20 МИНУТ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0460] MISSION_TEXT — mission 04, entry 07
+[SF-RU-0462] MISSION_TEXT — mission 04, entry 07
 EN: Do not damage any bomb
 RU: НЕ ПОВРЕДИТЬ БОМБЫ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0461] MISSION_TEXT — mission 04, entry 08
+[SF-RU-0463] MISSION_TEXT — mission 04, entry 08
 EN: Do not kill any member of the strike team
 RU: НЕ УБИВАТЬ БОЙЦОВ ШТУРМОВОЙ ГРУППЫ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0462] MISSION_TEXT — mission 04, entry 09
+[SF-RU-0464] MISSION_TEXT — mission 04, entry 09
 EN: Locate and disarm %d%s viral bomb%s
 RU: НАЙТИ И ОБЕЗВРЕДИТЬ ВИРУСНЫЕ БОМБЫ: %d
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0463] MISSION_TEXT — mission 04, entry 10
+[SF-RU-0465] MISSION_TEXT — mission 04, entry 10
 EN: them
 RU: ИХ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0464] MISSION_TEXT — mission 04, entry 11
+[SF-RU-0466] MISSION_TEXT — mission 04, entry 11
 EN: %d Bomb%s Remaining
 RU: ОСТАЛОСЬ БОМБ: %d
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0465] MISSION_TEXT — mission 04, entry 12
+[SF-RU-0467] MISSION_TEXT — mission 04, entry 12
 EN: Communications array damaged
 RU: АНТЕННА СВЯЗИ ПОВРЕЖДЕНА
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0466] MISSION_TEXT — mission 04, entry 13
+[SF-RU-0468] MISSION_TEXT — mission 04, entry 13
 EN: Marcos
 RU: ХОРХЕ МАРКОС
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0467] MISSION_TEXT — mission 05, entry 01
+[SF-RU-0469] MISSION_TEXT — mission 05, entry 01
 EN: Kill Girdeux
 RU: ЛИКВИДИРОВАТЬ АНТОНА ГИРДО
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0468] MISSION_TEXT — mission 05, entry 02
+[SF-RU-0470] MISSION_TEXT — mission 05, entry 02
 EN: Do not use grenades or Girdeux's bomb may be damaged
 RU: НЕ ИСПОЛЬЗОВАТЬ ГРАНАТЫ: МОЖНО ПОВРЕДИТЬ БОМБУ АНТОНА ГИРДО
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0469] MISSION_TEXT — mission 06, entry 01
+[SF-RU-0471] MISSION_TEXT — mission 06, entry 01
 EN: Capture Phagan alive
 RU: ЗАХВАТИТЬ ДЖОНАТАНА ФЭЙГАНА ЖИВЫМ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0470] MISSION_TEXT — mission 06, entry 02
+[SF-RU-0472] MISSION_TEXT — mission 06, entry 02
 EN: Shadow Phagan to secret meeting
 RU: ПРОСЛЕДИТЬ ЗА ДЖОНАТАНОМ ФЭЙГАНОМ ДО ТАЙНОЙ ВСТРЕЧИ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0471] MISSION_TEXT — mission 06, entry 03
+[SF-RU-0473] MISSION_TEXT — mission 06, entry 03
 EN: Do not allow yourself to be spotted until you reach the meeting.  Do not shoot Phagan.
 RU: НЕ ПОПАДАТЬСЯ НА ГЛАЗА ДО МЕСТА ВСТРЕЧИ. НЕ СТРЕЛЯТЬ В ДЖОНАТАНА ФЭЙГАНА
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0472] MISSION_TEXT — mission 06, entry 04
+[SF-RU-0474] MISSION_TEXT — mission 06, entry 04
 EN: Benton
 RU: ЭДВАРД БЕНТОН
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0473] MISSION_TEXT — mission 06, entry 05
+[SF-RU-0475] MISSION_TEXT — mission 06, entry 05
 EN: Gate Control Panel
 RU: ПУЛЬТ УПРАВЛЕНИЯ ВОРОТАМИ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0474] MISSION_TEXT — mission 07, entry 01
+[SF-RU-0476] MISSION_TEXT — mission 07, entry 01
 EN: Capture Aramov and Phagan alive
 RU: ЗАХВАТИТЬ МАРУ АРАМОВУ И ДЖОНАТАНА ФЭЙГАНА ЖИВЫМИ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0475] MISSION_TEXT — mission 07, entry 02
+[SF-RU-0477] MISSION_TEXT — mission 07, entry 02
 EN: Do not kill Aramov
 RU: НЕ УБИВАТЬ МАРУ АРАМОВУ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0476] MISSION_TEXT — mission 07, entry 03
+[SF-RU-0478] MISSION_TEXT — mission 07, entry 03
 EN: Do not allow Phagan to die
 RU: НЕ ДАТЬ ДЖОНАТАНУ ФЭЙГАНУ ПОГИБНУТЬ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0477] MISSION_TEXT — mission 07, entry 04
+[SF-RU-0479] MISSION_TEXT — mission 07, entry 04
 EN: Gate Control Panel
 RU: ПУЛЬТ УПРАВЛЕНИЯ ВОРОТАМИ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0478] MISSION_TEXT — mission 08, entry 01
+[SF-RU-0480] MISSION_TEXT — mission 08, entry 01
 EN: Escape through main gate
 RU: ВЫЙТИ ЧЕРЕЗ ГЛАВНЫЕ ВОРОТА
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0479] MISSION_TEXT — mission 08, entry 02
+[SF-RU-0481] MISSION_TEXT — mission 08, entry 02
 EN: Reach missile bunker
 RU: ДОБРАТЬСЯ ДО РАКЕТНОГО БУНКЕРА
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0480] MISSION_TEXT — mission 08, entry 03
+[SF-RU-0482] MISSION_TEXT — mission 08, entry 03
 EN: Disable power to motion sensors
 RU: ОТКЛЮЧИТЬ ПИТАНИЕ ДАТЧИКОВ ДВИЖЕНИЯ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0481] MISSION_TEXT — mission 08, entry 04
+[SF-RU-0483] MISSION_TEXT — mission 08, entry 04
 EN: Eliminate Gabrek and collect cardkey
 RU: ЛИКВИДИРОВАТЬ ГАБРЕКА И ЗАБРАТЬ КЛЮЧ-КАРТУ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0482] MISSION_TEXT — mission 08, entry 05
+[SF-RU-0484] MISSION_TEXT — mission 08, entry 05
 EN: Get out of base before timer runs out on explosives
 RU: ПОКИНУТЬ БАЗУ ДО ВЗРЫВА ЗАРЯДОВ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0483] MISSION_TEXT — mission 08, entry 06
+[SF-RU-0485] MISSION_TEXT — mission 08, entry 06
 EN: Do not damage the missiles
 RU: НЕ ПОВРЕДИТЬ РАКЕТЫ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0484] MISSION_TEXT — mission 08, entry 07
+[SF-RU-0486] MISSION_TEXT — mission 08, entry 07
 EN: Do not damage the explosive charges
 RU: НЕ ПОВРЕДИТЬ ВЗРЫВНЫЕ ЗАРЯДЫ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0485] MISSION_TEXT — mission 08, entry 08
+[SF-RU-0487] MISSION_TEXT — mission 08, entry 08
 EN: Reach comm. building roof
 RU: ДОБРАТЬСЯ ДО КРЫШИ ЦЕНТРА СВЯЗИ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0486] MISSION_TEXT — mission 08, entry 09
+[SF-RU-0488] MISSION_TEXT — mission 08, entry 09
 EN: Plant C4 charges at %d%s fuel tank%s
 RU: УСТАНОВИТЬ С4 НА ТОПЛИВНЫЕ ЦИСТЕРНЫ: %d
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0487] MISSION_TEXT — mission 08, entry 10
+[SF-RU-0489] MISSION_TEXT — mission 08, entry 10
 EN: Catalog %d%s enemy missile%s
 RU: ЗАРЕГИСТРИРОВАТЬ РАКЕТЫ: %d
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0488] MISSION_TEXT — mission 08, entry 11
+[SF-RU-0490] MISSION_TEXT — mission 08, entry 11
 EN:  more
 RU:  ЕЩЁ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0489] MISSION_TEXT — mission 08, entry 12
+[SF-RU-0491] MISSION_TEXT — mission 08, entry 12
 EN: Gabrek
 RU: ГАБРЕК
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0490] MISSION_TEXT — mission 08, entry 13
+[SF-RU-0492] MISSION_TEXT — mission 08, entry 13
 EN: Place explosive here
 RU: УСТАНОВИТЬ ЗАРЯД ЗДЕСЬ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0491] MISSION_TEXT — mission 08, entry 14
+[SF-RU-0493] MISSION_TEXT — mission 08, entry 14
 EN: %d more explosive%s to plant
 RU: ОСТАЛОСЬ УСТАНОВИТЬ ЗАРЯДОВ: %d
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0492] MISSION_TEXT — mission 08, entry 15
+[SF-RU-0494] MISSION_TEXT — mission 08, entry 15
 EN: Motion Sensor Power
 RU: ПИТАНИЕ ДАТЧИКОВ ДВИЖЕНИЯ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0493] MISSION_TEXT — mission 08, entry 16
+[SF-RU-0495] MISSION_TEXT — mission 08, entry 16
 EN: Missile Access Control
 RU: КОНТРОЛЬ ДОСТУПА К РАКЕТАМ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0494] MISSION_TEXT — mission 08, entry 17
+[SF-RU-0496] MISSION_TEXT — mission 08, entry 17
 EN: Missile Access Initiated
 RU: ДОСТУП К РАКЕТАМ ОТКРЫТ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0495] MISSION_TEXT — mission 08, entry 18
+[SF-RU-0497] MISSION_TEXT — mission 08, entry 18
 EN: SS-23 Missile
 RU: РАКЕТА SS-23
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0496] MISSION_TEXT — mission 08, entry 19
+[SF-RU-0498] MISSION_TEXT — mission 08, entry 19
 EN: Missile indexed.\n%d remaining
 RU: РАКЕТА ЗАРЕГИСТРИРОВАНА\nОСТАЛОСЬ: %d
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0497] MISSION_TEXT — mission 09, entry 01
+[SF-RU-0499] MISSION_TEXT — mission 09, entry 01
 EN: Escape through main gate
 RU: ВЫЙТИ ЧЕРЕЗ ГЛАВНЫЕ ВОРОТА
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0498] MISSION_TEXT — mission 09, entry 02
+[SF-RU-0500] MISSION_TEXT — mission 09, entry 02
 EN: Reach missile bunker
 RU: ДОБРАТЬСЯ ДО РАКЕТНОГО БУНКЕРА
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0499] MISSION_TEXT — mission 09, entry 03
+[SF-RU-0501] MISSION_TEXT — mission 09, entry 03
 EN: Disable power to motion sensors
 RU: ОТКЛЮЧИТЬ ПИТАНИЕ ДАТЧИКОВ ДВИЖЕНИЯ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0500] MISSION_TEXT — mission 09, entry 04
+[SF-RU-0502] MISSION_TEXT — mission 09, entry 04
 EN: Eliminate Gabrek and collect cardkey
 RU: ЛИКВИДИРОВАТЬ ГАБРЕКА И ЗАБРАТЬ КЛЮЧ-КАРТУ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0501] MISSION_TEXT — mission 09, entry 05
+[SF-RU-0503] MISSION_TEXT — mission 09, entry 05
 EN: Get out of base before timer runs out on explosives
 RU: ПОКИНУТЬ БАЗУ ДО ВЗРЫВА ЗАРЯДОВ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0502] MISSION_TEXT — mission 09, entry 06
+[SF-RU-0504] MISSION_TEXT — mission 09, entry 06
 EN: Do not damage the missiles
 RU: НЕ ПОВРЕДИТЬ РАКЕТЫ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0503] MISSION_TEXT — mission 09, entry 07
+[SF-RU-0505] MISSION_TEXT — mission 09, entry 07
 EN: Do not damage the explosive charges
 RU: НЕ ПОВРЕДИТЬ ВЗРЫВНЫЕ ЗАРЯДЫ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0504] MISSION_TEXT — mission 09, entry 08
+[SF-RU-0506] MISSION_TEXT — mission 09, entry 08
 EN: Reach comm. building roof
 RU: ДОБРАТЬСЯ ДО КРЫШИ ЦЕНТРА СВЯЗИ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0505] MISSION_TEXT — mission 09, entry 09
+[SF-RU-0507] MISSION_TEXT — mission 09, entry 09
 EN: Plant C4 charges at %d%s fuel tank%s
 RU: УСТАНОВИТЬ С4 НА ТОПЛИВНЫЕ ЦИСТЕРНЫ: %d
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0506] MISSION_TEXT — mission 09, entry 10
+[SF-RU-0508] MISSION_TEXT — mission 09, entry 10
 EN: Catalog %d%s enemy missile%s
 RU: ЗАРЕГИСТРИРОВАТЬ РАКЕТЫ: %d
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0507] MISSION_TEXT — mission 09, entry 11
+[SF-RU-0509] MISSION_TEXT — mission 09, entry 11
 EN:  more
 RU:  ЕЩЁ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0508] MISSION_TEXT — mission 09, entry 12
+[SF-RU-0510] MISSION_TEXT — mission 09, entry 12
 EN: Gabrek
 RU: ГАБРЕК
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0509] MISSION_TEXT — mission 09, entry 13
+[SF-RU-0511] MISSION_TEXT — mission 09, entry 13
 EN: Place explosive here
 RU: УСТАНОВИТЬ ЗАРЯД ЗДЕСЬ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0510] MISSION_TEXT — mission 09, entry 14
+[SF-RU-0512] MISSION_TEXT — mission 09, entry 14
 EN: %d more explosive%s to plant
 RU: ОСТАЛОСЬ УСТАНОВИТЬ ЗАРЯДОВ: %d
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0511] MISSION_TEXT — mission 09, entry 15
+[SF-RU-0513] MISSION_TEXT — mission 09, entry 15
 EN: Motion Sensor Power
 RU: ПИТАНИЕ ДАТЧИКОВ ДВИЖЕНИЯ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0512] MISSION_TEXT — mission 09, entry 16
+[SF-RU-0514] MISSION_TEXT — mission 09, entry 16
 EN: Missile Access Control
 RU: КОНТРОЛЬ ДОСТУПА К РАКЕТАМ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0513] MISSION_TEXT — mission 09, entry 17
+[SF-RU-0515] MISSION_TEXT — mission 09, entry 17
 EN: Missile Access Initiated
 RU: ДОСТУП К РАКЕТАМ ОТКРЫТ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0514] MISSION_TEXT — mission 09, entry 18
+[SF-RU-0516] MISSION_TEXT — mission 09, entry 18
 EN: SS-23 Missile
 RU: РАКЕТА SS-23
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0515] MISSION_TEXT — mission 09, entry 19
+[SF-RU-0517] MISSION_TEXT — mission 09, entry 19
 EN: Missile indexed.\n%d remaining
 RU: РАКЕТА ЗАРЕГИСТРИРОВАНА\nОСТАЛОСЬ: %d
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0516] MISSION_TEXT — mission 10, entry 01
+[SF-RU-0518] MISSION_TEXT — mission 10, entry 01
 EN: Shoot down attack helicopter
 RU: СБИТЬ БОЕВОЙ ВЕРТОЛЁТ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0517] MISSION_TEXT — mission 10, entry 02
+[SF-RU-0519] MISSION_TEXT — mission 10, entry 02
 EN: Disable radar tracking
 RU: ОТКЛЮЧИТЬ РАДАР СОПРОВОЖДЕНИЯ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0518] MISSION_TEXT — mission 10, entry 03
+[SF-RU-0520] MISSION_TEXT — mission 10, entry 03
 EN: Radar Tracking Override.
 RU: УПРАВЛЕНИЕ РАДАРОМ ПЕРЕХВАЧЕНО
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0519] MISSION_TEXT — mission 11, entry 01
+[SF-RU-0521] MISSION_TEXT — mission 11, entry 01
 EN: Escape through main gate
 RU: ВЫЙТИ ЧЕРЕЗ ГЛАВНЫЕ ВОРОТА
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0520] MISSION_TEXT — mission 11, entry 02
+[SF-RU-0522] MISSION_TEXT — mission 11, entry 02
 EN: Reach missile bunker
 RU: ДОБРАТЬСЯ ДО РАКЕТНОГО БУНКЕРА
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0521] MISSION_TEXT — mission 11, entry 03
+[SF-RU-0523] MISSION_TEXT — mission 11, entry 03
 EN: Disable power to motion sensors
 RU: ОТКЛЮЧИТЬ ПИТАНИЕ ДАТЧИКОВ ДВИЖЕНИЯ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0522] MISSION_TEXT — mission 11, entry 04
+[SF-RU-0524] MISSION_TEXT — mission 11, entry 04
 EN: Eliminate Gabrek and collect cardkey
 RU: ЛИКВИДИРОВАТЬ ГАБРЕКА И ЗАБРАТЬ КЛЮЧ-КАРТУ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0523] MISSION_TEXT — mission 11, entry 05
+[SF-RU-0525] MISSION_TEXT — mission 11, entry 05
 EN: Get out of base before timer runs out on explosives
 RU: ПОКИНУТЬ БАЗУ ДО ВЗРЫВА ЗАРЯДОВ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0524] MISSION_TEXT — mission 11, entry 06
+[SF-RU-0526] MISSION_TEXT — mission 11, entry 06
 EN: Do not damage the missiles
 RU: НЕ ПОВРЕДИТЬ РАКЕТЫ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0525] MISSION_TEXT — mission 11, entry 07
+[SF-RU-0527] MISSION_TEXT — mission 11, entry 07
 EN: Do not damage the explosive charges
 RU: НЕ ПОВРЕДИТЬ ВЗРЫВНЫЕ ЗАРЯДЫ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0526] MISSION_TEXT — mission 11, entry 08
+[SF-RU-0528] MISSION_TEXT — mission 11, entry 08
 EN: Reach comm. building roof
 RU: ДОБРАТЬСЯ ДО КРЫШИ ЦЕНТРА СВЯЗИ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0527] MISSION_TEXT — mission 11, entry 09
+[SF-RU-0529] MISSION_TEXT — mission 11, entry 09
 EN: Plant C4 charges at %d%s fuel tank%s
 RU: УСТАНОВИТЬ С4 НА ТОПЛИВНЫЕ ЦИСТЕРНЫ: %d
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0528] MISSION_TEXT — mission 11, entry 10
+[SF-RU-0530] MISSION_TEXT — mission 11, entry 10
 EN: Catalog %d%s enemy missile%s
 RU: ЗАРЕГИСТРИРОВАТЬ РАКЕТЫ: %d
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0529] MISSION_TEXT — mission 11, entry 11
+[SF-RU-0531] MISSION_TEXT — mission 11, entry 11
 EN:  more
 RU:  ЕЩЁ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0530] MISSION_TEXT — mission 11, entry 12
+[SF-RU-0532] MISSION_TEXT — mission 11, entry 12
 EN: Gabrek
 RU: ГАБРЕК
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0531] MISSION_TEXT — mission 11, entry 13
+[SF-RU-0533] MISSION_TEXT — mission 11, entry 13
 EN: Place explosive here
 RU: УСТАНОВИТЬ ЗАРЯД ЗДЕСЬ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0532] MISSION_TEXT — mission 11, entry 14
+[SF-RU-0534] MISSION_TEXT — mission 11, entry 14
 EN: %d more explosive%s to plant
 RU: ОСТАЛОСЬ УСТАНОВИТЬ ЗАРЯДОВ: %d
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0533] MISSION_TEXT — mission 11, entry 15
+[SF-RU-0535] MISSION_TEXT — mission 11, entry 15
 EN: Motion Sensor Power
 RU: ПИТАНИЕ ДАТЧИКОВ ДВИЖЕНИЯ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0534] MISSION_TEXT — mission 11, entry 16
+[SF-RU-0536] MISSION_TEXT — mission 11, entry 16
 EN: Missile Access Control
 RU: КОНТРОЛЬ ДОСТУПА К РАКЕТАМ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0535] MISSION_TEXT — mission 11, entry 17
+[SF-RU-0537] MISSION_TEXT — mission 11, entry 17
 EN: Missile Access Initiated
 RU: ДОСТУП К РАКЕТАМ ОТКРЫТ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0536] MISSION_TEXT — mission 11, entry 18
+[SF-RU-0538] MISSION_TEXT — mission 11, entry 18
 EN: SS-23 Missile
 RU: РАКЕТА SS-23
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0537] MISSION_TEXT — mission 11, entry 19
+[SF-RU-0539] MISSION_TEXT — mission 11, entry 19
 EN: Missile indexed.\n%d remaining
 RU: РАКЕТА ЗАРЕГИСТРИРОВАНА\nОСТАЛОСЬ: %d
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0538] MISSION_TEXT — mission 12, entry 01
+[SF-RU-0540] MISSION_TEXT — mission 12, entry 01
 EN: Find entrance to catacombs
 RU: НАЙТИ ВХОД В КАТАКОМБЫ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0539] MISSION_TEXT — mission 12, entry 02
+[SF-RU-0541] MISSION_TEXT — mission 12, entry 02
 EN: Do not kill any human test subjects
 RU: НЕ УБИВАТЬ ПОДОПЫТНЫХ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0540] MISSION_TEXT — mission 12, entry 03
+[SF-RU-0542] MISSION_TEXT — mission 12, entry 03
 EN: Eliminate Rhoemer's %d%s scientist%s
 RU: ЛИКВИДИРОВАТЬ УЧЁНЫХ ЭРИХА РОМЕРА: %d
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0541] MISSION_TEXT — mission 12, entry 04
+[SF-RU-0543] MISSION_TEXT — mission 12, entry 04
 EN: Administer antigen to %d%s test subject%s
 RU: ВВЕСТИ АНТИГЕН ПОДОПЫТНЫМ: %d
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0542] MISSION_TEXT — mission 12, entry 05
+[SF-RU-0544] MISSION_TEXT — mission 12, entry 05
 EN: %d scientist%s left to kill
 RU: ОСТАЛОСЬ УЧЁНЫХ: %d
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0543] MISSION_TEXT — mission 12, entry 06
+[SF-RU-0545] MISSION_TEXT — mission 12, entry 06
 EN: Antigen administered\n%d subject%s remaining
 RU: АНТИГЕН ВВЕДЁН\nОСТАЛОСЬ ПОДОПЫТНЫХ: %d
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0544] MISSION_TEXT — mission 12, entry 07
+[SF-RU-0546] MISSION_TEXT — mission 12, entry 07
 EN: Test Subject
 RU: ПОДОПЫТНЫЙ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0545] MISSION_TEXT — mission 12, entry 08
+[SF-RU-0547] MISSION_TEXT — mission 12, entry 08
 EN: Door lock
 RU: ЗАМОК ДВЕРИ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0546] MISSION_TEXT — mission 12, entry 09
+[SF-RU-0548] MISSION_TEXT — mission 12, entry 09
 EN: Door unlocked
 RU: ДВЕРЬ ОТКРЫТА
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0547] MISSION_TEXT — mission 13, entry 01
+[SF-RU-0549] MISSION_TEXT — mission 13, entry 01
 EN: Find entrance to catacombs
 RU: НАЙТИ ВХОД В КАТАКОМБЫ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0548] MISSION_TEXT — mission 13, entry 02
+[SF-RU-0550] MISSION_TEXT — mission 13, entry 02
 EN: Do not kill any human test subjects
 RU: НЕ УБИВАТЬ ПОДОПЫТНЫХ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0549] MISSION_TEXT — mission 13, entry 03
+[SF-RU-0551] MISSION_TEXT — mission 13, entry 03
 EN: Eliminate Rhoemer's %d%s scientist%s
 RU: ЛИКВИДИРОВАТЬ УЧЁНЫХ ЭРИХА РОМЕРА: %d
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0550] MISSION_TEXT — mission 13, entry 04
+[SF-RU-0552] MISSION_TEXT — mission 13, entry 04
 EN: Administer antigen to %d%s test subject%s
 RU: ВВЕСТИ АНТИГЕН ПОДОПЫТНЫМ: %d
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0551] MISSION_TEXT — mission 13, entry 05
+[SF-RU-0553] MISSION_TEXT — mission 13, entry 05
 EN: %d scientist%s left to kill
 RU: ОСТАЛОСЬ УЧЁНЫХ: %d
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0552] MISSION_TEXT — mission 13, entry 06
+[SF-RU-0554] MISSION_TEXT — mission 13, entry 06
 EN: Antigen administered\n%d subject%s remaining
 RU: АНТИГЕН ВВЕДЁН\nОСТАЛОСЬ ПОДОПЫТНЫХ: %d
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0553] MISSION_TEXT — mission 13, entry 07
+[SF-RU-0555] MISSION_TEXT — mission 13, entry 07
 EN: Test Subject
 RU: ПОДОПЫТНЫЙ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0554] MISSION_TEXT — mission 13, entry 08
+[SF-RU-0556] MISSION_TEXT — mission 13, entry 08
 EN: Door lock
 RU: ЗАМОК ДВЕРИ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0555] MISSION_TEXT — mission 13, entry 09
+[SF-RU-0557] MISSION_TEXT — mission 13, entry 09
 EN: Door unlocked
 RU: ДВЕРЬ ОТКРЫТА
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0556] MISSION_TEXT — mission 14, entry 01
+[SF-RU-0558] MISSION_TEXT — mission 14, entry 01
 EN: Get Lian Xing out of the catacombs
 RU: ВЫВЕСТИ ЛИАН СИН ИЗ КАТАКОМБ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0557] MISSION_TEXT — mission 14, entry 02
+[SF-RU-0559] MISSION_TEXT — mission 14, entry 02
 EN: Follow Phagan to Lian Xing's cell
 RU: ПРОСЛЕДИТЬ ЗА ДЖОНАТАНОМ ФЭЙГАНОМ ДО КАМЕРЫ ЛИАН СИН
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0558] MISSION_TEXT — mission 14, entry 03
+[SF-RU-0560] MISSION_TEXT — mission 14, entry 03
 EN: Find Phagan
 RU: НАЙТИ ДЖОНАТАНА ФЭЙГАНА
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0559] MISSION_TEXT — mission 14, entry 04
+[SF-RU-0561] MISSION_TEXT — mission 14, entry 04
 EN: Do not allow Lian Xing to die
 RU: ЗАЩИТИТЬ ЛИАН СИН
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0560] MISSION_TEXT — mission 14, entry 05
+[SF-RU-0562] MISSION_TEXT — mission 14, entry 05
 EN: Do not leave Phagan unguarded or allow him to die
 RU: НЕ ОСТАВЛЯТЬ ДЖОНАТАНА ФЭЙГАНА БЕЗ ОХРАНЫ И НЕ ДАТЬ ЕМУ ПОГИБНУТЬ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0561] MISSION_TEXT — mission 14, entry 06
+[SF-RU-0563] MISSION_TEXT — mission 14, entry 06
 EN: Do not be spotted until the scientist has opened Phagan's cell
 RU: НЕ ПОПАДАТЬСЯ НА ГЛАЗА, ПОКА УЧЁНЫЙ НЕ ОТКРОЕТ КАМЕРУ ДЖОНАТАНА ФЭЙГАНА
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0562] MISSION_TEXT — mission 15, entry 01
+[SF-RU-0564] MISSION_TEXT — mission 15, entry 01
 EN: Get to warehouse 76
 RU: ДОБРАТЬСЯ ДО СКЛАДА 76
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0563] MISSION_TEXT — mission 15, entry 02
+[SF-RU-0565] MISSION_TEXT — mission 15, entry 02
 EN: Turn off power to electric fences
 RU: ОТКЛЮЧИТЬ ПИТАНИЕ ЭЛЕКТРИЧЕСКИХ ОГРАЖДЕНИЙ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0564] MISSION_TEXT — mission 15, entry 03
+[SF-RU-0566] MISSION_TEXT — mission 15, entry 03
 EN: Find and interrogate Erikson
 RU: НАЙТИ И ДОПРОСИТЬ ЭРИКСОНА
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0565] MISSION_TEXT — mission 15, entry 04
+[SF-RU-0567] MISSION_TEXT — mission 15, entry 04
 EN: Do not kill Erikson before you've gotten the computer codes
 RU: НЕ УБИВАТЬ ЭРИКСОНА ДО ПОЛУЧЕНИЯ КОДОВ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0566] MISSION_TEXT — mission 15, entry 05
+[SF-RU-0568] MISSION_TEXT — mission 15, entry 05
 EN: Get to freight elevator
 RU: ДОБРАТЬСЯ ДО ГРУЗОВОГО ЛИФТА
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0567] MISSION_TEXT — mission 15, entry 06
+[SF-RU-0569] MISSION_TEXT — mission 15, entry 06
 EN: Get out before the building collapses in 15 minutes
 RU: ПОКИНУТЬ ЗДАНИЕ ЗА 15 МИНУТ, ДО ЕГО ОБРУШЕНИЯ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0568] MISSION_TEXT — mission 15, entry 07
+[SF-RU-0570] MISSION_TEXT — mission 15, entry 07
 EN: Locate and tag %d%s viral carrier%s
 RU: НАЙТИ И ПОМЕТИТЬ НОСИТЕЛЕЙ ВИРУСА: %d
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0569] MISSION_TEXT — mission 15, entry 08
+[SF-RU-0571] MISSION_TEXT — mission 15, entry 08
 EN: Viral carrier tagged. %d remaining
 RU: НОСИТЕЛЬ ПОМЕЧЕН. ОСТАЛОСЬ: %d
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0570] MISSION_TEXT — mission 15, entry 09
+[SF-RU-0572] MISSION_TEXT — mission 15, entry 09
 EN: Erikson
 RU: ЭРИКСОН
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0571] MISSION_TEXT — mission 16, entry 01
+[SF-RU-0573] MISSION_TEXT — mission 16, entry 01
 EN: Get to warehouse 76
 RU: ДОБРАТЬСЯ ДО СКЛАДА 76
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0572] MISSION_TEXT — mission 16, entry 02
+[SF-RU-0574] MISSION_TEXT — mission 16, entry 02
 EN: Turn off power to electric fences
 RU: ОТКЛЮЧИТЬ ПИТАНИЕ ЭЛЕКТРИЧЕСКИХ ОГРАЖДЕНИЙ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0573] MISSION_TEXT — mission 16, entry 03
+[SF-RU-0575] MISSION_TEXT — mission 16, entry 03
 EN: Find and interrogate Erikson
 RU: НАЙТИ И ДОПРОСИТЬ ЭРИКСОНА
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0574] MISSION_TEXT — mission 16, entry 04
+[SF-RU-0576] MISSION_TEXT — mission 16, entry 04
 EN: Do not kill Erikson before you've gotten the computer codes
 RU: НЕ УБИВАТЬ ЭРИКСОНА ДО ПОЛУЧЕНИЯ КОДОВ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0575] MISSION_TEXT — mission 16, entry 05
+[SF-RU-0577] MISSION_TEXT — mission 16, entry 05
 EN: Get to freight elevator
 RU: ДОБРАТЬСЯ ДО ГРУЗОВОГО ЛИФТА
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0576] MISSION_TEXT — mission 16, entry 06
+[SF-RU-0578] MISSION_TEXT — mission 16, entry 06
 EN: Get out before the building collapses in 15 minutes
 RU: ПОКИНУТЬ ЗДАНИЕ ЗА 15 МИНУТ, ДО ЕГО ОБРУШЕНИЯ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0577] MISSION_TEXT — mission 16, entry 07
+[SF-RU-0579] MISSION_TEXT — mission 16, entry 07
 EN: Locate and tag %d%s viral carrier%s
 RU: НАЙТИ И ПОМЕТИТЬ НОСИТЕЛЕЙ ВИРУСА: %d
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0578] MISSION_TEXT — mission 16, entry 08
+[SF-RU-0580] MISSION_TEXT — mission 16, entry 08
 EN: Viral carrier tagged. %d remaining
 RU: НОСИТЕЛЬ ПОМЕЧЕН. ОСТАЛОСЬ: %d
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0579] MISSION_TEXT — mission 16, entry 09
+[SF-RU-0581] MISSION_TEXT — mission 16, entry 09
 EN: Erikson
 RU: ЭРИКСОН
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0580] MISSION_TEXT — mission 17, entry 01
+[SF-RU-0582] MISSION_TEXT — mission 17, entry 01
 EN: Get to warehouse 76
 RU: ДОБРАТЬСЯ ДО СКЛАДА 76
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0581] MISSION_TEXT — mission 17, entry 02
+[SF-RU-0583] MISSION_TEXT — mission 17, entry 02
 EN: Turn off power to electric fences
 RU: ОТКЛЮЧИТЬ ПИТАНИЕ ЭЛЕКТРИЧЕСКИХ ОГРАЖДЕНИЙ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0582] MISSION_TEXT — mission 17, entry 03
+[SF-RU-0584] MISSION_TEXT — mission 17, entry 03
 EN: Find and interrogate Erikson
 RU: НАЙТИ И ДОПРОСИТЬ ЭРИКСОНА
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0583] MISSION_TEXT — mission 17, entry 04
+[SF-RU-0585] MISSION_TEXT — mission 17, entry 04
 EN: Do not kill Erikson before you've gotten the computer codes
 RU: НЕ УБИВАТЬ ЭРИКСОНА ДО ПОЛУЧЕНИЯ КОДОВ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0584] MISSION_TEXT — mission 17, entry 05
+[SF-RU-0586] MISSION_TEXT — mission 17, entry 05
 EN: Get to freight elevator
 RU: ДОБРАТЬСЯ ДО ГРУЗОВОГО ЛИФТА
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0585] MISSION_TEXT — mission 17, entry 06
+[SF-RU-0587] MISSION_TEXT — mission 17, entry 06
 EN: Get out before the building collapses in 15 minutes
 RU: ПОКИНУТЬ ЗДАНИЕ ЗА 15 МИНУТ, ДО ЕГО ОБРУШЕНИЯ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0586] MISSION_TEXT — mission 17, entry 07
+[SF-RU-0588] MISSION_TEXT — mission 17, entry 07
 EN: Locate and tag %d%s viral carrier%s
 RU: НАЙТИ И ПОМЕТИТЬ НОСИТЕЛЕЙ ВИРУСА: %d
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0587] MISSION_TEXT — mission 17, entry 08
+[SF-RU-0589] MISSION_TEXT — mission 17, entry 08
 EN: Viral carrier tagged. %d remaining
 RU: НОСИТЕЛЬ ПОМЕЧЕН. ОСТАЛОСЬ: %d
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0588] MISSION_TEXT — mission 17, entry 09
+[SF-RU-0590] MISSION_TEXT — mission 17, entry 09
 EN: Erikson
 RU: ЭРИКСОН
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0589] MISSION_TEXT — mission 18, entry 01
+[SF-RU-0591] MISSION_TEXT — mission 18, entry 01
 EN: Shut down power room
 RU: ОТКЛЮЧИТЬ ЭНЕРГОБЛОК
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0590] MISSION_TEXT — mission 18, entry 02
+[SF-RU-0592] MISSION_TEXT — mission 18, entry 02
 EN: Reroute power to elevator
 RU: ПЕРЕНАПРАВИТЬ ПИТАНИЕ НА ЛИФТ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0591] MISSION_TEXT — mission 18, entry 03
+[SF-RU-0593] MISSION_TEXT — mission 18, entry 03
 EN: Access missile command computer
 RU: ПОЛУЧИТЬ ДОСТУП К КОМПЬЮТЕРУ УПРАВЛЕНИЯ РАКЕТОЙ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0592] MISSION_TEXT — mission 18, entry 04
+[SF-RU-0594] MISSION_TEXT — mission 18, entry 04
 EN: Retrieve missile destruct codes
 RU: ПОЛУЧИТЬ КОДЫ САМОУНИЧТОЖЕНИЯ РАКЕТЫ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0593] MISSION_TEXT — mission 18, entry 05
+[SF-RU-0595] MISSION_TEXT — mission 18, entry 05
 EN: Command computer must be accessed within 3 minutes after launch
 RU: ПОЛУЧИТЬ ДОСТУП К КОМПЬЮТЕРУ В ТЕЧЕНИЕ 3 МИНУТ ПОСЛЕ ЗАПУСКА
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0594] MISSION_TEXT — mission 18, entry 06
+[SF-RU-0596] MISSION_TEXT — mission 18, entry 06
 EN: Destruct codes must be retrieved before the missile launches
 RU: ПОЛУЧИТЬ КОДЫ ДО ЗАПУСКА РАКЕТЫ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0595] MISSION_TEXT — mission 18, entry 07
+[SF-RU-0597] MISSION_TEXT — mission 18, entry 07
 EN: Do not shoot at the missile
 RU: НЕ СТРЕЛЯТЬ ПО РАКЕТЕ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0596] MISSION_TEXT — mission 18, entry 08
+[SF-RU-0598] MISSION_TEXT — mission 18, entry 08
 EN: No Power
 RU: НЕТ ПИТАНИЯ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0597] MISSION_TEXT — mission 18, entry 09
+[SF-RU-0599] MISSION_TEXT — mission 18, entry 09
 EN: Power Relay
 RU: СИЛОВОЕ РЕЛЕ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0598] MISSION_TEXT — mission 18, entry 10
+[SF-RU-0600] MISSION_TEXT — mission 18, entry 10
 EN: Elevator Control Panel
 RU: ПУЛЬТ УПРАВЛЕНИЯ ЛИФТОМ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0599] MISSION_TEXT — mission 18, entry 11
+[SF-RU-0601] MISSION_TEXT — mission 18, entry 11
 EN: Elevator activated
 RU: ЛИФТ ВКЛЮЧЁН
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0600] MISSION_TEXT — mission 18, entry 12
+[SF-RU-0602] MISSION_TEXT — mission 18, entry 12
 EN: Control Panel
 RU: ПУЛЬТ УПРАВЛЕНИЯ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0601] MISSION_TEXT — mission 18, entry 13
+[SF-RU-0603] MISSION_TEXT — mission 18, entry 13
 EN: Safety Released
 RU: БЛОКИРОВКА СНЯТА
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0602] MISSION_TEXT — mission 18, entry 14
+[SF-RU-0604] MISSION_TEXT — mission 18, entry 14
 EN: Need missile codes
 RU: НУЖНЫ КОДЫ САМОУНИЧТОЖЕНИЯ РАКЕТЫ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0603] MISSION_TEXT — mission 18, entry 15
+[SF-RU-0605] MISSION_TEXT — mission 18, entry 15
 EN: R-9 Devyatka Missile
 RU: РАКЕТА R-9 ДЕВЯТКА
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0604] MISSION_TEXT — mission 18, entry 16
+[SF-RU-0606] MISSION_TEXT — mission 18, entry 16
 EN: Command Computer
 RU: КОМПЬЮТЕР УПРАВЛЕНИЯ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0605] MISSION_TEXT — mission 19, entry 01
+[SF-RU-0607] MISSION_TEXT — mission 19, entry 01
 EN: Shut down power room
 RU: ОТКЛЮЧИТЬ ЭНЕРГОБЛОК
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0606] MISSION_TEXT — mission 19, entry 02
+[SF-RU-0608] MISSION_TEXT — mission 19, entry 02
 EN: Reroute power to elevator
 RU: ПЕРЕНАПРАВИТЬ ПИТАНИЕ НА ЛИФТ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0607] MISSION_TEXT — mission 19, entry 03
+[SF-RU-0609] MISSION_TEXT — mission 19, entry 03
 EN: Access missile command computer
 RU: ПОЛУЧИТЬ ДОСТУП К КОМПЬЮТЕРУ УПРАВЛЕНИЯ РАКЕТОЙ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0608] MISSION_TEXT — mission 19, entry 04
+[SF-RU-0610] MISSION_TEXT — mission 19, entry 04
 EN: Retrieve missile destruct codes
 RU: ПОЛУЧИТЬ КОДЫ САМОУНИЧТОЖЕНИЯ РАКЕТЫ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0609] MISSION_TEXT — mission 19, entry 05
+[SF-RU-0611] MISSION_TEXT — mission 19, entry 05
 EN: Command computer must be accessed within 3 minutes after launch
 RU: ПОЛУЧИТЬ ДОСТУП К КОМПЬЮТЕРУ В ТЕЧЕНИЕ 3 МИНУТ ПОСЛЕ ЗАПУСКА
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0610] MISSION_TEXT — mission 19, entry 06
+[SF-RU-0612] MISSION_TEXT — mission 19, entry 06
 EN: Destruct codes must be retrieved before the missile launches
 RU: ПОЛУЧИТЬ КОДЫ ДО ЗАПУСКА РАКЕТЫ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0611] MISSION_TEXT — mission 19, entry 07
+[SF-RU-0613] MISSION_TEXT — mission 19, entry 07
 EN: Do not shoot at the missile
 RU: НЕ СТРЕЛЯТЬ ПО РАКЕТЕ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0612] MISSION_TEXT — mission 19, entry 08
+[SF-RU-0614] MISSION_TEXT — mission 19, entry 08
 EN: No Power
 RU: НЕТ ПИТАНИЯ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0613] MISSION_TEXT — mission 19, entry 09
+[SF-RU-0615] MISSION_TEXT — mission 19, entry 09
 EN: Power Relay
 RU: СИЛОВОЕ РЕЛЕ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0614] MISSION_TEXT — mission 19, entry 10
+[SF-RU-0616] MISSION_TEXT — mission 19, entry 10
 EN: Elevator Control Panel
 RU: ПУЛЬТ УПРАВЛЕНИЯ ЛИФТОМ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0615] MISSION_TEXT — mission 19, entry 11
+[SF-RU-0617] MISSION_TEXT — mission 19, entry 11
 EN: Elevator activated
 RU: ЛИФТ ВКЛЮЧЁН
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0616] MISSION_TEXT — mission 19, entry 12
+[SF-RU-0618] MISSION_TEXT — mission 19, entry 12
 EN: Control Panel
 RU: ПУЛЬТ УПРАВЛЕНИЯ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0617] MISSION_TEXT — mission 19, entry 13
+[SF-RU-0619] MISSION_TEXT — mission 19, entry 13
 EN: Safety Released
 RU: БЛОКИРОВКА СНЯТА
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0618] MISSION_TEXT — mission 19, entry 14
+[SF-RU-0620] MISSION_TEXT — mission 19, entry 14
 EN: Need missile codes
 RU: НУЖНЫ КОДЫ САМОУНИЧТОЖЕНИЯ РАКЕТЫ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0619] MISSION_TEXT — mission 19, entry 15
+[SF-RU-0621] MISSION_TEXT — mission 19, entry 15
 EN: R-9 Devyatka Missile
 RU: РАКЕТА R-9 ДЕВЯТКА
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0620] MISSION_TEXT — mission 19, entry 16
+[SF-RU-0622] MISSION_TEXT — mission 19, entry 16
 EN: Command Computer
 RU: КОМПЬЮТЕР УПРАВЛЕНИЯ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0621] MISSION_TEXT — mission 20, entry 01
+[SF-RU-0623] MISSION_TEXT — mission 20, entry 01
 EN: Shut down power room
 RU: ОТКЛЮЧИТЬ ЭНЕРГОБЛОК
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0622] MISSION_TEXT — mission 20, entry 02
+[SF-RU-0624] MISSION_TEXT — mission 20, entry 02
 EN: Reroute power to elevator
 RU: ПЕРЕНАПРАВИТЬ ПИТАНИЕ НА ЛИФТ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0623] MISSION_TEXT — mission 20, entry 03
+[SF-RU-0625] MISSION_TEXT — mission 20, entry 03
 EN: Access missile command computer
 RU: ПОЛУЧИТЬ ДОСТУП К КОМПЬЮТЕРУ УПРАВЛЕНИЯ РАКЕТОЙ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0624] MISSION_TEXT — mission 20, entry 04
+[SF-RU-0626] MISSION_TEXT — mission 20, entry 04
 EN: Retrieve missile destruct codes
 RU: ПОЛУЧИТЬ КОДЫ САМОУНИЧТОЖЕНИЯ РАКЕТЫ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0625] MISSION_TEXT — mission 20, entry 05
+[SF-RU-0627] MISSION_TEXT — mission 20, entry 05
 EN: Command computer must be accessed within 3 minutes after launch
 RU: ПОЛУЧИТЬ ДОСТУП К КОМПЬЮТЕРУ В ТЕЧЕНИЕ 3 МИНУТ ПОСЛЕ ЗАПУСКА
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0626] MISSION_TEXT — mission 20, entry 06
+[SF-RU-0628] MISSION_TEXT — mission 20, entry 06
 EN: Destruct codes must be retrieved before the missile launches
 RU: ПОЛУЧИТЬ КОДЫ ДО ЗАПУСКА РАКЕТЫ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0627] MISSION_TEXT — mission 20, entry 07
+[SF-RU-0629] MISSION_TEXT — mission 20, entry 07
 EN: Do not shoot at the missile
 RU: НЕ СТРЕЛЯТЬ ПО РАКЕТЕ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0628] MISSION_TEXT — mission 20, entry 08
+[SF-RU-0630] MISSION_TEXT — mission 20, entry 08
 EN: No Power
 RU: НЕТ ПИТАНИЯ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0629] MISSION_TEXT — mission 20, entry 09
+[SF-RU-0631] MISSION_TEXT — mission 20, entry 09
 EN: Power Relay
 RU: СИЛОВОЕ РЕЛЕ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0630] MISSION_TEXT — mission 20, entry 10
+[SF-RU-0632] MISSION_TEXT — mission 20, entry 10
 EN: Elevator Control Panel
 RU: ПУЛЬТ УПРАВЛЕНИЯ ЛИФТОМ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0631] MISSION_TEXT — mission 20, entry 11
+[SF-RU-0633] MISSION_TEXT — mission 20, entry 11
 EN: Elevator activated
 RU: ЛИФТ ВКЛЮЧЁН
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0632] MISSION_TEXT — mission 20, entry 12
+[SF-RU-0634] MISSION_TEXT — mission 20, entry 12
 EN: Control Panel
 RU: ПУЛЬТ УПРАВЛЕНИЯ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0633] MISSION_TEXT — mission 20, entry 13
+[SF-RU-0635] MISSION_TEXT — mission 20, entry 13
 EN: Safety Released
 RU: БЛОКИРОВКА СНЯТА
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0634] MISSION_TEXT — mission 20, entry 14
+[SF-RU-0636] MISSION_TEXT — mission 20, entry 14
 EN: Need missile codes
 RU: НУЖНЫ КОДЫ САМОУНИЧТОЖЕНИЯ РАКЕТЫ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0635] MISSION_TEXT — mission 20, entry 15
+[SF-RU-0637] MISSION_TEXT — mission 20, entry 15
 EN: R-9 Devyatka Missile
 RU: РАКЕТА R-9 ДЕВЯТКА
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0636] MISSION_TEXT — mission 20, entry 16
+[SF-RU-0638] MISSION_TEXT — mission 20, entry 16
 EN: Command Computer
 RU: КОМПЬЮТЕР УПРАВЛЕНИЯ
 SOURCE: proofread native override (replaces mission_menu.dat)
 COMMENT:
 
-[SF-RU-0637] BRIEFING — mission 01, location
+[SF-RU-0639] BRIEFING — mission 01, location
 RU: ВАШИНГТОН, ОКРУГ КОЛУМБИЯ
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0638] BRIEFING — mission 01, mission title
+[SF-RU-0640] BRIEFING — mission 01, mission title
 RU: ДЖОРДЖИЯ-СТРИТ
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0639] BRIEFING — mission 01, date/time
+[SF-RU-0641] BRIEFING — mission 01, date/time
 RU: 08/23 22:45
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0640] BRIEFING — mission 01, directive
+[SF-RU-0642] BRIEFING — mission 01, directive
 RU: ДИРЕКТИВА АГЕНТСТВА:\n\nНАШ ИНФОРМАТОР В ФБР УСТАНОВИЛ МЕСТО ПЛАНИРУЕМОЙ ТЕРРОРИСТИЧЕСКОЙ АТАКИ С ПРИМЕНЕНИЕМ ВИРУСА - МЕТРО ВАШИНГТОНА. ИСТОЧНИКИ В МИНИСТЕРСТВЕ ОБОРОНЫ США И ИНТЕРПОЛЕ ПОДТВЕРДИЛИ ЛИЧНОСТИ ТЕРРОРИСТОВ. ВЫ БУДЕТЕ ВЫСАЖЕНЫ ПОСЛЕ НАЧАЛА ОПЕРАЦИИ КОМАНДОВАНИЯ ХИМИЧЕСКОЙ И БИОЛОГИЧЕСКОЙ ЗАЩИТЫ АРМИИ США (CBDC).
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0641] BRIEFING — mission 01, additional directive
+[SF-RU-0643] BRIEFING — mission 01, additional directive
 RU: ВАШИ ЦЕЛИ - ЭРИХ РОМЕР, ПАВЕЛ КРАВИЧ, МАРА АРАМОВА И АНТОН ГИРДО. СПУТНИКОВАЯ СЛУЖБА ПЕРЕХВАТИЛА КОДИРОВАННЫЙ РАДИООБМЕН. В ЭТОМ РАЙОНЕ ДОЛЖНА НАХОДИТЬСЯ СТАНЦИЯ СВЯЗИ РОМЕРА. ПРИ НЕОБХОДИМОСТИ ПОМОГИТЕ СЛУЖБЕ CBDC. ПО ВОЗМОЖНОСТИ ИЗБЕГАЙТЕ ЖЕРТВ СРЕДИ МИРНЫХ ЖИТЕЛЕЙ. ДОПОЛНИТЕЛЬНЫЕ СВЕДЕНИЯ СМОТРИТЕ В СПИСКЕ ЦЕЛЕЙ.
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0642] BRIEFING — mission 02, location
+[SF-RU-0644] BRIEFING — mission 02, location
 RU: ВАШИНГТОН, ОКРУГ КОЛУМБИЯ
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0643] BRIEFING — mission 02, mission title
+[SF-RU-0645] BRIEFING — mission 02, mission title
 RU: РАЗРУШЕННОЕ МЕТРО
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0644] BRIEFING — mission 02, date/time
+[SF-RU-0646] BRIEFING — mission 02, date/time
 RU: 08/23 23:45
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0645] BRIEFING — mission 02, directive
+[SF-RU-0647] BRIEFING — mission 02, directive
 RU: СООБЩЕНИЕ ОТ ЭДВАРДА БЕНТОНА:\n\nТЕБЕ ПОВЕЗЛО ОСТАТЬСЯ В ЖИВЫХ. ДЕСЯТЬ КВАРТАЛОВ В ЦЕНТРЕ ВАШИНГТОНА ТОЛЬКО ЧТО ПРОВАЛИЛИСЬ НА ДВАДЦАТЬ ФУТОВ. ПОХОЖЕ, ЭРИХ РОМЕР ЗАМИНИРОВАЛ ВСЮ ПОДЗЕМКУ КАК ЧАСТЬ ПЛАНА ОТСТУПЛЕНИЯ.
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0646] BRIEFING — mission 02, additional directive
+[SF-RU-0648] BRIEFING — mission 02, additional directive
 RU: СКОРЕЕ ВСЕГО, ТЫ СОРВАЛ ЕГО ГРАФИК, И ОН ВСЁ ЕЩЁ НАХОДИТСЯ РЯДОМ. МАРА АРАМОВА И АНТОН ГИРДО ТАКЖЕ НЕ НАЙДЕНЫ. НЕ ДАЙ ЭРИХУ РОМЕРУ ПОКИНУТЬ ТЕРМИНАЛ. УЧТИ: ТЫ ПОЛНОСТЬЮ ОТРЕЗАН ОТ ПОДКРЕПЛЕНИЙ.
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0647] BRIEFING — mission 03, location
+[SF-RU-0649] BRIEFING — mission 03, location
 RU: ВАШИНГТОН, ОКРУГ КОЛУМБИЯ
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0648] BRIEFING — mission 03, mission title
+[SF-RU-0650] BRIEFING — mission 03, mission title
 RU: ГЛАВНАЯ ЛИНИЯ МЕТРО
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0649] BRIEFING — mission 03, date/time
+[SF-RU-0651] BRIEFING — mission 03, date/time
 RU: 08/24 00:30
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0650] BRIEFING — mission 03, directive
+[SF-RU-0652] BRIEFING — mission 03, directive
 RU: СООБЩЕНИЕ ОТ ЭДВАРДА БЕНТОНА:\n\nЛОГАН, ПО ДАННЫМ РАЗВЕДКИ, РОМЕР ПОКИНУЛ МЕСТО ОПЕРАЦИИ. ГРУППА ДЖЕНКИНСА СТОЛКНУЛАСЬ С СЕРЬЁЗНЫМ СОПРОТИВЛЕНИЕМ В РАЙОНЕ ВАШИНГТОН-ПАРКА, А ПОЛИЦИЯ ОКРУГА КОЛУМБИЯ СООБЩАЕТ О ПЯТНАДЦАТИ ПОГИБШИХ СОТРУДНИКАХ. МЫ ОПАСАЕМСЯ, ЧТО УТЕЧКА В АГЕНТСТВЕ ВЫДАЛА ЕГО ПОЗИЦИЮ.
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0651] BRIEFING — mission 03, additional directive
+[SF-RU-0653] BRIEFING — mission 03, additional directive
 RU: ИНТЕРПОЛ ПОДТВЕРДИЛ ЛИЧНОСТЬ МАРЫ АРАМОВОЙ. НЕ ДАЙ ЕЙ СКРЫТЬСЯ. ВНИМАНИЕ: ФЕДЕРАЛЬНОЕ АГЕНТСТВО ПО ЧРЕЗВЫЧАЙНЫМ СИТУАЦИЯМ ИСПОЛЬЗУЕТ ПУТИ ВОСТОЧНОГО НАПРАВЛЕНИЯ ДЛЯ ПЕРЕВОЗКИ СПАСАТЕЛЕЙ. НЕ ПРИМЕНЯЙ В ТОННЕЛЕ ВЗРЫВЧАТКУ, ИНАЧЕ ПОЕЗД СОЙДЁТ С РЕЛЬСОВ.
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0652] BRIEFING — mission 04, location
+[SF-RU-0654] BRIEFING — mission 04, location
 RU: ВАШИНГТОН, ОКРУГ КОЛУМБИЯ
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0653] BRIEFING — mission 04, mission title
+[SF-RU-0655] BRIEFING — mission 04, mission title
 RU: ВАШИНГТОН-ПАРК
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0654] BRIEFING — mission 04, date/time
+[SF-RU-0656] BRIEFING — mission 04, date/time
 RU: 08/24 00:45
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0655] BRIEFING — mission 04, directive
+[SF-RU-0657] BRIEFING — mission 04, directive
 RU: СООБЩЕНИЕ ОТ ЭДВАРДА БЕНТОНА:\n\nИЗМЕНЕНИЕ ЗАДАНИЯ: КОМАНДОВАНИЕ ХИМИЧЕСКОЙ И БИОЛОГИЧЕСКОЙ ЗАЩИТЫ ЗАПРОСИЛО ПРЯМОЕ ВМЕШАТЕЛЬСТВО И ПОМОЩЬ. НОВЫЕ ПРИКАЗЫ: НАЙТИ ВИРУСНЫЕ БОМБЫ, УСТАНОВИТЬ МАЯКИ, ДОЖДАТЬСЯ ПРИБЫТИЯ СЛУЖБЫ CBDC И ОБЕСПЕЧИТЬ ОГНЕВОЕ ПРИКРЫТИЕ. БОМБЫ ВЗОРВУТСЯ В ТЕЧЕНИЕ ЧАСА.
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0656] BRIEFING — mission 04, additional directive
+[SF-RU-0658] BRIEFING — mission 04, additional directive
 RU: СОПРОТИВЛЕНИЕ ТЕРРОРИСТОВ ОЧЕНЬ СИЛЬНОЕ. ПО ДАННЫМ АГЕНТСТВА, ОПЕРАЦИЕЙ В ПАРКЕ РУКОВОДИТ АНТОН ГИРДО. БУДЬ ОСТОРОЖЕН. СВЯЗЬ С ГРУППОЙ ДЖЕНКИНСА ПОТЕРЯНА.
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0657] BRIEFING — mission 05, location
+[SF-RU-0659] BRIEFING — mission 05, location
 RU: ВАШИНГТОН, ОКРУГ КОЛУМБИЯ
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0658] BRIEFING — mission 05, mission title
+[SF-RU-0660] BRIEFING — mission 05, mission title
 RU: МЕМОРИАЛ СВОБОДЫ
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0659] BRIEFING — mission 05, date/time
+[SF-RU-0661] BRIEFING — mission 05, date/time
 RU: 08/24 01:15
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0660] BRIEFING — mission 05, directive
+[SF-RU-0662] BRIEFING — mission 05, directive
 RU: ПЕРЕДАНО РАЗВЕДКОЙ АГЕНТСТВА:\n\nСПУТНИК-ШПИОН ЗАВЕРШИЛ ПОДРОБНЫЙ АНАЛИЗ БРОНИ АНТОНА ГИРДО: ОНА НЕУЯЗВИМА ДЛЯ ОБЫЧНОГО ОРУЖИЯ. НАШИ СПЕЦИАЛИСТЫ ИЩУТ РЕШЕНИЕ, НО ВАШЕМУ АГЕНТУ, ВОЗМОЖНО, ПРИДЁТСЯ ИМПРОВИЗИРОВАТЬ И ИСКАТЬ СЛАБОЕ МЕСТО.
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0661] BRIEFING — mission 05, additional directive
+[SF-RU-0663] BRIEFING — mission 05, additional directive
 RU: НАШ ДЕМИНЕР УСТАНОВИЛ: ЛЮБОЙ ВЗРЫВ ПРИВЕДЁТ В ДЕЙСТВИЕ ВИРУСНУЮ БОМБУ.
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0662] BRIEFING — mission 06, location
+[SF-RU-0664] BRIEFING — mission 06, location
 RU: НЬЮ-ЙОРК
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0663] BRIEFING — mission 06, mission title
+[SF-RU-0665] BRIEFING — mission 06, mission title
 RU: ПРИЁМНАЯ ЭКСПОЦЕНТРА
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0664] BRIEFING — mission 06, date/time
+[SF-RU-0666] BRIEFING — mission 06, date/time
 RU: 08/25 19:00
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0665] BRIEFING — mission 06, directive
+[SF-RU-0667] BRIEFING — mission 06, directive
 RU: СООБЩЕНИЕ ОТ ТОМАСА МАРКИНСОНА:\n\nЯ ОДОБРИЛ ТВОЙ ЗАПРОС НА ДОСТУП К ДОСЬЕ ФБР НА ДЖОНАТАНА ФЭЙГАНА. ВОЗМОЖНО, ТВОИ ПОДОЗРЕНИЯ ВЕРНЫ. ВЕЧЕРНИЙ ПРИЕМ ФАРКОМ МОЖЕТ БЫТЬ ПРИКРЫТИЕМ ДЛЯ ВСТРЕЧИ ФЭЙГАНА С РОМЕРОМ. НЕ ВЫПУСКАЙ ФЭЙГАНА ИЗ ВИДУ.
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0666] BRIEFING — mission 06, additional directive
+[SF-RU-0668] BRIEFING — mission 06, additional directive
 RU: ТЕБЯ НЕ ДОЛЖНЫ ЗАМЕТИТЬ ИЛИ ЗАХВАТИТЬ. ОХРАНУ ФЭЙГАНА РАЗРЕШЕНО УСТРАНЯТЬ, НО ТОЛЬКО ИЗ ОРУЖИЯ С ГЛУШИТЕЛЕМ. ПОСЛЕ НАБЛЮДЕНИЯ ЗА ВСТРЕЧЕЙ ЗАХВАТИ ФЭЙГАНА ЖИВЫМ ЛЮБОЙ ЦЕНОЙ. ОФИЦИАЛЬНО АГЕНТСТВО НИЧЕГО ОБ ЭТОМ НЕ ЗНАЕТ.
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0667] BRIEFING — mission 07, location
+[SF-RU-0669] BRIEFING — mission 07, location
 RU: НЬЮ-ЙОРК
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0668] BRIEFING — mission 07, mission title
+[SF-RU-0670] BRIEFING — mission 07, mission title
 RU: ДИНОРАМА ЭКСПОЦЕНТРА
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0669] BRIEFING — mission 07, date/time
+[SF-RU-0671] BRIEFING — mission 07, date/time
 RU: 08/25 19:15
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0670] BRIEFING — mission 07, directive
+[SF-RU-0672] BRIEFING — mission 07, directive
 RU: СООБЩЕНИЕ ОТ ЛИАН СИН:\n\nАРАМОВА ДОПРАШИВАЕТ ФЭЙГАНА У ЭКСПОЗИЦИИ ДИНОЗАВРОВ. АУДИОКАНАЛЫ ПРОПАДАЮТ, НО ОНА ПОСТОЯННО УПОМИНАЕТ СИФОН ФИЛЬТР.
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0671] BRIEFING — mission 07, additional directive
+[SF-RU-0673] BRIEFING — mission 07, additional directive
 RU: У МАРЫ АРАМОВОЙ И ДЖОНАТАНА ФЭЙГАНА ЕСТЬ НУЖНЫЕ НАМ СВЕДЕНИЯ. ТЫ ДОЛЖЕН ПОМЕШАТЬ АРАМОВОЙ УБИТЬ ФЭЙГАНА, НО АРАМОВА ТАКЖЕ ДОЛЖНА УЦЕЛЕТЬ.
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0672] BRIEFING — mission 08, location
+[SF-RU-0674] BRIEFING — mission 08, location
 RU: РОЗОВКА, КАЗАХСТАН
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0673] BRIEFING — mission 08, mission title
+[SF-RU-0675] BRIEFING — mission 08, mission title
 RU: БАЗА РОМЕРА
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0674] BRIEFING — mission 08, date/time
+[SF-RU-0676] BRIEFING — mission 08, date/time
 RU: 09/01 21:00
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0675] BRIEFING — mission 08, directive
+[SF-RU-0677] BRIEFING — mission 08, directive
 RU: СООБЩЕНИЕ ОТ ТОМАСА МАРКИНСОНА:\n\nЯ ЗНАЮ, ЧТО ПОДОБНЫЕ ВОЕННЫЕ ОПЕРАЦИИ ОБЫЧНО ПРОВОДЯТ НАШИ АГЕНТЫ ИЗ АРМЕЙСКИХ РЕЙНДЖЕРОВ, НО ПО ОЧЕВИДНЫМ ПРИЧИНАМ Я ПОРУЧАЮ ЭТО ТЕБЕ: НАЙДИ И СОСТАВЬ ОПИСЬ РАКЕТНОГО АРСЕНАЛА БАЗЫ, УСТАНОВИ ЗАРЯДЫ C4 В КЛЮЧЕВЫХ ТОЧКАХ И УСТРАНИ ГАБРЕКА, КОМАНДИРА БАЗЫ.
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0676] BRIEFING — mission 08, additional directive
+[SF-RU-0678] BRIEFING — mission 08, additional directive
 RU: ОТКЛЮЧИ РАДАР ПРОТИВОВОЗДУШНОЙ ОБОРОНЫ БАЗЫ, ЧТОБЫ ЛИАН МОГЛА НАЧАТЬ ЭВАКУАЦИЮ. ПОСЛЕ УСТАНОВКИ ВЗРЫВЧАТКИ У ТЕБЯ ОСТАНЕТСЯ МАЛО ВРЕМЕНИ, ЧТОБЫ ДОБРАТЬСЯ ДО ТОЧКИ ЭВАКУАЦИИ.
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0677] BRIEFING — mission 09, location
+[SF-RU-0679] BRIEFING — mission 09, location
 RU: РОЗОВКА, КАЗАХСТАН
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0678] BRIEFING — mission 09, mission title
+[SF-RU-0680] BRIEFING — mission 09, mission title
 RU: БУНКЕР БАЗЫ
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0679] BRIEFING — mission 09, date/time
+[SF-RU-0681] BRIEFING — mission 09, date/time
 RU: 09/01 21:30
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0680] BRIEFING — mission 09, directive
+[SF-RU-0682] BRIEFING — mission 09, directive
 RU: СООБЩЕНИЕ ОТ ЛИАН СИН:\n\nГЕЙБ, ВСЕ УСТАНОВЛЕННЫЕ ТОБОЙ ЗАРЯДЫ ВЗВЕДЕНЫ И ГОТОВЫ К ПОДРЫВУ. ТЕПЕРЬ НУЖНО ТОЛЬКО ЗАРЕГИСТРИРОВАТЬ РАКЕТЫ SS-23 И ДОБРАТЬСЯ ДО КРЫШИ. ПО МЕРЕ ПРОВЕРКИ КАЖДОЙ РАКЕТЫ Я БУДУ ПЕРЕДАВАТЬ КОДЫ ЗАПУСКА В ШТАБ. НЕ ЗАКРЫВАЙ КАНАЛ СВЯЗИ.
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0681] BRIEFING — mission 09, additional directive
+[SF-RU-0683] BRIEFING — mission 09, additional directive
 RU: ПРИ ВХОДЕ В БУНКЕР СРАБОТАЛ ДАТЧИК ДВИЖЕНИЯ. БАЗА ПОДНЯТА ПО ТРЕВОГЕ, ПОЭТОМУ ВЕРНУТЬСЯ НА ПОВЕРХНОСТЬ ПРЕЖНИМ ПУТЁМ НЕ УДАСТСЯ. НА СПУТНИКОВЫХ СНИМКАХ ВИДЕН ГРУЗОВОЙ ЛИФТ НА КРЫШЕ. ВЕРОЯТНО, ОН СВЯЗАН С БУНКЕРОМ. ЭТО ТВОЙ ПУТЬ НАРУЖУ.
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0682] BRIEFING — mission 10, location
+[SF-RU-0684] BRIEFING — mission 10, location
 RU: РОЗОВКА, КАЗАХСТАН
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0683] BRIEFING — mission 10, mission title
+[SF-RU-0685] BRIEFING — mission 10, mission title
 RU: БАШНЯ БАЗЫ
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0684] BRIEFING — mission 10, date/time
+[SF-RU-0686] BRIEFING — mission 10, date/time
 RU: 09/01 21:40
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0685] BRIEFING — mission 10, directive
+[SF-RU-0687] BRIEFING — mission 10, directive
 RU: СООБЩЕНИЕ ОТ ЛИАН СИН:\n\nПАТРУЛИ РОМЕРА ОБНАРУЖИЛИ МЕНЯ И ОТКРЫЛИ ПЛОТНЫЙ ОГОНЬ. ТЕБЕ ЛУЧШЕ СКОРЕЕ ОТКЛЮЧИТЬ РАДАР, ИНАЧЕ Я НЕ СМОГУ ВЗЛЕТЕТЬ. ПАНЕЛЬ УПРАВЛЕНИЯ ДОЛЖНА НАХОДИТЬСЯ У ЕГО ОСНОВАНИЯ.
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0686] BRIEFING — mission 10, additional directive
+[SF-RU-0688] BRIEFING — mission 10, additional directive
 RU: ГРУППА ТОМАСА МАРКИНСОНА БУДЕТ НАГОТОВЕ НА СЛУЧАЙ НЕПРЕДВИДЕННОГО. ПОТОРОПИСЬ, ГЕЙБ.
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0687] BRIEFING — mission 11, location
+[SF-RU-0689] BRIEFING — mission 11, location
 RU: РОЗОВКА, КАЗАХСТАН
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0688] BRIEFING — mission 11, mission title
+[SF-RU-0690] BRIEFING — mission 11, mission title
 RU: ПОБЕГ С БАЗЫ
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0689] BRIEFING — mission 11, date/time
+[SF-RU-0691] BRIEFING — mission 11, date/time
 RU: 09/01 21:45
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0690] BRIEFING — mission 11, directive
+[SF-RU-0692] BRIEFING — mission 11, directive
 RU: СООБЩЕНИЕ ОТ ТОМАСА МАРКИНСОНА:\n\nТАЙМЕРЫ НА УСТАНОВЛЕННОЙ ТОБОЙ ВЗРЫВЧАТКЕ ЗАПУЩЕНЫ. КОГДА ЗАРЯДЫ СРАБОТАЮТ, ОСТАНЕТСЯ ВОРОНКА ШИРИНОЙ В МИЛЮ. НАШ ВЕРТОЛЁТ ЗАБЕРЁТ ТЕБЯ У ГЛАВНЫХ ВОРОТ, КАК ТОЛЬКО ТЫ ДОБЕРЕШСЯ ДО НИХ. ПОТОРОПИСЬ, У НАС МАЛО ВРЕМЕНИ!
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0691] BRIEFING — mission 11, additional directive
+[SF-RU-0693] BRIEFING — mission 11, additional directive
 RU: Я ОТПРАВИЛ ГРУППУ К ТОЧКЕ ВСТРЕЧИ С ЛИАН СИН. ОНИ НАШЛИ ТОЛЬКО ГОРЯЩИЕ ОБЛОМКИ. ЭРИХ РОМЕР ДОРОГО ЗА ЭТО ЗАПЛАТИТ И ОЧЕНЬ СКОРО.
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0692] BRIEFING — mission 12, location
+[SF-RU-0694] BRIEFING — mission 12, location
 RU: УЖГОРОД, УКРАИНА
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0693] BRIEFING — mission 12, mission title
+[SF-RU-0695] BRIEFING — mission 12, mission title
 RU: КРЕПОСТЬ РОМЕРА
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0694] BRIEFING — mission 12, date/time
+[SF-RU-0696] BRIEFING — mission 12, date/time
 RU: 09/07 06:30
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0695] BRIEFING — mission 12, directive
+[SF-RU-0697] BRIEFING — mission 12, directive
 RU: СООБЩЕНИЕ ОТ ТОМАСА МАРКИНСОНА:\n\nТЕБЕ НУЖНО СПУСТИТЬСЯ В КАТАКОМБЫ, ГДЕ ДЕРЖАТ ФЭЙГАНА. ПО ПУТИ УСТРАНИ ВСЕХ УЧЁНЫХ ФАРКОМ: Я ХОЧУ ПОЛНОСТЬЮ ПРЕКРАТИТЬ ИХ ДЕЯТЕЛЬНОСТЬ ЗДЕСЬ.
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0696] BRIEFING — mission 12, additional directive
+[SF-RU-0698] BRIEFING — mission 12, additional directive
 RU: НАШИ ЛАБОРАТОРИИ ПОДГОТОВИЛИ АНТИГЕН, КОТОРЫЙ СДЕРЖИВАЕТ ДЕЙСТВИЕ ВИРУСА. ВВЕДИ ЕГО КАЖДОМУ НАЙДЕННОМУ ПОДОПЫТНОМУ. АГЕНТСТВУ НУЖНЫ ЭТИ ЛЮДИ ЖИВЫМИ, ПОЭТОМУ СДЕЛАЙ ВСЁ ВОЗМОЖНОЕ ДЛЯ ИХ СПАСЕНИЯ.
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0697] BRIEFING — mission 13, location
+[SF-RU-0699] BRIEFING — mission 13, location
 RU: УЖГОРОД, УКРАИНА
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0698] BRIEFING — mission 13, mission title
+[SF-RU-0700] BRIEFING — mission 13, mission title
 RU: НИЖНИЙ УРОВЕНЬ КРЕПОСТИ
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0699] BRIEFING — mission 13, date/time
+[SF-RU-0701] BRIEFING — mission 13, date/time
 RU: 09/07 07:15
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0700] BRIEFING — mission 13, directive
+[SF-RU-0702] BRIEFING — mission 13, directive
 RU: СООБЩЕНИЕ ОТ ТОМАСА МАРКИНСОНА:\n\nИНЦИДЕНТ В КАЗАХСТАНЕ ВЫЗВАЛ СКАНДАЛ В ГОСДЕПАРТАМЕНТЕ, А СОВЕТ ООН В ЯРОСТИ. АГЕНТСТВО, РАЗУМЕЕТСЯ, ПЕРЕКЛАДЫВАЕТ ВИНУ НА КОМАНДОВАНИЕ НАТО. СЕЙЧАС ТЫ НА ПОЛПУТИ ЧЕРЕЗ КРЕПОСТЬ РОМЕРА. ПО СХЕМАМ ИНТЕРПОЛА ВХОД В КАТАКОМБЫ, ВЕРОЯТНО, НАХОДИТСЯ В ЧАСОВНЕ РОЗ. НАЙДИ ЭТУ ЧАСОВНЮ.
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0701] BRIEFING — mission 13, additional directive
+[SF-RU-0703] BRIEFING — mission 13, additional directive
 RU: ВСЕ ЦЕЛИ МИССИИ ОСТАЮТСЯ В СИЛЕ: ЛИКВИДИРУЙ УЧЁНЫХ ФАРКОМ, ВВЕДИ АНТИГЕН ПОДОПЫТНЫМ И НАЙДИ ДЖОНАТАНА ФЭЙГАНА.
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0702] BRIEFING — mission 14, location
+[SF-RU-0704] BRIEFING — mission 14, location
 RU: УЖГОРОД, УКРАИНА
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0703] BRIEFING — mission 14, mission title
+[SF-RU-0705] BRIEFING — mission 14, mission title
 RU: КАТАКОМБЫ КРЕПОСТИ
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0704] BRIEFING — mission 14, date/time
+[SF-RU-0706] BRIEFING — mission 14, date/time
 RU: 09/07 08:00
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0705] BRIEFING — mission 14, directive
+[SF-RU-0707] BRIEFING — mission 14, directive
 RU: СООБЩЕНИЕ ОТ ТОМАСА МАРКИНСОНА:\n\nЕСЛИ ЭТИ КАТАКОМБЫ ПОХОЖИ НА ТЕ, ЧТО МЫ ЗАКРЫЛИ ПОД ПАРИЖЕМ, ТО ДЛЯ ОХРАНЫ РОМЕР ИСПОЛЬЗУЕТ СИСТЕМУ РАСПОЗНАВАНИЯ ЛАДОНИ. ТЕБЕ ПРИДЁТСЯ ПРОСЛЕДОВАТЬ ЗА ОХРАННИКОМ ИЛИ СОТРУДНИКОМ ЛАБОРАТОРИИ РОМЕРА ДО КАМЕРЫ ФЭЙГАНА И ДОЖДАТЬСЯ, ПОКА ОН ОТКРОЕТ ДВЕРЬ. ПОМНИ: ФЭЙГАН НУЖЕН МНЕ ЖИВЫМ.
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0706] BRIEFING — mission 14, additional directive
+[SF-RU-0708] BRIEFING — mission 14, additional directive
 RU: АГЕНТСТВО ПРЕКРАТИЛО КОНТАКТЫ С ГОСДЕПАРТАМЕНТОМ. НЕ ОТВЕЧАЙ НА СООБЩЕНИЯ ОТ ДРУГИХ СОТРУДНИКОВ АГЕНТСТВА. У НАС КОНЧАЕТСЯ ВРЕМЯ.
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0707] BRIEFING — mission 15, location
+[SF-RU-0709] BRIEFING — mission 15, location
 RU: АЛМАТЫ, КАЗАХСТАН
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0708] BRIEFING — mission 15, mission title
+[SF-RU-0710] BRIEFING — mission 15, mission title
 RU: СКЛАДЫ ФАРКОМ
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0709] BRIEFING — mission 15, date/time
+[SF-RU-0711] BRIEFING — mission 15, date/time
 RU: 09/08 03:00
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0710] BRIEFING — mission 15, directive
+[SF-RU-0712] BRIEFING — mission 15, directive
 RU: СООБЩЕНИЕ ОТ ЛИАН СИН:\n\nЛЮДИ РОМЕРА КРУПНЫМИ СИЛАМИ АТАКУЮТ СКЛАДСКОЙ РАЙОН ФЭЙГАНА. ТЫ ДОЛЖЕН ДОБРАТЬСЯ ДО ЦЕНТРАЛЬНЫХ КОМПЬЮТЕРОВ ШАХТЫ РАНЬШЕ НИХ. СПУТНИКИ АГЕНТСТВА НЕ РАБОТАЮТ, НО АРАМОВА УВЕРЯЕТ, ЧТО ПОПАСТЬ В ШАХТУ МОЖНО ТОЛЬКО ЧЕРЕЗ СЛУЖЕБНЫЕ ЛИФТЫ НА СКЛАДЕ 76. КОДЫ ДОСТУПА ЕСТЬ У ЭРИКСОНА - СНАЧАЛА НАЙДИ ЕГО.
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0711] BRIEFING — mission 15, additional directive
+[SF-RU-0713] BRIEFING — mission 15, additional directive
 RU: НА ЭТОМ СКЛАДЕ ФАРКОМ СОБИРАЛА ТЕЛА, КОТОРЫЕ ИСПОЛЬЗОВАЛИСЬ ДЛЯ ПЕРЕВОЗКИ ВИРУСА. УСТАНОВИ МАЯК НА КАЖДОМ НАЙДЕННОМ ТЕЛЕ, ЧТОБЫ АГЕНТСТВО ДОСТАВИЛО ИХ НА ОБЪЕКТ БИОЛОГИЧЕСКОЙ ЗАЩИТЫ ПЯТОГО УРОВНЯ ДЛЯ УНИЧТОЖЕНИЯ.
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0712] BRIEFING — mission 16, location
+[SF-RU-0714] BRIEFING — mission 16, location
 RU: АЛМАТЫ, КАЗАХСТАН
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0713] BRIEFING — mission 16, mission title
+[SF-RU-0715] BRIEFING — mission 16, mission title
 RU: ЭЛИТНАЯ ОХРАНА ФАРКОМ
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0714] BRIEFING — mission 16, date/time
+[SF-RU-0716] BRIEFING — mission 16, date/time
 RU: 09/08 03:25
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0715] BRIEFING — mission 16, directive
+[SF-RU-0717] BRIEFING — mission 16, directive
 RU: СООБЩЕНИЕ ОТ ЛИАН СИН:\n\nЯ ВСЁ ЕЩЁ НЕ МОГУ СВЯЗАТЬСЯ С МАРКИНСОНОМ, НО ВЗЛОМАЛА ЕВРОПЕЙСКУЮ КОМПЬЮТЕРНУЮ СЕТЬ АГЕНТСТВА. ПЛОХИЕ НОВОСТИ: СКОРЕЕ ВСЕГО, ТЕБЕ ПРИДЁТСЯ СТОЛКНУТЬСЯ С ЭЛИТНОЙ ОХРАНОЙ ФАРКОМ - ОТЛИЧНО ОБУЧЕННОЙ И ВООРУЖЁННОЙ. ДАЖЕ ЛЮДИ РОМЕРА ЕЩЁ НЕ ПРОРВАЛИ ИХ ПЕРИМЕТР.
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0716] BRIEFING — mission 16, additional directive
+[SF-RU-0718] BRIEFING — mission 16, additional directive
 RU: ПО ВОЗМОЖНОСТИ ИЗБЕГАЙ ОТКРЫТЫХ ПЕРЕСТРЕЛОК. СКЛАД 76 ДОЛЖЕН НАХОДИТЬСЯ К ЮГУ ОТ ТЕБЯ. ГДЕ, ЧЁРТ ВОЗЬМИ, ПОДКРЕПЛЕНИЕ АГЕНТСТВА? НАТО СЧИТАЕТ, ЧТО НАЧАЛАСЬ ГРАЖДАНСКАЯ ВОЙНА, НО НАМ НИКТО НЕ ПОМОГАЕТ.
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0717] BRIEFING — mission 17, location
+[SF-RU-0719] BRIEFING — mission 17, location
 RU: АЛМАТЫ, КАЗАХСТАН
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0718] BRIEFING — mission 17, mission title
+[SF-RU-0720] BRIEFING — mission 17, mission title
 RU: СКЛАД 76
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0719] BRIEFING — mission 17, date/time
+[SF-RU-0721] BRIEFING — mission 17, date/time
 RU: 09/08 04:00
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0720] BRIEFING — mission 17, directive
+[SF-RU-0722] BRIEFING — mission 17, directive
 RU: СООБЩЕНИЕ ОТ ЛИАН СИН:\n\nВЕСЬ СКЛАДСКОЙ РАЙОН ОХВАЧЕН ОГНЁМ. НУЖНО НАЙТИ ГРУЗОВОЙ ЛИФТ, ПРЕЖДЕ ЧЕМ СКЛАД 76 РУХНЕТ ВОКРУГ ТЕБЯ. ПО СЛОВАМ АРАМОВОЙ, ОН НАХОДИТСЯ В ЮГО-ВОСТОЧНОМ УГЛУ ЗДАНИЯ. ВРЕМЕНИ ПОЧТИ НЕТ.
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0721] BRIEFING — mission 17, additional directive
+[SF-RU-0723] BRIEFING — mission 17, additional directive
 RU: Я ПРОВЕЛА ЭКСПРЕСС-АНАЛИЗ СЫВОРОТКИ, КОТОРУЮ ТОМАС МАРКИНСОН ПРИКАЗАЛ ВВОДИТЬ ПОДОПЫТНЫМ В КРЕПОСТИ ЭРИХА РОМЕРА. ГЕЙБ, ЭТО БЫЛА НЕ ВАКЦИНА, А КОНЦЕНТРИРОВАННЫЙ ХЛОРИД КАЛИЯ, КОТОРЫЙ ИСПОЛЬЗУЮТ ДЛЯ СМЕРТЕЛЬНЫХ ИНЪЕКЦИЙ. МАРКИНСОН ЗАСТАВИЛ ТЕБЯ УБИТЬ ЭТИХ ЛЮДЕЙ.
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0722] BRIEFING — mission 18, location
+[SF-RU-0724] BRIEFING — mission 18, location
 RU: АЛМАТЫ, КАЗАХСТАН
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0723] BRIEFING — mission 18, mission title
+[SF-RU-0725] BRIEFING — mission 18, mission title
 RU: ТОННЕЛИ К РАКЕТНОЙ ШАХТЕ
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0724] BRIEFING — mission 18, date/time
+[SF-RU-0726] BRIEFING — mission 18, date/time
 RU: 09/08 04:15
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0725] BRIEFING — mission 18, directive
+[SF-RU-0727] BRIEFING — mission 18, directive
 RU: СООБЩЕНИЕ ОТ ЛИАН СИН:\n\nПО СЛОВАМ АРАМОВОЙ, ВХОД В РАКЕТНУЮ ШАХТУ НАХОДИТСЯ ГДЕ-ТО ВНИЗУ. ИДИ ПО ГЛАВНОМУ ТОННЕЛЮ: ОН ЗАКАНЧИВАЕТСЯ У ЛИФТА ШАХТЫ. ИЗ-ЗА ПОЖАРА НАВЕРХУ НЕКОТОРЫЕ ЛИФТЫ МОГУТ НЕ РАБОТАТЬ.
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0726] BRIEFING — mission 18, additional directive
+[SF-RU-0728] BRIEFING — mission 18, additional directive
 RU: Я ПЕРЕХВАТЫВАЮ ПАНИЧЕСКИЙ РАДИООБМЕН КОМАНДОВАНИЯ НАТО, НО ПО-ПРЕЖНЕМУ НЕ МОГУ СВЯЗАТЬСЯ НИ С КЕМ В АГЕНТСТВЕ.
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0727] BRIEFING — mission 19, location
+[SF-RU-0729] BRIEFING — mission 19, location
 RU: АЛМАТЫ, КАЗАХСТАН
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0728] BRIEFING — mission 19, mission title
+[SF-RU-0730] BRIEFING — mission 19, mission title
 RU: ОБЕСТОЧЕННЫЕ ТОННЕЛИ
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0729] BRIEFING — mission 19, date/time
+[SF-RU-0731] BRIEFING — mission 19, date/time
 RU: 09/08 04:45
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0730] BRIEFING — mission 19, directive
+[SF-RU-0732] BRIEFING — mission 19, directive
 RU: СООБЩЕНИЕ ОТ ЛИАН СИН:\n\nЭЛЕКТРОСЕТЬ ТОННЕЛЕЙ ПОЛНОСТЬЮ ОТКЛЮЧЕНА, ПОЭТОМУ ЛАЗЕРНЫЕ ЗАГРАЖДЕНИЯ ДОЛЖНЫ ИСЧЕЗНУТЬ. У ШАХТЫ СОБСТВЕННЫЙ ИСТОЧНИК ПИТАНИЯ, ТАК ЧТО ТЫ ВСЁ ЕЩЁ СМОЖЕШЬ ПОЛУЧИТЬ ДОСТУП К ГЛАВНЫМ КОМПЬЮТЕРАМ И СКАЧАТЬ ДАННЫЕ ФАРКОМ О СЕКВЕНИРОВАНИИ ДНК.
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0731] BRIEFING — mission 19, additional directive
+[SF-RU-0733] BRIEFING — mission 19, additional directive
 RU: ОТТУДА ДОЛЖЕН БЫТЬ ПРЯМОЙ ПУТЬ К ШАХТЕ, ЕСЛИ УДАСТСЯ ВЫБРАТЬСЯ ИЗ ЭНЕРГЕТИЧЕСКОЙ. И, ГЕЙБ, ЛЮДЕЙ РОМЕРА ВСЁ ЕЩЁ БОЛЬШЕ. ВОЗМОЖНО, ТЕБЕ СТОИТ ВОСПОЛЬЗОВАТЬСЯ ОГРАНИЧЕННОЙ ВИДИМОСТЬЮ В СВОИХ ИНТЕРЕСАХ.
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0732] BRIEFING — mission 20, location
+[SF-RU-0734] BRIEFING — mission 20, location
 RU: АЛМАТЫ, КАЗАХСТАН
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0733] BRIEFING — mission 20, mission title
+[SF-RU-0735] BRIEFING — mission 20, mission title
 RU: РАКЕТНАЯ ШАХТА
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0734] BRIEFING — mission 20, date/time
+[SF-RU-0736] BRIEFING — mission 20, date/time
 RU: 09/08 05:00
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0735] BRIEFING — mission 20, directive
+[SF-RU-0737] BRIEFING — mission 20, directive
 RU: СООБЩЕНИЕ ОТ ЛИАН СИН:\n\nТЫ БЫЛ ПРАВ. ПРОЦЕДУРА ЗАПУСКА ДЕВЯТКИ УЖЕ НАЧАЛАСЬ, И МЫ НЕ МОЖЕМ ЕЁ ОСТАНОВИТЬ. ТЕБЕ ПРИДЁТСЯ НАЙТИ КОДЫ САМОУНИЧТОЖЕНИЯ РАКЕТЫ НА ЕЁ КОРПУСЕ И ВВЕСТИ ИХ В ГЛАВНЫЙ ПУСКОВОЙ КОМПЬЮТЕР. ТОГДА МЫ СМОЖЕМ ПОДОРВАТЬ ЕЁ В ВЕРХНИХ СЛОЯХ АТМОСФЕРЫ.
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0736] BRIEFING — mission 20, additional directive
+[SF-RU-0738] BRIEFING — mission 20, additional directive
 RU: В ПОМЕЩЕНИИ С ГЛАВНЫМ КОМПЬЮТЕРОМ КОМАНДОВАНИЯ ТАКЖЕ НАХОДЯТСЯ ГЕНЕТИЧЕСКИЕ КОДЫ ВИРУСА СИФОН ФИЛЬТР.
 SOURCE: proofread built-in briefing
 COMMENT:
 
-[SF-RU-0737] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\maps\0\MAP1.TIM
+[SF-RU-0739] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\maps\0\MAP1.TIM
 RU: [текст встроен в изображение TIM; проверяется визуально]
 SOURCE: binary image asset
 COMMENT:
 
-[SF-RU-0738] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\maps\0\MAP2.TIM
+[SF-RU-0740] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\maps\0\MAP2.TIM
 RU: [текст встроен в изображение TIM; проверяется визуально]
 SOURCE: binary image asset
 COMMENT:
 
-[SF-RU-0739] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\maps\0\MAP3.TIM
+[SF-RU-0741] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\maps\0\MAP3.TIM
 RU: [текст встроен в изображение TIM; проверяется визуально]
 SOURCE: binary image asset
 COMMENT:
 
-[SF-RU-0740] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\maps\1\MAP1.TIM
+[SF-RU-0742] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\maps\1\MAP1.TIM
 RU: [текст встроен в изображение TIM; проверяется визуально]
 SOURCE: binary image asset
 COMMENT:
 
-[SF-RU-0741] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\maps\1\MAP2.TIM
+[SF-RU-0743] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\maps\1\MAP2.TIM
 RU: [текст встроен в изображение TIM; проверяется визуально]
 SOURCE: binary image asset
 COMMENT:
 
-[SF-RU-0742] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\maps\1\MAP3.TIM
+[SF-RU-0744] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\maps\1\MAP3.TIM
 RU: [текст встроен в изображение TIM; проверяется визуально]
 SOURCE: binary image asset
 COMMENT:
 
-[SF-RU-0743] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\maps\10\MAP1.TIM
+[SF-RU-0745] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\maps\10\MAP1.TIM
 RU: [текст встроен в изображение TIM; проверяется визуально]
 SOURCE: binary image asset
 COMMENT:
 
-[SF-RU-0744] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\maps\11\MAP1.TIM
+[SF-RU-0746] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\maps\11\MAP1.TIM
 RU: [текст встроен в изображение TIM; проверяется визуально]
 SOURCE: binary image asset
 COMMENT:
 
-[SF-RU-0745] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\maps\12\MAP1.TIM
+[SF-RU-0747] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\maps\12\MAP1.TIM
 RU: [текст встроен в изображение TIM; проверяется визуально]
 SOURCE: binary image asset
 COMMENT:
 
-[SF-RU-0746] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\maps\14\MAP1.TIM
+[SF-RU-0748] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\maps\14\MAP1.TIM
 RU: [текст встроен в изображение TIM; проверяется визуально]
 SOURCE: binary image asset
 COMMENT:
 
-[SF-RU-0747] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\maps\15\MAP1.TIM
+[SF-RU-0749] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\maps\15\MAP1.TIM
 RU: [текст встроен в изображение TIM; проверяется визуально]
 SOURCE: binary image asset
 COMMENT:
 
-[SF-RU-0748] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\maps\16\MAP1.TIM
+[SF-RU-0750] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\maps\16\MAP1.TIM
 RU: [текст встроен в изображение TIM; проверяется визуально]
 SOURCE: binary image asset
 COMMENT:
 
-[SF-RU-0749] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\maps\19\MAP1.TIM
+[SF-RU-0751] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\maps\19\MAP1.TIM
 RU: [текст встроен в изображение TIM; проверяется визуально]
 SOURCE: binary image asset
 COMMENT:
 
-[SF-RU-0750] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\maps\19\MAP2.TIM
+[SF-RU-0752] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\maps\19\MAP2.TIM
 RU: [текст встроен в изображение TIM; проверяется визуально]
 SOURCE: binary image asset
 COMMENT:
 
-[SF-RU-0751] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\maps\2\MAP1.TIM
+[SF-RU-0753] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\maps\2\MAP1.TIM
 RU: [текст встроен в изображение TIM; проверяется визуально]
 SOURCE: binary image asset
 COMMENT:
 
-[SF-RU-0752] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\maps\3\MAP1.TIM
+[SF-RU-0754] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\maps\3\MAP1.TIM
 RU: [текст встроен в изображение TIM; проверяется визуально]
 SOURCE: binary image asset
 COMMENT:
 
-[SF-RU-0753] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\maps\5\MAP1.TIM
+[SF-RU-0755] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\maps\5\MAP1.TIM
 RU: [текст встроен в изображение TIM; проверяется визуально]
 SOURCE: binary image asset
 COMMENT:
 
-[SF-RU-0754] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\maps\6\MAP1.TIM
+[SF-RU-0756] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\maps\6\MAP1.TIM
 RU: [текст встроен в изображение TIM; проверяется визуально]
 SOURCE: binary image asset
 COMMENT:
 
-[SF-RU-0755] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\maps\7\MAP1.TIM
+[SF-RU-0757] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\maps\7\MAP1.TIM
 RU: [текст встроен в изображение TIM; проверяется визуально]
 SOURCE: binary image asset
 COMMENT:
 
-[SF-RU-0756] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\maps\9\MAP1.TIM
+[SF-RU-0758] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\maps\9\MAP1.TIM
 RU: [текст встроен в изображение TIM; проверяется визуально]
 SOURCE: binary image asset
 COMMENT:
 
-[SF-RU-0757] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\title\LOAD.TIM
+[SF-RU-0759] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\title\LOAD.TIM
 RU: [текст встроен в изображение TIM; проверяется визуально]
 SOURCE: binary image asset
 COMMENT:
 
-[SF-RU-0758] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\title\NEW.TIM
+[SF-RU-0760] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\title\NEW.TIM
 RU: [текст встроен в изображение TIM; проверяется визуально]
 SOURCE: binary image asset
 COMMENT:
 
-[SF-RU-0759] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\title\SEARCH.TIM
+[SF-RU-0761] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\title\SEARCH.TIM
 RU: [текст встроен в изображение TIM; проверяется визуально]
 SOURCE: binary image asset
 COMMENT:
 
-[SF-RU-0760] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\title\VIDEO.TIM
+[SF-RU-0762] GRAPHIC_TEXT_ASSET — assets\locales\ru-vit\title\VIDEO.TIM
 RU: [текст встроен в изображение TIM; проверяется визуально]
 SOURCE: binary image asset
 COMMENT:

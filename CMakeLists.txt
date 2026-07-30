@@ -185,6 +185,16 @@ if(SF_ENABLE_PSYCROSS)
         src/platform/psycross_retail_briefing.cpp
         src/platform/psycross_runtime_guards.cpp
         src/platform/psycross_scene_viewer.cpp
+        src/platform/psycross_scene_effects.inc
+        src/platform/psycross_scene_hud.inc
+        src/platform/psycross_scene_models.inc
+        src/platform/psycross_scene_pause.inc
+        src/platform/psycross_scene_presentation.inc
+        src/platform/psycross_scene_render_core.inc
+        src/platform/psycross_scene_runtime.inc
+        src/platform/psycross_scene_save_renderer.inc
+        src/platform/psycross_scene_textures.inc
+        src/platform/psycross_scene_world.inc
         src/platform/psycross_vram.cpp
         src/platform/psycross_window_mode.cpp
     )

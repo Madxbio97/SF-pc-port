@@ -11,25 +11,24 @@ a native Windows host for rendering, input, menus, audio and FMV playback.
 ## Public test
 
 The current build is
-[Public Test 0.1.0-PT13](https://github.com/Madxbio97/SF-pc-port/releases/tag/v0.1.0-public-test.13).
+[Public Test 0.1.0-PT14](https://github.com/Madxbio97/SF-pc-port/releases/tag/v0.1.0-public-test.14).
 Download the Windows x64 ZIP from the release page and verify it against the
 published `.sha256` file before extracting it.
 
-PT13 restores campaign save/FMV flow, retail pause-menu weapon artwork, subway
-bomb and train textures, virus-scanner X-ray presentation, stable item drops,
-weapon-aware dynamic shadows and high-frame-rate audio timing. Letterbox is
-limited to mission introductions, and the diagnostic Surface Picker remains
-excluded from public builds.
+PT14 restores the authored mission-failure presentation, completes its Russian
+localization, smooths mission-start and world-label animation at high frame
+rates, adds an accurate presentation FPS meter and splits the PsyCross scene
+renderer into focused modules for easier maintenance and steadier performance.
 
 See [CHANGELOG.md](CHANGELOG.md) for the complete release summary.
 
 ## Quick start
 
-1. Download `SyphonFilterPC-0.1.0-public-test.13-win64.zip` from the release page.
+1. Download `SyphonFilterPC-0.1.0-public-test.14-win64.zip` from the release page.
 2. Verify its SHA-256 checksum:
 
    ```powershell
-   Get-FileHash .\SyphonFilterPC-0.1.0-public-test.13-win64.zip -Algorithm SHA256
+   Get-FileHash .\SyphonFilterPC-0.1.0-public-test.14-win64.zip -Algorithm SHA256
    ```
 
 3. Extract the ZIP into a new folder.

@@ -35,6 +35,27 @@ std::uint16_t readButtons(const PADRAW &pad) noexcept {
          (static_cast<std::uint16_t>(pad.buttons[1]) << 8U);
 }
 
+void drawMissionStartFade(std::uint8_t intensity) {
+  if (intensity == 0U) {
+    return;
+  }
+  GR_SetBlendMode(BM_SUBTRACT);
+  GR_EnableDepth(0);
+  DR_TPAGE page{};
+  SetDrawTPage(&page, 1, 0, GetTPage(0, 2, 0, 0));
+  DrawPrim(&page);
+  TILE tile{};
+  setTile(&tile);
+  setSemiTrans(&tile, 1);
+  setRGB0(&tile, intensity, intensity, intensity);
+  setXY0(&tile, 0.0F, 0.0F);
+  setWH(&tile, 384.0F, 240.0F);
+  DrawPrim(&tile);
+  DrawSync(0);
+  GR_SetBlendMode(BM_NONE);
+  GR_EnableDepth(1);
+}
+
 } // namespace
 
 PsyCrossMissionStart::PsyCrossMissionStart() = default;
@@ -80,6 +101,7 @@ PsyCrossMissionStart::run(const game::MissionPackage &mission, PADRAW &pad,
   auto animation_start = std::optional<std::uint64_t>{};
   auto audio_callback_tick = std::optional<std::uint64_t>{};
   auto audio_clock_started = false;
+  auto fade_out_start = std::optional<std::uint64_t>{};
   constexpr std::uint32_t retail_audio_callback_hz = 120U;
   constexpr std::uint64_t maximum_audio_updates_per_iteration = 30U;
   std::array<psx::SpuPcmFrame, 4096U> briefing_pcm{};
@@ -111,20 +133,19 @@ PsyCrossMissionStart::run(const game::MissionPackage &mission, PADRAW &pad,
     const auto mouse_buttons = SDL_GetMouseState(nullptr, nullptr);
     const auto keyboard_state =
         keyboard != nullptr && keyboard_count > 0
-            ? std::span<const std::uint8_t>{
-                  keyboard, static_cast<std::size_t>(keyboard_count)}
+            ? std::span<const std::uint8_t>{keyboard, static_cast<std::size_t>(
+                                                          keyboard_count)}
             : std::span<const std::uint8_t>{};
     const auto bound_actions = sampleKeyboardMouseActions(
-        bindings,
-        KeyboardMouseDeviceState{
-            .keyboard = keyboard_state,
-            .mouse_left = (mouse_buttons & SDL_BUTTON_LMASK) != 0U,
-            .mouse_right = (mouse_buttons & SDL_BUTTON_RMASK) != 0U,
-            .mouse_middle = (mouse_buttons & SDL_BUTTON_MMASK) != 0U,
-            .mouse_x1 = (mouse_buttons & SDL_BUTTON_X1MASK) != 0U,
-            .mouse_x2 = (mouse_buttons & SDL_BUTTON_X2MASK) != 0U,
-            .mouse_wheel_delta = consumePsyCrossMouseWheel(),
-        });
+        bindings, KeyboardMouseDeviceState{
+                      .keyboard = keyboard_state,
+                      .mouse_left = (mouse_buttons & SDL_BUTTON_LMASK) != 0U,
+                      .mouse_right = (mouse_buttons & SDL_BUTTON_RMASK) != 0U,
+                      .mouse_middle = (mouse_buttons & SDL_BUTTON_MMASK) != 0U,
+                      .mouse_x1 = (mouse_buttons & SDL_BUTTON_X1MASK) != 0U,
+                      .mouse_x2 = (mouse_buttons & SDL_BUTTON_X2MASK) != 0U,
+                      .mouse_wheel_delta = consumePsyCrossMouseWheel(),
+                  });
 
     if (!preloaded_gameplay_ && preload.wait_for(std::chrono::seconds{0}) ==
                                     std::future_status::ready) {
@@ -205,16 +226,28 @@ PsyCrossMissionStart::run(const game::MissionPackage &mission, PADRAW &pad,
         next_audio_diagnostic_counter = current_counter + performance_frequency;
       }
     }
+    const auto fade_out_elapsed =
+        !fade_out_start ? 0.0
+        : performance_frequency == 0U
+            ? game::MissionStartGate::fade_out_seconds
+            : static_cast<double>(current_counter - *fade_out_start) /
+                  static_cast<double>(performance_frequency);
+    const auto fade_out_intensity =
+        game::MissionStartGate::fadeOutIntensity(fade_out_elapsed);
     auto text_animation_complete = false;
     if (PsyX_BeginScene() != 0) {
       text_animation_complete =
           retail_briefing.draw(mission.briefing(), retail_time);
+      drawMissionStartFade(fade_out_intensity);
       PsyX_EndScene();
     }
-    if (gate.update((held & confirm_buttons) != 0U ||
+    if (!fade_out_start &&
+        gate.update((held & confirm_buttons) != 0U ||
                         bound_actions[KeyboardMouseAction::interact],
-                    text_animation_complete) &&
-        preloaded_gameplay_) {
+                    text_animation_complete)) {
+      fade_out_start = current_counter;
+    }
+    if (fade_out_start && fade_out_intensity == 0xffU && preloaded_gameplay_) {
       PsyX_Log_Info("Mission briefing confirmed; entering gameplay\n");
       return previous_buttons;
     }

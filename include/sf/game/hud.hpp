@@ -184,6 +184,22 @@ originalRadarGeometry(std::uint8_t reveal_frame) noexcept;
 [[nodiscard]] std::span<const std::string_view>
 droppedItemIconLayers(std::uint16_t item) noexcept;
 
+// Small floor pickups use the same authored HUD art as inventory entries,
+// but retail presents them at roughly half the size of long guns. Keep that
+// category policy out of the renderer so armour and both grenade variants
+// cannot accidentally inherit the rifle scale again.
+inline constexpr double compact_dropped_item_scale = 0.48;
+[[nodiscard]] double droppedItemPresentationScale(std::uint16_t item) noexcept;
+
+// World-attached interaction labels survive briefly after their retail TEXT
+// object leaves the active list. The opacity transition is expressed in
+// seconds so it remains identical at 30, 60, or 240 presentation frames.
+inline constexpr double world_callout_fade_in_seconds = 0.12;
+inline constexpr double world_callout_fade_out_seconds = 0.30;
+[[nodiscard]] double advanceWorldCalloutOpacity(double current, bool present,
+                                                double delta_seconds) noexcept;
+[[nodiscard]] std::uint8_t worldCalloutBrightness(double opacity) noexcept;
+
 class PlayerInventory final {
 public:
   PlayerInventory();

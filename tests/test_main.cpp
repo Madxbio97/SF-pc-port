@@ -29,6 +29,7 @@
 #include "sf/platform/actor_shadow_stability.hpp"
 #include "sf/platform/gameplay_message_reveal_policy.hpp"
 #include "sf/platform/player_camera_fade.hpp"
+#include "sf/platform/presentation_frame_meter.hpp"
 #include "sf/platform/retail_scope_text_policy.hpp"
 #include "sf/psx/executable.hpp"
 #include "sf/psx/function_map.hpp"
@@ -676,21 +677,20 @@ void testLegacyDynamicPresentationPolicy() {
               !sf::game::legacyGeorgiaStreetObjectiveBomb(0U, 30U, 0x2e) &&
               !sf::game::legacyGeorgiaStreetObjectiveBomb(1U, 29U, 0x2e),
           "Georgia Street objective-bomb identity escaped its exact sources");
-  require(
-      sf::game::legacyGuestStaticPropStreamVisible(true, false, 7U, 99U,
-                                                   0x12, false) &&
-          sf::game::legacyGuestStaticPropStreamVisible(false, true, 7U, 99U,
+  require(sf::game::legacyGuestStaticPropStreamVisible(true, false, 7U, 99U,
                                                        0x12, false) &&
-          sf::game::legacyGuestStaticPropStreamVisible(false, false, 0U, 28U,
-                                                       0x2e, true) &&
-          sf::game::legacyGuestStaticPropStreamVisible(false, false, 0U, 29U,
-                                                       0x2e, true) &&
-              sf::game::legacyGuestStaticPropStreamVisible(
-                  false, false, 0U, 30U, 0x58, true) &&
-              !sf::game::legacyGuestStaticPropStreamVisible(
-                  false, false, 0U, 30U, 0x58, false) &&
-              !sf::game::legacyGuestStaticPropStreamVisible(
-                  false, false, 1U, 30U, 0x58, true),
+              sf::game::legacyGuestStaticPropStreamVisible(false, true, 7U, 99U,
+                                                           0x12, false) &&
+              sf::game::legacyGuestStaticPropStreamVisible(false, false, 0U,
+                                                           28U, 0x2e, true) &&
+              sf::game::legacyGuestStaticPropStreamVisible(false, false, 0U,
+                                                           29U, 0x2e, true) &&
+              sf::game::legacyGuestStaticPropStreamVisible(false, false, 0U,
+                                                           30U, 0x58, true) &&
+              !sf::game::legacyGuestStaticPropStreamVisible(false, false, 0U,
+                                                            30U, 0x58, false) &&
+              !sf::game::legacyGuestStaticPropStreamVisible(false, false, 1U,
+                                                            30U, 0x58, true),
           "Objective-bomb geometry did not outlive the subway DAT envelope");
   require(
       sf::game::legacyHmdFallbackUsesContactSpace(false, false, true) &&
@@ -717,19 +717,10 @@ void testLegacyDynamicPresentationPolicy() {
                                                        false, false, true),
       "Retail traversal camera mode leaked into host manual-aim visibility");
   require(
-      sf::game::legacyChaseControlLockPresentationActive(true, false, 0U) &&
-          !sf::game::legacyChaseControlLockPresentationActive(true, true, 0U) &&
-          !sf::game::legacyChaseControlLockPresentationActive(true, false,
-                                                              2U) &&
-          !sf::game::legacyChaseControlLockPresentationActive(false, false, 0U),
-      "Aim or target control lock leaked into cinematic letterbox state");
-  require(sf::game::legacyRadioConversationPresentationActive(
-              true, false) &&
-              sf::game::legacyRadioConversationPresentationActive(false,
-                                                                  true) &&
-              !sf::game::legacyRadioConversationPresentationActive(false,
-                                                                   false),
-          "Active or queued XA dialogue did not own radio letterbox state");
+      sf::game::legacyRadioConversationPresentationActive(true, false) &&
+          sf::game::legacyRadioConversationPresentationActive(false, true) &&
+          !sf::game::legacyRadioConversationPresentationActive(false, false),
+      "Active or queued XA dialogue did not own radio letterbox state");
   require(!sf::game::legacyFirstPersonAimReleaseRearmRequired(false, true,
                                                               false, false) &&
               sf::game::legacyFirstPersonAimReleaseRearmRequired(false, true,
@@ -814,15 +805,13 @@ void testLegacyDynamicPresentationPolicy() {
               !sf::game::legacyResidentSpfxObjectTexture("BOMB.HMD") &&
               !sf::game::legacyResidentSpfxObjectTexture("WEPCRATE.GMD"),
           "Resident SPFX texture provenance leaked to an unrelated model");
-  require(sf::game::resolveDisplayedObjectTextureBank(1U, true) == 0U &&
-              sf::game::resolveDisplayedObjectTextureBank(1U, false, true) ==
-                  0U &&
-              sf::game::resolveDisplayedObjectTextureBank(1U, false,
-                                                           false) == 1U &&
-              sf::game::resolveDisplayedObjectTextureBank(0U, false, true) ==
-                  0U,
-          "Resident displayed geometry inherited a streamed room texture "
-          "bank");
+  require(
+      sf::game::resolveDisplayedObjectTextureBank(1U, true) == 0U &&
+          sf::game::resolveDisplayedObjectTextureBank(1U, false, true) == 0U &&
+          sf::game::resolveDisplayedObjectTextureBank(1U, false, false) == 1U &&
+          sf::game::resolveDisplayedObjectTextureBank(0U, false, true) == 0U,
+      "Resident displayed geometry inherited a streamed room texture "
+      "bank");
   const auto object_texture_bank = sf::game::resolveAuthoredObjectTextureBank;
   require(object_texture_bank(1U, false, false, 0x00U, 0x01U) == 0U &&
               object_texture_bank(0U, false, false, 0x00U, 0x02U) == 1U &&
@@ -2694,6 +2683,24 @@ void testPlayerInventory() {
   const auto armor_pickup = sf::game::droppedItemIconLayers(0x80U);
   require(armor_pickup.size() == 1U && armor_pickup[0] == "VEST2.TIM",
           "Armour floor pickup must use the retail SPFX vest sprite");
+  require(
+      std::abs(sf::game::droppedItemPresentationScale(0x80U) -
+               sf::game::compact_dropped_item_scale) < 0.000001 &&
+          std::abs(
+              sf::game::droppedItemPresentationScale(static_cast<std::uint16_t>(
+                  sf::game::WeaponId::fragmentation_grenade)) -
+              sf::game::compact_dropped_item_scale) < 0.000001 &&
+          std::abs(
+              sf::game::droppedItemPresentationScale(
+                  static_cast<std::uint16_t>(sf::game::WeaponId::gas_grenade)) -
+              sf::game::compact_dropped_item_scale) < 0.000001 &&
+          sf::game::droppedItemPresentationScale(
+              static_cast<std::uint16_t>(sf::game::WeaponId::silenced_9mm)) ==
+              sf::game::compact_dropped_item_scale &&
+          sf::game::droppedItemPresentationScale(
+              static_cast<std::uint16_t>(sf::game::WeaponId::m_16)) == 1.0 &&
+          sf::game::droppedItemPresentationScale(0xffffU) == 1.0,
+      "Small floor pickups no longer use their compact presentation scale");
   constexpr std::array visible_floor_pickups{
       sf::game::WeaponId::silenced_9mm,
       sf::game::WeaponId::pistol_9mm,
@@ -2807,6 +2814,29 @@ void testPlayerInventory() {
 void testGameplayHud() {
   using sf::game::LegacyUiMessageChannel;
   constexpr auto epsilon = 0.0001;
+  const auto simulate_callout_fade = [](double frames_per_second) {
+    auto opacity = 1.0;
+    const auto frame_count = static_cast<int>(std::lround(
+        sf::game::world_callout_fade_out_seconds * frames_per_second));
+    for (auto frame = 0; frame < frame_count; ++frame) {
+      opacity = sf::game::advanceWorldCalloutOpacity(opacity, false,
+                                                     1.0 / frames_per_second);
+    }
+    return opacity;
+  };
+  require(simulate_callout_fade(30.0) < epsilon &&
+              simulate_callout_fade(60.0) < epsilon &&
+              simulate_callout_fade(240.0) < epsilon,
+          "World-callout fade duration changed with presentation frame rate");
+  const auto faded = sf::game::advanceWorldCalloutOpacity(1.0, false, 0.1);
+  require(faded > 0.0 && faded < 1.0 &&
+              sf::game::advanceWorldCalloutOpacity(faded, true, 0.03) > faded,
+          "World-callout fade did not survive absence or reverse on re-entry");
+  require(sf::game::advanceWorldCalloutOpacity(0.5, false, -1.0) == 0.5 &&
+              sf::game::worldCalloutBrightness(1.0) == 224U &&
+              sf::game::worldCalloutBrightness(0.5) == 112U &&
+              sf::game::worldCalloutBrightness(0.0) == 0U,
+          "World-callout opacity failed to clamp time or brightness");
   const auto interpolate_countdown = sf::game::interpolateHudCountdown;
   require(std::abs(interpolate_countdown(18U, 17U, 0.0) - 18.0) < epsilon &&
               std::abs(interpolate_countdown(18U, 17U, 0.5) - 17.5) < epsilon &&
@@ -3316,12 +3346,38 @@ void testMissionStartGate() {
   require(!gate.update(false) && gate.update(true) &&
               gate.phase() == sf::game::MissionStartPhase::accepted,
           "Fresh mission-start confirmation was not accepted");
-  require(!sf::game::MissionStartGate::brightPrompt(0U) &&
-              !sf::game::MissionStartGate::brightPrompt(31U) &&
-              sf::game::MissionStartGate::brightPrompt(32U) &&
-              sf::game::MissionStartGate::brightPrompt(63U) &&
-              !sf::game::MissionStartGate::brightPrompt(64U),
-          "Briefing prompt did not preserve its calm 1.6-second phase");
+  require(sf::game::MissionStartGate::promptBrightness(0U) == 0U &&
+              sf::game::MissionStartGate::promptBrightness(4U) == 100U &&
+              sf::game::MissionStartGate::promptBrightness(8U) == 200U &&
+              sf::game::MissionStartGate::promptBrightness(31U) == 200U &&
+              sf::game::MissionStartGate::promptBrightness(36U) == 100U &&
+              sf::game::MissionStartGate::promptBrightness(40U) == 0U &&
+              sf::game::MissionStartGate::promptBrightness(63U) == 0U &&
+              sf::game::MissionStartGate::promptBrightness(64U) == 0U,
+          "Briefing prompt did not fade through its calm 3.2-second cycle");
+  require(sf::game::MissionStartGate::fadeOutIntensity(-1.0) == 0U &&
+              sf::game::MissionStartGate::fadeOutIntensity(0.0) == 0U &&
+              sf::game::MissionStartGate::fadeOutIntensity(0.125) == 128U &&
+              sf::game::MissionStartGate::fadeOutIntensity(0.25) == 255U &&
+              sf::game::MissionStartGate::fadeOutIntensity(1.0) == 255U,
+          "Mission-start fade-out was not time based or did not clamp");
+
+  sf::game::LegacyFadeBridgeState guest_fade{};
+  require(sf::game::composeMapFadeIntensity(240U, &guest_fade) == 240U,
+          "Inactive guest fade masked the native mission-start fade");
+  guest_fade.current = 248U;
+  guest_fade.floor = 15U;
+  guest_fade.step = -7;
+  guest_fade.initialized = true;
+  require(sf::game::composeMapFadeIntensity(240U, &guest_fade) == 248U,
+          "Retail opening fade was suppressed instead of composed");
+  guest_fade.current = 135U;
+  require(sf::game::composeMapFadeIntensity(0U, &guest_fade) == 128U,
+          "Scripted guest fade was lost after the native envelope ended");
+  guest_fade.current = 15U;
+  require(sf::game::composeMapFadeIntensity(0U, &guest_fade) == 0U &&
+              sf::game::composeMapFadeIntensity(96U, nullptr) == 96U,
+          "Completed or absent guest fade changed native presentation");
 }
 
 void testTitleMenu() {
@@ -3634,6 +3690,40 @@ void testPlayerCameraFade() {
           "Unrelated scripted camera made Gabe disappear");
 }
 
+void testPresentationFrameMeter() {
+  sf::platform::PresentationFrameMeter sixty_hz;
+  for (auto frame = 0; frame < 30; ++frame) {
+    sixty_hz.advance(1.0 / 60.0);
+  }
+  require(sixty_hz.ready() &&
+              std::abs(sixty_hz.framesPerSecond() - 60.0) < 0.0001 &&
+              std::abs(sixty_hz.frameMilliseconds() - 1000.0 / 60.0) < 0.0001 &&
+              sixty_hz.text() == "FPS 60  16.7 MS",
+          "Presentation FPS meter misreported a stable 60 Hz stream");
+
+  sf::platform::PresentationFrameMeter high_refresh;
+  for (auto frame = 0; frame < 120; ++frame) {
+    high_refresh.advance(1.0 / 240.0);
+  }
+  require(high_refresh.ready() &&
+              std::abs(high_refresh.framesPerSecond() - 240.0) < 0.0001 &&
+              high_refresh.text() == "FPS 240  4.2 MS",
+          "Presentation FPS meter depends on the presentation refresh rate");
+
+  sf::platform::PresentationFrameMeter invalid;
+  invalid.advance(0.0);
+  invalid.advance(-1.0);
+  invalid.advance(std::numeric_limits<double>::infinity());
+  invalid.advance(1.0);
+  require(!invalid.ready() && invalid.text().empty(),
+          "Invalid or blocking host timing polluted the FPS meter");
+  invalid.advance(0.5);
+  require(invalid.ready(), "FPS meter did not recover after a blocked frame");
+  invalid.reset();
+  require(!invalid.ready() && invalid.text().empty(),
+          "FPS meter retained stale telemetry after reset");
+}
+
 } // namespace
 
 int main() {
@@ -3681,6 +3771,7 @@ int main() {
     testTitleMenu();
     testActorShadowReceiverStability();
     testPlayerCameraFade();
+    testPresentationFrameMeter();
     std::cout << "All tests passed\n";
     return 0;
   } catch (const std::exception &error) {
