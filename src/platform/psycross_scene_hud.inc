@@ -1716,8 +1716,23 @@ void drawGameplayHud(const HudTextureAtlas &textures,
                      bool first_person_aim, std::int32_t aim_heading,
                      double presented_weapon_switch_frames,
                      double presentation_delta_seconds, int offset_x,
-                     int offset_y, GameplayHudScratch &scratch) {
+                     int offset_y, double visibility,
+                     GameplayHudScratch &scratch) {
   const auto &hud = gameplay.hud();
+  const auto hud_visibility = std::clamp(visibility, 0.0, 1.0);
+  const auto hidden = 1.0 - hud_visibility;
+  const auto top_offset_y =
+      offset_y - static_cast<int>(std::lround(hidden * 72.0));
+  const auto radar_offset_x =
+      offset_x - static_cast<int>(std::lround(hidden * 96.0));
+  const auto radar_offset_y =
+      offset_y + static_cast<int>(std::lround(hidden * 56.0));
+  const auto weapon_offset_x =
+      offset_x + static_cast<int>(std::lround(hidden * 140.0));
+  const auto weapon_offset_y =
+      offset_y + static_cast<int>(std::lround(hidden * 56.0));
+  const auto message_offset_y =
+      offset_y + static_cast<int>(std::lround(hidden * screen_height));
   const auto target_locked = gameplay.targetLocked();
   const auto project_anchor =
       [&camera, offset_x,
@@ -1765,17 +1780,18 @@ void drawGameplayHud(const HudTextureAtlas &textures,
   const auto primary_status = game::localizeTextCopy(
       game::originalPrimaryStatusLabel(hud.primaryStatus()));
   drawOriginalHudTextSolid(textures, primary_status, 20 + offset_x,
-                           18 + offset_y);
+                           18 + top_offset_y);
   const auto health_color = hud.healthBarColor();
   drawOriginalStatusBar(26, hud.displayedPrimaryTrail(), hud.primaryReveal(),
                         health_color.red, health_color.green, health_color.blue,
-                        offset_x, offset_y);
+                        offset_x, top_offset_y);
   drawOriginalStatusBar(26, hud.displayedPrimaryBar(), hud.primaryReveal(),
-                        150U, 150U, 255U, offset_x, offset_y);
+                        150U, 150U, 255U, offset_x, top_offset_y);
 
   if (hud.dangerReveal() != 0U) {
     const auto danger = game::localizeTextCopy("DANGER");
-    drawOriginalHudTextSolid(textures, danger, 20 + offset_x, 33 + offset_y);
+    drawOriginalHudTextSolid(textures, danger, 20 + offset_x,
+                             33 + top_offset_y);
     auto red = std::uint8_t{255U};
     auto green = std::uint8_t{100U};
     auto blue = std::uint8_t{100U};
@@ -1788,24 +1804,25 @@ void drawGameplayHud(const HudTextureAtlas &textures,
       blue = 0U;
     }
     drawOriginalStatusBar(41, hud.displayedDangerBar(), hud.dangerReveal(), red,
-                          green, blue, offset_x, offset_y);
+                          green, blue, offset_x, top_offset_y);
   }
 
   if (hud.targetReveal() != 0U) {
     const auto target = game::localizeTextCopy("TARGET");
-    drawOriginalHudTextSolid(textures, target, 20 + offset_x, 48 + offset_y);
+    drawOriginalHudTextSolid(textures, target, 20 + offset_x,
+                             48 + top_offset_y);
     drawOriginalStatusBar(56, hud.displayedTargetBar(), hud.targetReveal(),
-                          100U, 255U, 100U, offset_x, offset_y);
+                          100U, 255U, 100U, offset_x, top_offset_y);
   }
 
-  drawOriginalStatusScale(offset_x, offset_y);
+  drawOriginalStatusScale(offset_x, top_offset_y);
 
   // Commit the status layer before the radar switches to average blending.
   // This also makes the ARMOR/HEALTH label independent of radar visibility.
   DrawSync(0);
   drawOriginalRadar(gameplay, game::originalRadarGeometry(hud.revealFrame()),
-                    aim_heading, offset_x, offset_y);
-  drawOriginalWeaponMenu(textures, hud, offset_x, offset_y);
+                    aim_heading, radar_offset_x, radar_offset_y);
+  drawOriginalWeaponMenu(textures, hud, weapon_offset_x, weapon_offset_y);
 
   const auto &definition = hud.inventory().currentDefinition();
   const auto reveal_remaining =
@@ -1844,10 +1861,10 @@ void drawGameplayHud(const HudTextureAtlas &textures,
     for (std::size_t index = 0; index < icon_layers.size(); ++index) {
       const auto &image = textures.image(icon_layers[index]);
       drawHudSpriteScaled(image,
-                          icon_origin_x + static_cast<float>(offset_x) +
+                          icon_origin_x + static_cast<float>(weapon_offset_x) +
                               horizontal_slide +
                               static_cast<float>(icon_offsets[index]),
-                          icon_origin_y + static_cast<float>(offset_y) -
+                          icon_origin_y + static_cast<float>(weapon_offset_y) -
                               static_cast<float>(heights[index]) * 0.5F,
                           static_cast<float>(widths[index]),
                           static_cast<float>(heights[index]), 128U, true);
@@ -1860,9 +1877,9 @@ void drawGameplayHud(const HudTextureAtlas &textures,
     constexpr float ammo_x = static_cast<float>(screen_width / 2 + 118);
     constexpr float ammo_y = static_cast<float>(screen_height / 2 + 94);
     drawOriginalHudTextSubpixel(textures, ammo,
-                                ammo_x + static_cast<float>(offset_x) +
+                                ammo_x + static_cast<float>(weapon_offset_x) +
                                     horizontal_slide,
-                                ammo_y + static_cast<float>(offset_y));
+                                ammo_y + static_cast<float>(weapon_offset_y));
   }
   const auto weapon = hud.inventory().current();
   const auto thrown = weapon == game::WeaponId::fragmentation_grenade ||
@@ -1923,7 +1940,7 @@ void drawGameplayHud(const HudTextureAtlas &textures,
       }
       if (reticle_visible) {
         drawOriginalAimReticle(center_x, center_y, gameplay.headshotTargeted(),
-                               scratch.reticle_reveal);
+                               scratch.reticle_reveal * hud_visibility);
         if (gameplay.headshotTargeted()) {
           const auto callout = std::ranges::find_if(
               world_callouts, [](const WorldCalloutAnchor &candidate) {
@@ -1996,9 +2013,9 @@ void drawGameplayHud(const HudTextureAtlas &textures,
     const auto visible_text = originalHudTextGlyphPrefix(
         state.text, static_cast<std::size_t>(state.visible_glyphs));
     if (const auto projected = project_anchor(state.point)) {
-      drawOriginalWorldCallout(textures, visible_text, projected->first,
-                               projected->second,
-                               game::worldCalloutBrightness(state.opacity));
+      drawOriginalWorldCallout(
+          textures, visible_text, projected->first, projected->second,
+          game::worldCalloutBrightness(state.opacity * hud_visibility));
     }
   }
   std::erase_if(scratch.world_callout_reveals,
@@ -2034,10 +2051,10 @@ void drawGameplayHud(const HudTextureAtlas &textures,
             retail_optic_text, game::russianLanguageActive(), message.channel,
             message.backdrop.has_value(), message.glyphs.size());
     retail_scope_messages.push_back(retail_scope_message);
-    message_layouts.push_back(scope_message
-                                  ? std::nullopt
-                                  : buildGameplayMessageLayout(
-                                        message, offset_x, offset_y, bindings));
+    message_layouts.push_back(
+        scope_message ? std::nullopt
+                      : buildGameplayMessageLayout(message, offset_x,
+                                                   message_offset_y, bindings));
   }
   const auto russian_language = game::russianLanguageActive();
   if (russian_language) {
@@ -2046,9 +2063,9 @@ void drawGameplayHud(const HudTextureAtlas &textures,
 
   auto localized_status_backdrop = false;
   if (russian_language && status_backdrop != messages.end()) {
-    localized_status_backdrop =
-        drawStatusBackdrop(messages, message_layouts,
-                           *status_backdrop->backdrop, offset_x, offset_y);
+    localized_status_backdrop = drawStatusBackdrop(messages, message_layouts,
+                                                   *status_backdrop->backdrop,
+                                                   offset_x, message_offset_y);
   }
   for (const auto &message : messages) {
     if (!message.backdrop ||
@@ -2056,10 +2073,10 @@ void drawGameplayHud(const HudTextureAtlas &textures,
          message.channel == game::LegacyUiMessageChannel::status)) {
       continue;
     }
-    drawRetailUiBackdrop(*message.backdrop, offset_x, offset_y);
+    drawRetailUiBackdrop(*message.backdrop, offset_x, message_offset_y);
   }
   if (const auto &timer = gameplay.legacyUiTimer()) {
-    drawRetailUiGlyphs(textures, timer->glyphs, offset_x, offset_y);
+    drawRetailUiGlyphs(textures, timer->glyphs, offset_x, message_offset_y);
   }
   for (auto index = std::size_t{}; index < messages.size(); ++index) {
     const auto &message = messages[index];
@@ -2067,13 +2084,13 @@ void drawGameplayHud(const HudTextureAtlas &textures,
       // Scope labels are completed retail FONT/TEXT packets. Draw their exact
       // original UVs through the untouched SCUS font atlas instead of the ViT
       // Cyrillic replacement, preserving wording, reveal animation and layout.
-      drawRetailUiGlyphs(textures, message.glyphs, offset_x, offset_y,
+      drawRetailUiGlyphs(textures, message.glyphs, offset_x, message_offset_y,
                          textures.retailEnglishFont());
     } else if (message_layouts[index]) {
       drawGameplayMessage(textures, message, *message_layouts[index]);
     } else if (!drawBoundKeyboardMousePrompt(textures, message, bindings,
-                                             offset_x, offset_y)) {
-      drawRetailUiGlyphs(textures, message.glyphs, offset_x, offset_y);
+                                             offset_x, message_offset_y)) {
+      drawRetailUiGlyphs(textures, message.glyphs, offset_x, message_offset_y);
     }
   }
 

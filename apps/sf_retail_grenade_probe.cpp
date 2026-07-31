@@ -47,19 +47,17 @@ int run(const std::filesystem::path &cue, std::uint32_t mission_index) {
     // takes ownership of first-person input.
     auto opening_radio_seen = false;
     auto quiet_updates = std::uint32_t{};
+    auto radio_active = false;
     for (std::uint32_t update = 0U; update < 2'000U && quiet_updates < 8U;
          ++update) {
       if (!step(gameplay)) {
         return 14;
       }
-      const auto diagnostics = gameplay.audioDiagnostics();
-      if (!diagnostics) {
+      const auto frame = gameplay.legacyPresentationFrame();
+      if (!frame || !frame->renderer) {
         return 14;
       }
-      const auto radio_active =
-          sf::game::legacyRadioConversationPresentationActive(
-              diagnostics->xa_stream_set != 0U,
-              diagnostics->spu_cd_frames != 0U);
+      radio_active = gameplay.letterboxActive();
       opening_radio_seen = opening_radio_seen || radio_active;
       quiet_updates =
           opening_radio_seen && !radio_active ? quiet_updates + 1U : 0U;

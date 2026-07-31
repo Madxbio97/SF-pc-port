@@ -961,11 +961,14 @@ GameplaySession::GameplaySession(const MissionPackage &mission,
       if (class_id == police_lightbar_class && stem == "LIGHT") {
         return ObjectVisualEffect::police_lightbar;
       }
-      // GLIT.GMD is the original lamp-brightness/halo sprite.  Its
-      // authored planar mesh supplies size and UVs, but gameplay turns
-      // it toward the viewer instead of leaving it in object space.
-      if (stem == "GLIT") {
+      // GLIT/YLIT are the original lamp-brightness halo sprite. Their
+      // authored planar mesh supplies size and UVs, but gameplay turns it
+      // toward the viewer and keeps it emissive.
+      if (legacyLampBillboardModel(stem)) {
         return ObjectVisualEffect::billboard_glow;
+      }
+      if (legacyLampEmitterModel(class_id, stem)) {
+        return ObjectVisualEffect::lamp_fixture;
       }
       return ObjectVisualEffect::none;
     }();
@@ -1521,13 +1524,24 @@ GameplaySession::audioVolumes() const noexcept {
 }
 
 bool GameplaySession::advanceAudioFrameClock() noexcept {
-  return legacy_first_mission_ &&
-         legacy_first_mission_->advanceAudioFrameClock();
+  if (legacy_first_mission_ == nullptr ||
+      !legacy_first_mission_->advanceAudioFrameClock()) {
+    return false;
+  }
+  refreshLegacyRadioConversationState();
+  return true;
 }
 
 bool GameplaySession::advanceAudioSliceClock() noexcept {
-  return legacy_first_mission_ &&
-         legacy_first_mission_->advanceAudioSliceClock();
+  if (legacy_first_mission_ == nullptr ||
+      !legacy_first_mission_->advanceAudioSliceClock()) {
+    return false;
+  }
+  // Audio runs at 120 Hz while gameplay remains at 20 Hz. Refresh here so the
+  // native HUD/bars follow the actual XA boundary instead of lagging by one
+  // complete guest update (up to 50 ms).
+  refreshLegacyRadioConversationState();
+  return true;
 }
 
 std::size_t
@@ -1649,6 +1663,8 @@ void GameplaySession::reset() {
   retail_host_aim_active_ = false;
   first_person_aim_roll_block_updates_ = 0U;
   first_person_aim_release_rearm_required_ = false;
+  legacy_target_follow_camera_active_ = false;
+  legacy_radio_conversation_active_ = false;
   host_manual_aim_strafe_ = 0.0;
   host_manual_aim_body_heading_.reset();
   pending_host_aim_heading_restore_.reset();
@@ -1802,13 +1818,14 @@ bool GameplaySession::restartCheckpoint() {
   // gameplay_trigger_enable is a retail scheduler latch. It can legitimately
   // be clear while a room/script transaction is in flight and is not part of
   // the immutable renderer/UI presentation contract.
-  if (!legacyActiveWorldModels(restored_bridge, models_.size())) {
+  if (!validateLegacyWorldModelSets(restored_bridge, models_.size())) {
     return false;
   }
 
   player_controller_ = checkpoint_player_controller_;
   current_room_ = checkpoint_room_;
   active_models_ = checkpoint_active_models_;
+  rebuildPresentationModels();
   legacy_world_vertex_colors_ = checkpoint_legacy_world_vertex_colors_;
   hud_ = checkpoint_hud_;
   object_health_ = checkpoint_object_health_;
@@ -1896,6 +1913,8 @@ bool GameplaySession::restartCheckpoint() {
   retail_host_aim_active_ = false;
   first_person_aim_roll_block_updates_ = 0U;
   first_person_aim_release_rearm_required_ = false;
+  legacy_target_follow_camera_active_ = false;
+  legacy_radio_conversation_active_ = false;
   host_manual_aim_strafe_ = 0.0;
   host_manual_aim_body_heading_.reset();
   pending_host_aim_heading_restore_.reset();
@@ -2011,9 +2030,10 @@ std::vector<std::uint16_t> GameplaySession::buildActiveModels(
       result.push_back(model);
     }
   };
-  // DAT +0x78 is the retail always-resident world set.  These models stay
-  // loaded across every portal/room transition; omitting them made native
-  // presentation and collision disagree with the guest after a transition.
+  // DAT +0x78 is the retail always-resident world set. These models stay
+  // active across every room transition and are part of the authoritative
+  // gameplay/resource contract even when the current retail camera does not
+  // submit all of their terrain.
   for (const auto model : mission_.layout().residentModels()) {
     add_unique(model);
   }
@@ -2023,17 +2043,38 @@ std::vector<std::uint16_t> GameplaySession::buildActiveModels(
   }
   // Values after the DAT 0xfe marker are a streaming prefetch tail, not a
   // display list. Treating them as visible made their terrain, static objects
-  // and both texture banks compete with the current portal envelope. Apart
-  // from drawing geometry retail never submitted, that could consume every
-  // native page alias before the player/actor textures were made resident.
-  // The exact guest traversal below is the runtime visibility supplement;
-  // prefetched models remain parsed by LevelLayout but never become active
-  // merely because their resources are staged for a later room.
+  // and both texture banks compete with the current portal envelope.
   // DAT_8012c7d8 contains per-frame portal traversal depths for the retail
-  // 4:3 camera, not the complete streamed terrain set. It is useful as a
-  // supplemental dynamic visibility signal, but replacing the DAT room
-  // envelope with it removes geometry visible to a native widescreen camera.
+  // 4:3 camera. It remains a supplemental dynamic visibility signal.
   for (const auto model : retail_traversal) {
+    add_unique(model);
+  }
+  return result;
+}
+
+std::vector<std::uint16_t> GameplaySession::buildPresentationModels(
+    std::uint16_t room, std::span<const std::uint16_t> active_models) const {
+  std::vector<std::uint16_t> result;
+  const auto &visibility = mission_.layout().visibility(room);
+  const auto lookahead = nativeWorldLookaheadRing(
+      room, visibility.active_models, mission_.layout());
+  result.reserve(active_models.size() + lookahead.size());
+  const auto add_unique = [this, &result](std::uint16_t model) {
+    if (model >= models_.size()) {
+      throw core::Error{core::ErrorCode::invalid_format,
+                        "Presentation world model is invalid"};
+    }
+    if (std::ranges::find(result, model) == result.end()) {
+      result.push_back(model);
+    }
+  };
+  for (const auto model : active_models) {
+    add_unique(model);
+  }
+  // The outer ring is render-only. Retail depth cue and the native appearance
+  // fade hide it until it approaches the camera; it must not activate objects,
+  // collision or guest-owned resource state.
+  for (const auto model : lookahead) {
     add_unique(model);
   }
   return result;
@@ -2041,9 +2082,13 @@ std::vector<std::uint16_t> GameplaySession::buildActiveModels(
 
 void GameplaySession::rebuildActiveModels() {
   active_models_ = buildActiveModels(current_room_);
+  rebuildPresentationModels();
   rebuildActiveObjects();
 }
 
+void GameplaySession::rebuildPresentationModels() {
+  presentation_models_ = buildPresentationModels(current_room_, active_models_);
+}
 void GameplaySession::rebuildActiveObjects() {
   active_objects_.clear();
   for (const auto room : active_models_) {
@@ -3761,10 +3806,23 @@ bool GameplaySession::legacyCinematicPresentationActive() const noexcept {
     return false;
   }
   const auto &bridge = *legacy_first_mission_->bridge();
-  // Only retail camera mode 0x0b is an in-engine cinematic. camera.locked and
-  // player.control_locked are also asserted transiently by aim/action state
-  // changes and must never create presentation letterbox bars.
-  return bridge.camera.scripted;
+  // Mode 0x0b is also published briefly by the locked-target shot follower.
+  // The ownership latch outlives the target flag until that camera ends.
+  return legacyCinematicCameraPresentationActive(
+      bridge.camera.scripted, legacy_target_follow_camera_active_);
+}
+
+void GameplaySession::refreshLegacyTargetFollowCameraState() noexcept {
+  if (legacy_first_mission_ == nullptr || !legacy_first_mission_->ready() ||
+      !legacy_first_mission_->bridge()) {
+    legacy_target_follow_camera_active_ = false;
+    return;
+  }
+  const auto &bridge = *legacy_first_mission_->bridge();
+  legacy_target_follow_camera_active_ =
+      legacyTargetFollowCameraPresentationActive(
+          legacy_target_follow_camera_active_, bridge.camera.scripted,
+          bridge.target_lock_active || locked_target_.has_value());
 }
 
 std::optional<std::int32_t>
@@ -3794,16 +3852,24 @@ bool GameplaySession::legacyWeaponMenuReady() const noexcept {
          mission->weapon_menu_input_ready;
 }
 
-bool GameplaySession::legacyRadioConversationActive() const noexcept {
+void GameplaySession::refreshLegacyRadioConversationState() noexcept {
   if (legacy_first_mission_ == nullptr || !legacy_first_mission_->ready() ||
       !legacy_first_mission_->bridge()) {
-    return false;
+    legacy_radio_conversation_active_ = false;
+    return;
   }
   const auto diagnostics = legacy_first_mission_->audioDiagnostics();
   if (!diagnostics) {
-    return false;
+    legacy_radio_conversation_active_ = false;
+    return;
   }
-  return legacyRadioConversationPresentationActive(
+
+  // The viewport identifies the authored Lian presentation; XA owns its exact
+  // audible lifetime. This prevents ordinary dialogue, targeting and room
+  // streaming from requesting bars while keeping their exit sample-accurate.
+  legacy_radio_conversation_active_ = legacyRadioAudioPresentationActive(
+      legacy_radio_conversation_active_,
+      legacy_first_mission_->bridge()->camera.retail_letterbox_active,
       diagnostics->xa_stream_set != 0U, diagnostics->spu_cd_frames != 0U);
 }
 
@@ -4923,9 +4989,7 @@ void GameplaySession::syncLegacyGameplayBridge() {
   // the trigger scheduler and briefly clears this latch during legitimate
   // script/room transactions; native presentation neither runs nor repairs
   // those triggers.
-  const auto retail_active_models =
-      legacyActiveWorldModels(bridge, models_.size());
-  if (!retail_active_models) {
+  if (!validateLegacyWorldModelSets(bridge, models_.size())) {
     fail_bridge("active-world-models");
     return;
   }
@@ -4951,6 +5015,7 @@ void GameplaySession::syncLegacyGameplayBridge() {
         particle.red,
         particle.green,
         particle.blue,
+        particle.pool_index,
     });
   }
   legacy_park2_flamethrower_ribbons_.reserve(
@@ -5001,10 +5066,16 @@ void GameplaySession::syncLegacyGameplayBridge() {
       !legacy_last_synced_guest_frame_ ||
       *legacy_last_synced_guest_frame_ != guest_frame;
   legacy_last_synced_guest_frame_ = guest_frame;
+  auto native_active_models = active_models_;
+  if (bridge.player.room >= 0) {
+    native_active_models =
+        buildActiveModels(static_cast<std::uint16_t>(bridge.player.room),
+                          bridge.active_world_models);
+  }
   if (fresh_guest_sample &&
       !mergeLegacyWorldVertexColorCache(legacy_world_vertex_colors_,
                                         bridge.world_vertex_colors,
-                                        *retail_active_models)) {
+                                        native_active_models)) {
     // Renderer descriptors can lead their native DAT counterpart for one
     // streaming edge. Vertex colors are an optional lighting projection: an
     // incompatible sample must retain the last coherent cache, never take
@@ -5054,20 +5125,20 @@ void GameplaySession::syncLegacyGameplayBridge() {
     append_projectile(bridge.enemy_thrown_projectile, false);
   }
   // Apply retail's room transaction before synchronizing object residency.
-  // The renderer byte buffer is only the original 4:3 camera traversal; the
-  // complete native terrain envelope remains the DAT room visibility list.
+  // active_world_models is the original 4:3 display traversal; resident worlds
+  // remain staged resources and must not become visible merely by being loaded.
+  // The complete native terrain envelope remains the DAT room visibility list.
   // Rebuilding active objects after resident sync would drop every newly
   // spawned/rebound object for one frame.
   if (fresh_guest_sample && bridge.player.room >= 0) {
     const auto retail_room = static_cast<std::uint16_t>(bridge.player.room);
-    const auto native_active_models =
-        buildActiveModels(retail_room, *retail_active_models);
     const auto world_set_changed = active_models_ != native_active_models;
     if (current_room_ != retail_room || world_set_changed) {
       // Commit the guest-owned room and the native-safe visibility
       // envelope as one transaction before resident-object sync.
       current_room_ = retail_room;
       active_models_ = native_active_models;
+      rebuildPresentationModels();
       rebuildActiveObjects();
     }
   }
@@ -5824,6 +5895,8 @@ bool GameplaySession::npcZoneContains(const NpcState &state, double x,
 }
 
 void GameplaySession::update(const GameplayInput &input) {
+  refreshLegacyTargetFollowCameraState();
+  refreshLegacyRadioConversationState();
   updateEffects();
   last_shot_ = {};
   if (legacy_first_mission_ == nullptr) {
@@ -5854,6 +5927,8 @@ void GameplaySession::update(const GameplayInput &input) {
   if (legacy_first_mission_->ready() && !legacy_first_mission_->finished()) {
     legacy_first_mission_->advanceHostUpdate();
     syncLegacyGameplayBridge();
+    refreshLegacyTargetFollowCameraState();
+    refreshLegacyRadioConversationState();
   }
   if (legacyMissionAuthoritative() && checkpoint_pending_ && playerAlive()) {
     captureCheckpoint();

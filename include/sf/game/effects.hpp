@@ -1,7 +1,6 @@
 #pragma once
 
 #include "sf/assets/mission_objects.hpp"
-
 #include <cstdint>
 #include <span>
 #include <string_view>

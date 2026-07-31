@@ -412,6 +412,12 @@ struct LegacyGameplayBridgeProfile {
   std::uint32_t camera_controller_pointer{0x80115d84U};
   std::uint32_t camera_mode{0x801191ecU};
   std::uint32_t camera_lock{0x801169e0U};
+  // FUN_800cd824/FUN_800cd90c animate the three retail viewport RECTs
+  // between 240-line gameplay and 160-line radio presentation. The first
+  // pointer is authoritative because retail updates all three in lockstep.
+  std::uint32_t presentation_viewport_pointer{0x8012d6a4U};
+  std::uint32_t presentation_viewport_y_offset{0x02U};
+  std::uint32_t presentation_viewport_height_offset{0x06U};
   // Offsets within the camera render context reached through
   // camera_controller_pointer -> controller -> context.
   std::uint32_t renderer_flags_offset{0x06U};
@@ -700,7 +706,12 @@ struct LegacyGameplayTextHookProfile {
        LegacyUiMessageChannel::status},
       {0x8008582cU,
        {0x27bdffc8U, 0xafb20028U, 0x00a09021U, 0xafb3002cU},
-       LegacyUiMessageChannel::centered, 1U, 2U, true, 0x80044fdcU, true},
+       LegacyUiMessageChannel::centered,
+       1U,
+       2U,
+       true,
+       0x80044fdcU,
+       true},
   }};
   std::uint32_t attached_text_entry{0x80085eb0U};
   std::array<std::uint32_t, 4U> attached_text_instructions{
@@ -1068,10 +1079,10 @@ public:
           syphonFilterUsaV11NativeMissionBridgeProfile()) noexcept;
   [[nodiscard]] bool setRetailHardMode(bool enabled) noexcept;
   [[nodiscard]] bool setRetailOneShotKills(bool enabled) noexcept;
-  [[nodiscard]] bool
-  weakenRetailEnemySlots(std::span<const std::uint32_t> slots,
-                         const LegacyGameplayBridgeProfile &profile =
-                             syphonFilterUsaV11GameplayBridgeProfile()) noexcept;
+  [[nodiscard]] bool weakenRetailEnemySlots(
+      std::span<const std::uint32_t> slots,
+      const LegacyGameplayBridgeProfile &profile =
+          syphonFilterUsaV11GameplayBridgeProfile()) noexcept;
   [[nodiscard]] bool
   synchronizeHostRoom(std::int16_t room,
                       const LegacyNativeMissionBridgeProfile &profile =
@@ -1192,9 +1203,9 @@ private:
   invokeFrameCall(std::uint32_t address,
                   std::span<const std::uint32_t> arguments,
                   std::uint64_t execution_budget);
-  [[nodiscard]] bool advanceAudioClockCallbacks(
-      const LegacyRetailAudioProfile &profile,
-      std::uint32_t callback_count) noexcept;
+  [[nodiscard]] bool
+  advanceAudioClockCallbacks(const LegacyRetailAudioProfile &profile,
+                             std::uint32_t callback_count) noexcept;
   [[nodiscard]] bool finalizeDeadActorDropsBeforeRenderer(
       const LegacyGameplayBridgeProfile &profile,
       std::uint64_t execution_budget) noexcept;

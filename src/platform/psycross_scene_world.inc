@@ -652,6 +652,10 @@ void renderGuestCameraLists(
   const auto &packet_camera = presentation.guest_packet_camera;
   const auto texture_bank =
       gameplay.textureBankAt(residency_camera.x, residency_camera.z);
+  const auto guest_effects_authoritative =
+      game::legacyGuestEffectsAuthoritative(
+          presentation.guest_camera_lists_captured,
+          gameplay.legacyEffectParticlesAuthoritative());
   constexpr auto center_x = static_cast<double>(screen_width) * 0.5;
   constexpr auto center_y = static_cast<double>(screen_height) * 0.5;
   const auto project_world = [](const game::CameraState &camera,
@@ -711,10 +715,10 @@ void renderGuestCameraLists(
         sprite.height == 0U) {
       continue;
     }
-    if (sprite.effect_family != 0U) {
-      // Exact SPFX controller state is rendered in world space by
-      // renderWeaponEffects. Do not submit its embedded projected sprite a
-      // second time.
+    if (sprite.effect_family != 0U && !guest_effects_authoritative) {
+      // A retained SPFX packet may outlive an incomplete guest frame. Let
+      // native reconstruction own that frame instead of drawing stale and
+      // fallback particles together.
       continue;
     }
     const auto world_effect = game::legacyGuestSpriteUsesWorldDepth(sprite);
@@ -727,12 +731,17 @@ void renderGuestCameraLists(
     }
     auto &primitive = primitives.guest_sprites.emplace_back();
     setPolyFT4(&primitive);
-    setRGB0(&primitive, sprite.color.red, sprite.color.green,
-            sprite.color.blue);
+    const auto sprite_color = sprite.force_fullbright
+                                  ? game::LegacyRgbBridgeState{128U, 128U, 128U}
+                                  : sprite.color;
+    setRGB0(&primitive, sprite_color.red, sprite_color.green,
+            sprite_color.blue);
     if ((sprite.attribute & 0x40000000U) != 0U) {
       setSemiTrans(&primitive, 1);
     }
-    setShadeTex(&primitive, (sprite.attribute & 0x40U) != 0U ? 1 : 0);
+    setShadeTex(
+        &primitive,
+        sprite.force_fullbright || (sprite.attribute & 0x40U) != 0U ? 1 : 0);
 
     const auto sort_transform = game::legacyGuestSpriteSortTransform(
         sprite, retained_entry != nullptr
@@ -1248,7 +1257,7 @@ flashlightWorldSurfaceHit(const game::GameplaySession &gameplay,
       nearest = FlashlightWorldSurfaceHit{*hit, receiver, receiver_count};
     }
   };
-  for (const auto model_index : gameplay.activeModels()) {
+  for (const auto model_index : gameplay.presentationModels()) {
     if (model_index >= gameplay.models().size()) {
       continue;
     }
@@ -1841,6 +1850,8 @@ void updateDynamicLightFrame(
       {presentation.camera.x, presentation.camera.y, presentation.camera.z},
       std::span{directional}.first(directional_count),
       presentation.guest_frame);
+  active_baked_world_dynamic_lights =
+      game::dynamicLightFrameForBakedWorld(active_dynamic_lights);
   active_dynamic_shadow_lights = game::buildDynamicLightFrame(
       persistent, std::span<const game::TransientDynamicLightState>{},
       {presentation.camera.x, presentation.camera.y, presentation.camera.z},
@@ -1921,6 +1932,7 @@ RenderStats renderWorld(
     ActorShadowPresentationCache &shadow_cache,
     DynamicLightFrameScratch &dynamic_light_scratch,
     LocalSceneLightingCache &local_scene_lighting_cache,
+    const WorldChunkAppearance &world_chunk_appearance,
     WeaponEffectsScratch &weapon_effects_scratch, HmdPoseScratch &pose_scratch,
     PrimitiveBuffer &primitives
 #if defined(SF_ENABLE_SURFACE_PICKER)
@@ -1949,7 +1961,7 @@ RenderStats renderWorld(
                           weapon_edges, retail_muzzle_flashes,
                           native_muzzle_flashes, dynamic_light_scratch);
   local_scene_lighting_cache.beginFrame(gameplay.currentRoom(),
-                                        gameplay.activeModels(),
+                                        gameplay.presentationModels(),
                                         presentation.objects.size());
   const auto presented_player_weapon =
       presentation.flashlight_enabled ? game::WeaponId::flashlight
@@ -1972,7 +1984,7 @@ RenderStats renderWorld(
       budget += amount;
     };
     std::size_t polygon_count = 0;
-    for (const auto model_index : gameplay.activeModels()) {
+    for (const auto model_index : gameplay.presentationModels()) {
       add_to_budget(polygon_count,
                     gameplay.models()[model_index].scene.polygonCount(),
                     "Terrain");
@@ -1989,6 +2001,10 @@ RenderStats renderWorld(
     std::size_t object_quad_count{};
     std::size_t actor_shadow_triangle_count{};
     std::size_t fire_particle_budget{};
+    const auto guest_effects_authoritative =
+        game::legacyGuestEffectsAuthoritative(
+            presentation.guest_camera_lists_captured,
+            gameplay.legacyEffectParticlesAuthoritative());
     const auto add_shadow_budget = [&](std::size_t triangle_count,
                                        const char *description) {
       constexpr auto receiver_subdivision_triangles = std::size_t{4U};
@@ -2097,26 +2113,35 @@ RenderStats renderWorld(
         add_shadow_budget(player_model->triangles().size(), "Player shadow");
       }
     }
-    if (!presentation.guest_camera_lists_captured) {
-      add_to_budget(fire_particle_budget, gameplay.legacyExplParticles().size(),
-                    "Legacy effect");
-    }
+    const auto legacy_fallback_particle_count = std::ranges::count_if(
+        gameplay.legacyExplParticles(), [&](const auto &particle) {
+          return !game::legacyExplParticleHasGuestSprite(
+              particle.pool_index, static_cast<std::uint8_t>(particle.family),
+              presentation.guest_sprites,
+              presentation.guest_camera_lists_captured,
+              gameplay.legacyEffectParticlesAuthoritative());
+        });
+    add_to_budget(fire_particle_budget,
+                  static_cast<std::size_t>(legacy_fallback_particle_count),
+                  "Legacy effect");
     const auto &shot = gameplay.lastShot();
     if (shot.fired && shot.weapon == game::WeaponId::flamethrower &&
         !gameplay.legacyEffectParticlesAuthoritative()) {
       add_to_budget(fire_particle_budget, 7U, "Flamethrower");
     }
-    for (const auto &projectile : gameplay.projectiles()) {
-      if (projectile.active &&
-          projectile.phase == game::ProjectilePhase::explosion) {
-        add_to_budget(fire_particle_budget, 6U, "Projectile explosion");
+    if (!guest_effects_authoritative) {
+      for (const auto &projectile : gameplay.projectiles()) {
+        if (projectile.active &&
+            projectile.phase == game::ProjectilePhase::explosion) {
+          add_to_budget(fire_particle_budget, 6U, "Projectile explosion");
+        }
       }
-    }
-    for (const auto &effect : gameplay.effects()) {
-      if (effect.type == game::GameplayEffectType::burning_fire) {
-        add_to_budget(fire_particle_budget, 12U, "Burning effect");
-      } else if (effect.type == game::GameplayEffectType::explosion) {
-        add_to_budget(fire_particle_budget, 9U, "Explosion effect");
+      for (const auto &effect : gameplay.effects()) {
+        if (effect.type == game::GameplayEffectType::burning_fire) {
+          add_to_budget(fire_particle_budget, 12U, "Burning effect");
+        } else if (effect.type == game::GameplayEffectType::explosion) {
+          add_to_budget(fire_particle_budget, 9U, "Explosion effect");
+        }
       }
     }
     // A near-plane clipped camera-facing particle becomes at most three
@@ -2189,8 +2214,14 @@ RenderStats renderWorld(
   SetRotMatrix(const_cast<MATRIX *>(&view));
   SetTransMatrix(const_cast<MATRIX *>(&view));
   RenderStats stats;
-  for (const auto model_index : gameplay.activeModels()) {
+  for (const auto model_index : gameplay.presentationModels()) {
     const auto &scene = gameplay.models()[model_index].scene;
+    const auto chunk_depth_cue_floor =
+        world_chunk_appearance.depthCueFloorQ12(model_index);
+    const auto terrain_depth_cue = [&](const SVECTOR &vertex) {
+      return std::max(chunk_depth_cue_floor,
+                      retailTerrainDepthCue(cameraDepth(view, vertex)));
+    };
     const auto texture_bank = scene.textureBank();
     for (auto section_index = std::size_t{};
          section_index < scene.sections().size(); ++section_index) {
@@ -2226,14 +2257,18 @@ RenderStats renderWorld(
           }
           if (near_status == NearPlaneStatus::intersecting) {
             const auto normal = visibleSurfaceNormal(positions);
-            const auto t0 = emdTexturedVertex(v0, section, polygon, 0,
-                                              live_colors, true, normal);
-            const auto t1 = emdTexturedVertex(v1, section, polygon, 1,
-                                              live_colors, true, normal);
-            const auto t2 = emdTexturedVertex(v2, section, polygon, 2,
-                                              live_colors, true, normal);
-            const auto t3 = emdTexturedVertex(v3, section, polygon, 3,
-                                              live_colors, true, normal);
+            const auto t0 =
+                emdTexturedVertex(v0, section, polygon, 0, live_colors, true,
+                                  normal, &active_baked_world_dynamic_lights);
+            const auto t1 =
+                emdTexturedVertex(v1, section, polygon, 1, live_colors, true,
+                                  normal, &active_baked_world_dynamic_lights);
+            const auto t2 =
+                emdTexturedVertex(v2, section, polygon, 2, live_colors, true,
+                                  normal, &active_baked_world_dynamic_lights);
+            const auto t3 =
+                emdTexturedVertex(v3, section, polygon, 3, live_colors, true,
+                                  normal, &active_baked_world_dynamic_lights);
             const std::array first_triangle{t0, t1, t2};
             const std::array second_triangle{t1, t3, t2};
             const TexturedMaterial material{
@@ -2246,10 +2281,12 @@ RenderStats renderWorld(
             };
             submitClippedTriangle(first_triangle, material, false, false, view,
                                   ordering_table, primitives.triangles, stats,
-                                  worldOrderingDepth, true);
+                                  worldOrderingDepth, true, true,
+                                  chunk_depth_cue_floor);
             submitClippedTriangle(second_triangle, material, false, false, view,
                                   ordering_table, primitives.triangles, stats,
-                                  worldOrderingDepth, true);
+                                  worldOrderingDepth, true, true,
+                                  chunk_depth_cue_floor);
             continue;
           }
           auto &primitive = primitives.quads.emplace_back();
@@ -2264,16 +2301,15 @@ RenderStats renderWorld(
           }
           // Dynamic light sampling scans the active light frame per vertex.
           // Do it only for geometry which survived depth/back-face culling.
-          dynamicallyLight(primitive, positions);
+          dynamicallyLight(primitive, positions,
+                           active_baked_world_dynamic_lights);
           setProjected(&primitive.x0, xy0);
           setProjected(&primitive.x1, xy1);
           setProjected(&primitive.x2, xy2);
           setProjected(&primitive.x3, xy3);
           depthCuePrimitive(primitive,
-                            {retailTerrainDepthCue(cameraDepth(view, v0)),
-                             retailTerrainDepthCue(cameraDepth(view, v1)),
-                             retailTerrainDepthCue(cameraDepth(view, v2)),
-                             retailTerrainDepthCue(cameraDepth(view, v3))});
+                            {terrain_depth_cue(v0), terrain_depth_cue(v1),
+                             terrain_depth_cue(v2), terrain_depth_cue(v3)});
           addPrim(
               &ordering_table[std::clamp(depth, 1, ordering_table_size - 1)],
               &primitive);
@@ -2305,11 +2341,11 @@ RenderStats renderWorld(
             const auto normal = visibleSurfaceNormal(positions);
             const std::array textured{
                 emdTexturedVertex(v0, section, polygon, 0, live_colors, true,
-                                  normal),
+                                  normal, &active_baked_world_dynamic_lights),
                 emdTexturedVertex(v1, section, polygon, 1, live_colors, true,
-                                  normal),
+                                  normal, &active_baked_world_dynamic_lights),
                 emdTexturedVertex(v2, section, polygon, 2, live_colors, true,
-                                  normal),
+                                  normal, &active_baked_world_dynamic_lights),
             };
             submitClippedTriangle(
                 textured,
@@ -2317,7 +2353,7 @@ RenderStats renderWorld(
                                  false, static_cast<std::uint8_t>(texture_bank),
                                  texture_source_page},
                 false, false, view, ordering_table, primitives.triangles, stats,
-                worldOrderingDepth, true);
+                worldOrderingDepth, true, true, chunk_depth_cue_floor);
             continue;
           }
           auto &primitive = primitives.triangles.emplace_back();
@@ -2332,14 +2368,14 @@ RenderStats renderWorld(
           }
           // Avoid normalisation and up to 32 light tests for rejected faces.
           // Visible output is identical because rejected packets are removed.
-          dynamicallyLight(primitive, positions);
+          dynamicallyLight(primitive, positions,
+                           active_baked_world_dynamic_lights);
           setProjected(&primitive.x0, xy0);
           setProjected(&primitive.x1, xy1);
           setProjected(&primitive.x2, xy2);
           depthCuePrimitive(primitive,
-                            {retailTerrainDepthCue(cameraDepth(view, v0)),
-                             retailTerrainDepthCue(cameraDepth(view, v1)),
-                             retailTerrainDepthCue(cameraDepth(view, v2))});
+                            {terrain_depth_cue(v0), terrain_depth_cue(v1),
+                             terrain_depth_cue(v2)});
           addPrim(
               &ordering_table[std::clamp(depth, 1, ordering_table_size - 1)],
               &primitive);

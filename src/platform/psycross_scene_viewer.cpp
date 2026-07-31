@@ -16,6 +16,7 @@
 #include "sf/game/dynamic_lighting.hpp"
 #include "sf/game/effects.hpp"
 #include "sf/game/gameplay.hpp"
+#include "sf/game/legacy_effect_presentation_policy.hpp"
 #include "sf/game/legacy_presentation_bridge.hpp"
 #include "sf/game/localization.hpp"
 #include "sf/game/mission.hpp"
@@ -24,11 +25,14 @@
 #include "sf/game/retail_cheats.hpp"
 #include "sf/platform/actor_shadow_stability.hpp"
 #include "sf/platform/gameplay_message_reveal_policy.hpp"
+#include "sf/platform/gameplay_presentation_transition.hpp"
 #include "sf/platform/player_camera_fade.hpp"
 #include "sf/platform/player_input.hpp"
 #include "sf/platform/presentation_frame_meter.hpp"
+#include "sf/platform/retail_depth_cue.hpp"
 #include "sf/platform/retail_scope_text_policy.hpp"
 #include "sf/platform/stable_frame_vector.hpp"
+#include "sf/platform/world_chunk_appearance.hpp"
 
 #include <PsyX/PsyX_globals.h>
 #include <PsyX/PsyX_public.h>
@@ -159,6 +163,8 @@ std::array<std::array<unsigned int, 32>, 2> streamed_clut_row_remap = [] {
 
 std::uint32_t streamed_vlf_page_mask{};
 
+// These implementation fragments have declaration-order dependencies.
+// clang-format off
 #include "psycross_scene_textures.inc"
 #include "psycross_scene_presentation.inc"
 #include "psycross_scene_render_core.inc"
@@ -167,6 +173,7 @@ std::uint32_t streamed_vlf_page_mask{};
 #include "psycross_scene_world.inc"
 #include "psycross_scene_hud.inc"
 #include "psycross_scene_pause.inc"
+// clang-format on
 } // namespace
 
 #include "psycross_scene_runtime.inc"

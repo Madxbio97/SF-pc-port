@@ -137,6 +137,11 @@ struct LegacyCameraBridgeState {
   std::int32_t mode{-1};
   bool scripted{};
   bool locked{};
+  std::int16_t presentation_viewport_y{};
+  std::int16_t presentation_viewport_height{240};
+  // Exact retail letterbox ownership. This is changed only by the original
+  // viewport animation, unlike XA, camera locks and scripted-camera modes.
+  bool retail_letterbox_active{};
 
   [[nodiscard]] double fovDegrees() const noexcept {
     return static_cast<double>(fov_raw) * 360.0 / 4096.0;
@@ -273,6 +278,10 @@ struct LegacyExplParticleBridgeState {
   std::uint8_t red{};
   std::uint8_t green{};
   std::uint8_t blue{};
+  // Stable EXPL pool identity. Camera-list GsSPRITE provenance uses the same
+  // index, allowing presentation to suppress only the exact represented
+  // particle without changing the bridge ABI/layout.
+  std::int16_t pool_index{-1};
 };
 
 struct LegacyRgbBridgeState {
@@ -323,7 +332,27 @@ struct LegacyGuestSpriteBridgeState {
   std::uint8_t effect_family{};
   std::uint8_t effect_frame{};
   LegacyNativePoint effect_position;
+  // Lamp halos are authored as update7/render3 particle sprites. They emit
+  // light and therefore must bypass the guest RGB modulation which normally
+  // shades glass fragments and other camera-list sprites.
+  bool force_fullbright{};
 };
+
+[[nodiscard]] constexpr bool
+legacyLampHaloSourceClass(std::int16_t class_id) noexcept {
+  switch (class_id) {
+  case 0x13: // PRLIT/AHALT/BARLITE/ARMYLT/LABLT/FLATLT/CAVLIT
+  case 0x15: // GLIT/YLIT
+  case 0x16: // SPOTLT
+  case 0x33: // BARLIT/LAMPY
+  case 0x34: // LIGHT/POOLT
+  case 0x46: // SUBLIT
+  case 0x47: // MET/RNLT
+    return true;
+  default:
+    return false;
+  }
+}
 
 struct LegacyGuestSpriteSortTransform {
   double local_left{};
@@ -906,13 +935,10 @@ struct LegacyMissionBridgeState {
   std::optional<LegacyUiTimerBridgeState> timer;
 };
 
-// Validates the immutable retail renderer handoff and builds its original
-// camera set: always-resident models, the current room and models carrying a
-// non-zero traversal score. Native rendering must supplement this with the
-// current room's DAT visibility envelope. Null means the frame cannot be
-// consumed safely by a mission with expected_model_count terrain records.
-[[nodiscard]] std::optional<std::vector<std::uint16_t>>
-legacyActiveWorldModels(const LegacyGameplayBridgeState &state,
-                        std::size_t expected_model_count) noexcept;
-
+// Validates the immutable retail renderer handoff without constructing a
+// synthetic display list. Resident models are resource state; active models
+// are the guest camera traversal, and both sets must be independently valid.
+[[nodiscard]] bool
+validateLegacyWorldModelSets(const LegacyGameplayBridgeState &state,
+                             std::size_t expected_model_count) noexcept;
 } // namespace sf::game

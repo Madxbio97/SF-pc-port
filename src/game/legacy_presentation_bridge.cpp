@@ -383,8 +383,8 @@ bool validGuestPackets(const LegacyGameplayBridgeState &renderer) noexcept {
           return false;
         }
         if (sprite.effect_particle < 0) {
-          return sprite.effect_family == 0U && sprite.effect_frame == 0U &&
-                 sprite.effect_position.x == 0 &&
+          return !sprite.force_fullbright && sprite.effect_family == 0U &&
+                 sprite.effect_frame == 0U && sprite.effect_position.x == 0 &&
                  sprite.effect_position.y == 0 && sprite.effect_position.z == 0;
         }
         if (sprite.effect_position.y ==
@@ -827,7 +827,7 @@ std::shared_ptr<const LegacyPresentationFrame> buildLegacyPresentationFrame(
     const LegacyMissionBridgeState &ui,
     std::span<const LegacyPresentationCommandType> edge_commands) {
   if (sequence == 0U || renderer.dynamic_first_slot > renderer.objects.size() ||
-      !legacyActiveWorldModels(renderer, renderer.world_model_count) ||
+      !validateLegacyWorldModelSets(renderer, renderer.world_model_count) ||
       !validObjectSlot(ui.player_slot, renderer.objects.size()) ||
       ui.objective_count > legacy_mission_entry_limit ||
       ui.parameter_count > legacy_mission_entry_limit ||

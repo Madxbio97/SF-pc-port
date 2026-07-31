@@ -827,7 +827,7 @@ public:
           }
         }
       };
-      for (const auto model_index : gameplay.activeModels()) {
+      for (const auto model_index : gameplay.presentationModels()) {
         requirement_context = "world-model-" + std::to_string(model_index);
         const auto &scene = models[model_index].scene;
         const auto bank = scene.textureBank();
@@ -1220,7 +1220,8 @@ public:
             static_cast<unsigned long long>(texture_diagnostic_sequence_),
             static_cast<unsigned long long>(frame ? frame->guest_frame : 0U),
             room, object_bank, guest_sprite_bank,
-            gameplay.activeModels().size(), gameplay.activeObjects().size(),
+            gameplay.presentationModels().size(),
+            gameplay.activeObjects().size(),
             static_cast<unsigned long long>(residency_revision_));
         for (std::size_t slot = 0; slot < required_pages_.size(); ++slot) {
           if (required_pages_[slot] < 0) {
@@ -1853,7 +1854,7 @@ private:
     append_transient(RequirementInputKind::guest_sprite_bank,
                      static_cast<std::uintptr_t>(guest_sprite_bank));
     append_transient(RequirementInputKind::active_model,
-                     gameplay.activeModels().size());
+                     gameplay.presentationModels().size());
     append_transient(RequirementInputKind::active_object,
                      gameplay.activeObjects().size());
     append_transient(
@@ -1922,7 +1923,7 @@ private:
           (static_cast<std::uintptr_t>(shard.texture_bank) << 32U);
       append(RequirementInputKind::glass_shard_material, material);
     }
-    for (const auto model : gameplay.activeModels()) {
+    for (const auto model : gameplay.presentationModels()) {
       append(RequirementInputKind::active_model, model);
     }
     for (const auto object : gameplay.activeObjects()) {

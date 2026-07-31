@@ -122,6 +122,7 @@ struct RetailDepthCueState {
 
 RetailDepthCueState active_retail_depth_cue;
 game::DynamicLightFrame active_dynamic_lights;
+game::DynamicLightFrame active_baked_world_dynamic_lights;
 game::DynamicLightFrame active_dynamic_shadow_lights;
 game::DynamicLightPoint active_dynamic_light_observer;
 std::vector<game::RetailVertexLightState> active_retail_vertex_lights;
@@ -135,9 +136,9 @@ void captureRenderPresentation(const game::GameplaySession &gameplay,
   result.player_guest_slot = -1;
   result.camera = gameplay.camera();
   result.guest_packet_camera = result.camera;
-  result.environment = {};
+  // Keep the last complete retail environment across a transient renderer
+  // snapshot gap. A fresh run starts with the value-initialized state below.
   result.scrim = {};
-  result.retail_environment_active = false;
   result.first_person_aim =
       gameplay.playerAim() == game::PlayerAimState::first_person;
   result.retail_scope_overlay = false;
@@ -212,32 +213,37 @@ void applyRetailEnvironment(
     SetDefDrawEnv(&draw_environment, 0, 0, screen_width, screen_height);
     draw_environment.dtd = 0;
   }
-  // Native rendering always starts a fresh back buffer. Use the retail clear
-  // color as its authored horizon even when the PS1 background-enable bit is
-  // clear, rather than preserving stale pixels from the previous PC frame.
-  // Guest auxiliary DR_TPAGE packets are presentation data, not permission to
-  // redirect the next native frame into emulated VRAM. Re-establish the exact
-  // on-screen draw target every frame so a stale DFE/clip cannot overwrite
-  // resident world pages or the relocated mission CLUT.
+  // The authored clear and far colours are the dark horizon used by every
+  // retail mission to hide its finite PS1 draw boundary. Washington Park's
+  // green cast is a separate screen filter and must not replace this cue.
   draw_environment.clip = RECT16{0, 0, screen_width, screen_height};
   draw_environment.ofs[0] = 0;
   draw_environment.ofs[1] = 0;
   draw_environment.dfe = 1;
   draw_environment.isbg = 1;
-  setRGB0(&draw_environment, environment.clear_color.red,
-          environment.clear_color.green, environment.clear_color.blue);
+  if (retail_environment_active) {
+    const auto clear = environment.nightvision_enabled
+                           ? environment.nightvision_clear_color
+                           : environment.clear_color;
+    setRGB0(&draw_environment, clear.red, clear.green, clear.blue);
+  } else {
+    setRGB0(&draw_environment, 0, 0, 0);
+  }
   PutDrawEnv(&draw_environment);
 
   SetBackColor(environment.back_color.red, environment.back_color.green,
                environment.back_color.blue);
-  SetFarColor(environment.fog_color.red, environment.fog_color.green,
-              environment.fog_color.blue);
+  if (retail_environment_active) {
+    SetFarColor(environment.fog_color.red, environment.fog_color.green,
+                environment.fog_color.blue);
+  } else {
+    SetFarColor(0, 0, 0);
+  }
   active_retail_depth_cue = {
       environment.fog_dqa,
       environment.fog_dqb,
       projection,
-      retail_environment_active ? environment.effectiveTerrainDepthCue()
-                                : 0x1000U,
+      retail_environment_active ? environment.effectiveTerrainDepthCue() : 0U,
       retail_environment_active && environment.fogEnabled(),
   };
   active_retail_nightvision =
@@ -250,6 +256,7 @@ void applyRetailEnvironment(
   // the night-vision override.
   active_retail_blackout =
       retail_blackout_mission && !active_retail_nightvision;
+
   if (active_retail_depth_cue.gte_enabled) {
     SetDQA(environment.fog_dqa);
     SetDQB(environment.fog_dqb);
@@ -273,7 +280,8 @@ long retailGteDepthCue(double camera_z) {
   constexpr std::int64_t maximum_quotient = 0x1ffffLL;
   const auto quotient = std::clamp<std::int64_t>(
       std::llround(static_cast<double>(active_retail_depth_cue.projection) /
-                   camera_z * static_cast<double>(quotient_one)),
+                   nativeDepthCueCameraZ(camera_z) *
+                   static_cast<double>(quotient_one)),
       0LL, maximum_quotient);
   const auto accumulator =
       static_cast<std::int64_t>(active_retail_depth_cue.dqb) +
@@ -286,34 +294,9 @@ long retailGteDepthCue(double camera_z) {
 }
 
 long retailTerrainDepthCue(double camera_z) {
-  if (camera_z <= 0.0) {
-    return 0L;
-  }
-  auto packed = active_retail_depth_cue.terrain;
-  if (packed == 0U) {
-    packed = 0x07ffU;
-  }
-  const auto threshold = static_cast<std::uint16_t>(packed);
-  const auto shift = static_cast<unsigned int>(packed >> 16U);
-  if (threshold >= 0x1000U || shift > 15U) {
-    return 0L;
-  }
-  // The retail terrain formula consumes the value returned by
-  // RotTransPers: SZ3 >> 2, not the full camera-space GTE Z. Feeding it the
-  // full Z pulled the atmospheric boundary four times closer to the camera.
-  const auto sz3 =
-      std::clamp<std::int64_t>(std::llround(camera_z), 0LL, 0xffffLL);
-  const auto ordering_depth = sz3 >> 2U;
-  const auto distance = ((ordering_depth * 3LL) >> 2U) - threshold;
-  if (distance <= 0) {
-    return 0L;
-  }
-  const auto factor = distance << shift;
-  // Keep the far edge fully depth-cued. Returning zero after the authored
-  // limit made the scene boundary brighten again instead of fading out.
-  return static_cast<long>(std::min<std::int64_t>(factor, 0x1500LL));
+  return retailTerrainDepthCueFactorQ12(active_retail_depth_cue.terrain,
+                                        nativeDepthCueCameraZ(camera_z));
 }
-
 long retailObjectDepthCue(double camera_z) {
   return active_retail_depth_cue.gte_enabled ? retailGteDepthCue(camera_z)
                                              : retailTerrainDepthCue(camera_z);
@@ -469,8 +452,7 @@ void interpolateRenderPresentation(const RenderPresentationSnapshot &previous,
   const auto component = [amount](double from, double to) {
     return std::lerp(from, to, amount);
   };
-  const auto guest_buffers_changed =
-      result.guest_frame != current.guest_frame;
+  const auto guest_buffers_changed = result.guest_frame != current.guest_frame;
   result.guest_frame = current.guest_frame;
   result.player_guest_slot = current.player_guest_slot;
   result.camera = current.camera;

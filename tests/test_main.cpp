@@ -28,9 +28,12 @@
 #include "sf/game/title.hpp"
 #include "sf/platform/actor_shadow_stability.hpp"
 #include "sf/platform/gameplay_message_reveal_policy.hpp"
+#include "sf/platform/gameplay_presentation_transition.hpp"
 #include "sf/platform/player_camera_fade.hpp"
 #include "sf/platform/presentation_frame_meter.hpp"
+#include "sf/platform/retail_depth_cue.hpp"
 #include "sf/platform/retail_scope_text_policy.hpp"
+#include "sf/platform/world_chunk_appearance.hpp"
 #include "sf/psx/executable.hpp"
 #include "sf/psx/function_map.hpp"
 
@@ -716,11 +719,83 @@ void testLegacyDynamicPresentationPolicy() {
           !sf::game::legacyManualAimPresentationActive(true, true, 1, false,
                                                        false, false, true),
       "Retail traversal camera mode leaked into host manual-aim visibility");
-  require(
-      sf::game::legacyRadioConversationPresentationActive(true, false) &&
-          sf::game::legacyRadioConversationPresentationActive(false, true) &&
-          !sf::game::legacyRadioConversationPresentationActive(false, false),
-      "Active or queued XA dialogue did not own radio letterbox state");
+  require(sf::game::legacyTargetFollowCameraPresentationActive(false, false,
+                                                               true) &&
+              sf::game::legacyTargetFollowCameraPresentationActive(true, true,
+                                                                   false) &&
+              !sf::game::legacyTargetFollowCameraPresentationActive(true, false,
+                                                                    false),
+          "Locked-target follower ownership did not survive its release frame");
+  require(sf::game::legacyCinematicCameraPresentationActive(true, false) &&
+              !sf::game::legacyCinematicCameraPresentationActive(true, true) &&
+              !sf::game::legacyCinematicCameraPresentationActive(false, false),
+          "Locked-target shot follower leaked into cinematic presentation");
+  require(!sf::game::legacyRadioAudioPresentationActive(false, false, true,
+                                                        false) &&
+              !sf::game::legacyRadioAudioPresentationActive(false, true, false,
+                                                            true) &&
+              sf::game::legacyRadioAudioPresentationActive(false, true, true,
+                                                           false) &&
+              sf::game::legacyRadioAudioPresentationActive(true, false, true,
+                                                           false) &&
+              sf::game::legacyRadioAudioPresentationActive(true, false, false,
+                                                           true) &&
+              !sf::game::legacyRadioAudioPresentationActive(true, true, false,
+                                                            false),
+          "Radio presentation did not follow the exact authored XA lifetime");
+  require(sf::game::legacyLetterboxPresentationActive(true, false) &&
+              sf::game::legacyLetterboxPresentationActive(false, true) &&
+              sf::game::legacyLetterboxPresentationActive(true, true) &&
+              !sf::game::legacyLetterboxPresentationActive(false, false),
+          "Letterbox ignored the mission intro or exact retail viewport state");
+  require(sf::game::legacyGameplayHudPresentationActive(false, false) &&
+              !sf::game::legacyGameplayHudPresentationActive(false, true) &&
+              !sf::game::legacyGameplayHudPresentationActive(true, false),
+          "Gameplay HUD did not follow cinematic/radio presentation state");
+  sf::platform::GameplayPresentationTransition transition;
+  require(transition.letterboxAmount() == 0.0 &&
+              transition.hudVisibility() == 1.0,
+          "Letterbox transition did not start with the gameplay HUD visible");
+  transition.advance(
+      true,
+      sf::platform::GameplayPresentationTransition::phase_duration_seconds *
+          0.5);
+  require(transition.letterboxAmount() == 0.0 &&
+              transition.hudVisibility() > 0.0 &&
+              transition.hudVisibility() < 1.0,
+          "Letterbox appeared before the gameplay HUD had disappeared");
+  transition.advance(
+      true,
+      sf::platform::GameplayPresentationTransition::phase_duration_seconds *
+          0.5);
+  require(transition.letterboxAmount() == 0.0 &&
+              transition.hudVisibility() == 0.0,
+          "HUD did not disappear before the letterbox transition");
+  transition.advance(
+      true,
+      sf::platform::GameplayPresentationTransition::phase_duration_seconds *
+          0.5);
+  require(transition.letterboxAmount() > 0.0 &&
+              transition.letterboxAmount() < 1.0 &&
+              transition.hudVisibility() == 0.0,
+          "HUD reappeared while the letterbox was entering");
+  transition.advance(
+      true, sf::platform::GameplayPresentationTransition::duration_seconds);
+  require(transition.letterboxAmount() == 1.0 &&
+              transition.hudVisibility() == 0.0,
+          "Letterbox transition did not converge to hidden HUD state");
+  transition.advance(
+      false,
+      sf::platform::GameplayPresentationTransition::phase_duration_seconds);
+  require(transition.letterboxAmount() == 0.0 &&
+              transition.hudVisibility() == 0.0,
+          "HUD appeared before the letterbox had disappeared");
+  transition.advance(
+      false,
+      sf::platform::GameplayPresentationTransition::phase_duration_seconds);
+  require(transition.letterboxAmount() == 0.0 &&
+              transition.hudVisibility() == 1.0,
+          "HUD transition did not restore the complete gameplay overlay");
   require(!sf::game::legacyFirstPersonAimReleaseRearmRequired(false, true,
                                                               false, false) &&
               sf::game::legacyFirstPersonAimReleaseRearmRequired(false, true,
@@ -821,6 +896,25 @@ void testLegacyDynamicPresentationPolicy() {
 }
 
 void testEmissiveObjectLightingPolicy() {
+  require(sf::game::legacyLampBillboardModel("GLIT") &&
+              sf::game::legacyLampBillboardModel("YLIT") &&
+              !sf::game::legacyLampBillboardModel("LIGHT"),
+          "Retail lamp halo resource classification is incomplete");
+  require(sf::game::legacyLampEmitterModel(0x13U, "PRLIT") &&
+              sf::game::legacyLampEmitterModel(0x11U, "HLITE") &&
+              !sf::game::legacyLampEmitterModel(0x11U, "GASPIPE") &&
+              !sf::game::legacyLampEmitterModel(0x14U, "HOTELGL"),
+          "Retail lamp fixture classification is incomplete");
+  require(sf::game::legacyLampHaloSourceClass(0x13) &&
+              sf::game::legacyLampHaloSourceClass(0x15) &&
+              sf::game::legacyLampHaloSourceClass(0x16) &&
+              sf::game::legacyLampHaloSourceClass(0x33) &&
+              sf::game::legacyLampHaloSourceClass(0x34) &&
+              sf::game::legacyLampHaloSourceClass(0x46) &&
+              sf::game::legacyLampHaloSourceClass(0x47) &&
+              !sf::game::legacyLampHaloSourceClass(0x11) &&
+              !sf::game::legacyLampHaloSourceClass(0x14),
+          "Retail guest lamp halo source classification is incomplete");
   require(sf::game::objectVisualEffectReceivesSceneLighting(
               sf::game::ObjectVisualEffect::none) &&
               !sf::game::objectVisualEffectReceivesSceneLighting(
@@ -828,8 +922,20 @@ void testEmissiveObjectLightingPolicy() {
               !sf::game::objectVisualEffectReceivesSceneLighting(
                   sf::game::ObjectVisualEffect::police_lightbar) &&
               !sf::game::objectVisualEffectReceivesSceneLighting(
-                  sf::game::ObjectVisualEffect::scanner_xray),
-          "Emissive lamp presentation inherited scene lighting");
+                  sf::game::ObjectVisualEffect::scanner_xray) &&
+              sf::game::objectVisualEffectReceivesSceneLighting(
+                  sf::game::ObjectVisualEffect::lamp_fixture, false) &&
+              !sf::game::objectVisualEffectReceivesSceneLighting(
+                  sf::game::ObjectVisualEffect::lamp_fixture, true) &&
+              sf::game::objectVisualEffectReceivesDepthCue(
+                  sf::game::ObjectVisualEffect::none) &&
+              sf::game::objectVisualEffectReceivesDepthCue(
+                  sf::game::ObjectVisualEffect::lamp_fixture, false) &&
+              !sf::game::objectVisualEffectReceivesDepthCue(
+                  sf::game::ObjectVisualEffect::lamp_fixture, true) &&
+              !sf::game::objectVisualEffectReceivesDepthCue(
+                  sf::game::ObjectVisualEffect::billboard_glow),
+          "Emissive lamp presentation inherited scene lighting or fog");
 }
 
 void testVirusScannerMarkerPolicy() {
@@ -2276,6 +2382,10 @@ void testLevelLayout() {
   require(layout.visibility(1).active_models ==
               std::vector<std::uint16_t>({0, 2}),
           "Level visibility list mismatch");
+  const auto lookahead = sf::game::nativeWorldLookaheadRing(
+      0U, std::array<std::uint16_t, 1U>{1U}, layout);
+  require(lookahead == std::vector<std::uint16_t>{2U},
+          "Native world streaming did not retain one complete portal ring");
 }
 
 void testMissionObjects() {
@@ -3656,6 +3766,72 @@ void testActorShadowReceiverStability() {
           "Confirmed missing support left a stale actor shadow suspended");
 }
 
+void testRetailTerrainDepthCuePolicy() {
+  using sf::platform::retail_depth_cue_q12_one;
+  using sf::platform::retailTerrainDepthCueFactorQ12;
+
+  require(std::abs(sf::platform::nativeDepthCueCameraZ(1350.0) - 1000.0) <
+              0.000001,
+          "Native depth-cue distance policy drifted from the configured scale");
+
+  constexpr auto park = std::uint32_t{0x00020320U};
+  require(retailTerrainDepthCueFactorQ12(park, 1067.0) == 0L &&
+              retailTerrainDepthCueFactorQ12(park, 1068.0) == 4L &&
+              retailTerrainDepthCueFactorQ12(park, 2432.0) ==
+                  retail_depth_cue_q12_one,
+          "Retail terrain cue no longer consumes raw GTE SZ");
+  const auto near = retailTerrainDepthCueFactorQ12(park, 1200.0);
+  const auto middle = retailTerrainDepthCueFactorQ12(park, 1800.0);
+  const auto far = retailTerrainDepthCueFactorQ12(park, 2400.0);
+  require(near < middle && middle < far && far <= retail_depth_cue_q12_one,
+          "Retail terrain depth cue is not monotonic Q12");
+  require(retailTerrainDepthCueFactorQ12(0U, 2730.0) == 0L &&
+              retailTerrainDepthCueFactorQ12(0U, 2731.0) == 1L &&
+              retailTerrainDepthCueFactorQ12(0U, 8191.0) ==
+                  retail_depth_cue_q12_one,
+          "A mission without an authored cue lost the global dark horizon");
+  require(retailTerrainDepthCueFactorQ12(0x00031f40U, 65535.0) == 0L &&
+              retailTerrainDepthCueFactorQ12(0x00001388U, 65535.0) == 0L &&
+              retailTerrainDepthCueFactorQ12(
+                  park, std::numeric_limits<double>::quiet_NaN()) == 0L &&
+              retailTerrainDepthCueFactorQ12(
+                  park, std::numeric_limits<double>::infinity()) == 0L,
+          "Invalid retail depth-cue input did not disable terrain DPCS");
+}
+
+void testWorldChunkAppearance() {
+  sf::platform::WorldChunkAppearance appearance;
+  constexpr std::array initial{std::uint16_t{0U}, std::uint16_t{2U}};
+  appearance.advance(initial, 1.0 / 60.0);
+  require(appearance.depthCueFloorQ12(0U) == 0L &&
+              appearance.depthCueFloorQ12(2U) == 0L,
+          "Initial world chunks unexpectedly faded in");
+
+  constexpr std::array transitioned{std::uint16_t{1U}, std::uint16_t{2U}};
+  appearance.advance(transitioned, 1.0 / 20.0);
+  require(appearance.depthCueFloorQ12(1U) > 0L &&
+              appearance.depthCueFloorQ12(1U) <
+                  sf::platform::retail_depth_cue_q12_one &&
+              appearance.depthCueFloorQ12(2U) == 0L,
+          "New world chunk did not begin revealing on its first native frame");
+
+  appearance.advance(transitioned,
+                     sf::platform::world_chunk_fade_seconds * 0.5);
+  const auto halfway = appearance.depthCueFloorQ12(1U);
+  require(halfway > 0L && halfway < sf::platform::retail_depth_cue_q12_one,
+          "World chunk appearance did not interpolate at native frame rate");
+  appearance.advance(transitioned, sf::platform::world_chunk_fade_seconds);
+  require(appearance.depthCueFloorQ12(1U) == 0L,
+          "World chunk appearance did not converge to retail depth cue");
+
+  constexpr std::array reactivated{std::uint16_t{0U}, std::uint16_t{2U}};
+  appearance.advance(reactivated, 1.0 / 60.0);
+  require(appearance.depthCueFloorQ12(0U) > 0L &&
+              appearance.depthCueFloorQ12(0U) <
+                  sf::platform::retail_depth_cue_q12_one,
+          "Reactivated world chunk did not enter the smooth transition");
+}
+
 void testPlayerCameraFade() {
   using sf::game::CameraState;
   using sf::platform::PlayerCameraVisibility;
@@ -3770,6 +3946,8 @@ int main() {
     testMissionStartGate();
     testTitleMenu();
     testActorShadowReceiverStability();
+    testRetailTerrainDepthCuePolicy();
+    testWorldChunkAppearance();
     testPlayerCameraFade();
     testPresentationFrameMeter();
     std::cout << "All tests passed\n";

@@ -1,6 +1,6 @@
-#include "sf/core/error.hpp"
 #include "sf/assets/hmd_model.hpp"
 #include "sf/assets/level_layout.hpp"
+#include "sf/core/error.hpp"
 #include "sf/game/game_disc.hpp"
 #include "sf/game/gameplay.hpp"
 #include "sf/game/legacy_presentation_bridge.hpp"
@@ -382,8 +382,10 @@ validateSession(const sf::game::GameplaySession &gameplay,
     return "production room is outside the world model table";
   }
   const auto active_models = gameplay.activeModels();
-  const auto retail_active_models =
-      sf::game::legacyActiveWorldModels(guest, gameplay.models().size());
+  if (!sf::game::validateLegacyWorldModelSets(guest,
+                                              gameplay.models().size())) {
+    return "retail world model sets are malformed";
+  }
   auto expected_active_models = std::vector<std::uint16_t>{};
   const auto add_expected = [&expected_active_models](std::uint16_t model) {
     if (std::ranges::find(expected_active_models, model) ==
@@ -399,16 +401,15 @@ validateSession(const sf::game::GameplaySession &gameplay,
        layout.visibility(gameplay.currentRoom()).active_models) {
     add_expected(model);
   }
-  if (retail_active_models) {
-    for (const auto model : *retail_active_models) {
-      add_expected(model);
-    }
+  for (const auto model : guest.active_world_models) {
+    add_expected(model);
   }
-  if (!retail_active_models || active_models.empty() ||
+  if (active_models.empty() ||
       std::ranges::find(active_models, gameplay.currentRoom()) ==
           active_models.end() ||
       !std::ranges::equal(active_models, expected_active_models)) {
-    return "production active models diverged from the DAT/native visibility envelope";
+    return "production active models diverged from the DAT/native visibility "
+           "envelope";
   }
   for (const auto model : active_models) {
     if (model >= gameplay.models().size()) {
@@ -420,6 +421,7 @@ validateSession(const sf::game::GameplaySession &gameplay,
       return "retail resident world model is absent from the active set";
     }
   }
+
   const auto active_objects = gameplay.activeObjects();
   for (const auto scene : active_objects) {
     if (scene >= gameplay.objects().size() ||
@@ -514,10 +516,9 @@ bool controlReady(const sf::game::GameplaySession &gameplay) noexcept {
          !state.camera.scripted && !state.camera.locked;
 }
 
-bool exactRetailNpcPose(
-    const sf::game::GameplaySession &gameplay,
-    const sf::game::LegacyPresentationFrame &frame,
-    std::size_t scene) noexcept {
+bool exactRetailNpcPose(const sf::game::GameplaySession &gameplay,
+                        const sf::game::LegacyPresentationFrame &frame,
+                        std::size_t scene) noexcept {
   if (!frame.renderer || scene >= gameplay.objects().size()) {
     return false;
   }
@@ -582,8 +583,9 @@ struct ActiveTrace {
   ActiveMetrics metrics;
 };
 
-std::optional<std::string> validateDedicatedMissionWeapon(
-    const sf::game::GameplaySession &gameplay, std::uint32_t mission_index) {
+std::optional<std::string>
+validateDedicatedMissionWeapon(const sf::game::GameplaySession &gameplay,
+                               std::uint32_t mission_index) {
   if (mission_index != 4U) {
     return std::nullopt;
   }
@@ -844,9 +846,8 @@ replayActiveTrace(const sf::game::MissionPackage &package,
   if (initial->sequence == 0U) {
     return "replay published sequence zero";
   }
-  if (const auto validation =
-          validateSession(*gameplay, package.layout(),
-                          initial->sequence - 1U)) {
+  if (const auto validation = validateSession(*gameplay, package.layout(),
+                                              initial->sequence - 1U)) {
     return "replay initial frame: " + *validation;
   }
   if (initial->sequence != trace.initial_sequence ||
@@ -861,8 +862,8 @@ replayActiveTrace(const sf::game::MissionPackage &package,
       return "replay audio/hardware clock stopped at update=" +
              std::to_string(index);
     }
-    if (const auto validation = validateSession(
-            *gameplay, package.layout(), previous_sequence)) {
+    if (const auto validation =
+            validateSession(*gameplay, package.layout(), previous_sequence)) {
       return "replay update=" + std::to_string(index) + " " + *validation;
     }
     const auto frame = gameplay->legacyPresentationFrame();
@@ -941,8 +942,7 @@ int runProbe(const std::filesystem::path &cue_path,
                 << " active-updates=" << trace.metrics.active_updates
                 << " pose-materializations="
                 << trace.metrics.retail_pose_materializations
-                << " post-pose="
-                << trace.metrics.post_materialization_updates
+                << " post-pose=" << trace.metrics.post_materialization_updates
                 << " turn=" << trace.metrics.positive_turn << '/'
                 << trace.metrics.negative_turn << " displacement=" << std::fixed
                 << std::setprecision(1) << trace.metrics.maximum_displacement

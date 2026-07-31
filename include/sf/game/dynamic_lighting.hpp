@@ -109,6 +109,14 @@ struct DynamicLightFrame {
     std::span<const DirectionalDynamicLightState> directional = {},
     std::uint64_t animation_tick = 0U) noexcept;
 
+// Static level geometry already contains the retail lamp/fire contribution in
+// its authored vertex colours. Reapplying reconstructed persistent sources
+// washes out lamp-off rooms and other intentionally dark sections. Keep only
+// genuinely dynamic events and the player flashlight for that baked pass;
+// actors and movable props continue to use the complete frame.
+[[nodiscard]] DynamicLightFrame
+dynamicLightFrameForBakedWorld(const DynamicLightFrame &frame) noexcept;
+
 struct DynamicLightModulation {
   double red{};
   double green{};
@@ -214,6 +222,8 @@ applyRetailVertexLighting(DynamicLightVertexColor base,
 
 // PS1 textured primitives use 128 as neutral modulation. Dynamic illumination
 // adds up to the remaining headroom and never darkens the authored base color.
+// The retail luminance also acts as the exposure mask, preserving intentionally
+// black/dim level sections instead of letting native lights wash through them.
 [[nodiscard]] DynamicLightVertexColor
 applyDynamicLighting(DynamicLightVertexColor base,
                      DynamicLightModulation modulation) noexcept;

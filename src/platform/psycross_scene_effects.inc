@@ -756,8 +756,9 @@ void renderWeaponEffects(
   const auto &shot = gameplay.lastShot();
   const auto &player = gameplay.player();
   const auto guest_effects_authoritative =
-      presentation.guest_camera_lists_captured &&
-      gameplay.legacyEffectParticlesAuthoritative();
+      game::legacyGuestEffectsAuthoritative(
+          presentation.guest_camera_lists_captured,
+          gameplay.legacyEffectParticlesAuthoritative());
   if (!presentation.guest_camera_lists_captured) {
     // Render modes 0/2 are already present as exact raw camera-list packets.
     // This reconstruction remains only for non-retail/fallback presentation.
@@ -1094,17 +1095,21 @@ void renderWeaponEffects(
     return;
   }
   const auto &fire = std::get<game::ObjectFireEmitter>(fire_model->geometry);
-  // The embedded GsSPRITE packet is already projected for the 20 Hz guest
-  // camera. Its controller record is the stronger source: exact family,
-  // frame, world position, scale and colour survive interpolation, aspect
-  // changes and native first-person aim without a screen-space correction.
-  // renderGuestCameraLists suppresses only these proven SPFX sprites below;
-  // unrelated family-zero sprites (glass, weather and overlay effects) keep
-  // their exact retail packets.
+  // The camera list contains exact GsSPRITE quads only for particles retail
+  // linked into the current camera list. Keep native reconstruction for every
+  // live EXPL particle not represented by that exact pool ID. This is what
+  // keeps authored fires visible at distance without duplicating near sprites.
   auto &legacy_particles = scratch.legacy_particles;
   legacy_particles.clear();
   legacy_particles.reserve(gameplay.legacyExplParticles().size());
   for (const auto &source : gameplay.legacyExplParticles()) {
+    if (game::legacyExplParticleHasGuestSprite(
+            source.pool_index, static_cast<std::uint8_t>(source.family),
+            presentation.guest_sprites,
+            presentation.guest_camera_lists_captured,
+            gameplay.legacyEffectParticlesAuthoritative())) {
+      continue;
+    }
     const auto *frames = legacyEffectFrames(fire, source.family);
     if (frames == nullptr || source.scale_byte == 0U ||
         source.frame >= frames->size()) {
@@ -1133,75 +1138,78 @@ void renderWeaponEffects(
                                  fire, fire_texture_placement,
                                  presentation.guest_packet_camera, view,
                                  fire_ordering_table, primitives, stats);
-  for (const auto &projectile : gameplay.projectiles()) {
-    if (!projectile.active ||
-        projectile.phase != game::ProjectilePhase::explosion) {
-      continue;
-    }
-    std::array<FireParticle, 6U> particles{};
-    for (std::size_t index = 0; index < particles.size(); ++index) {
-      const auto angle =
-          static_cast<double>(index) *
-          (2.0 * std::numbers::pi / static_cast<double>(particles.size()));
-      const auto expansion =
-          80.0 + static_cast<double>(projectile.age_updates) * 24.0;
-      particles[index].x = static_cast<std::int32_t>(
-          std::lround(projectile.x + std::cos(angle) * expansion));
-      particles[index].y = static_cast<std::int32_t>(
-          std::lround(projectile.y - std::sin(angle * 2.0) * expansion * 0.45));
-      particles[index].z = static_cast<std::int32_t>(
-          std::lround(projectile.z + std::sin(angle) * expansion));
-      particles[index].frame = static_cast<std::uint8_t>(std::min<std::size_t>(
-          projectile.age_updates / 2U, fire.frames.size() - 1U));
-    }
-    renderFireObject(fire, particles, fire_texture_placement, view,
-                     fire_ordering_table, primitives, stats);
-  }
-  for (const auto &effect : gameplay.effects()) {
-    if (effect.type != game::GameplayEffectType::explosion &&
-        effect.type != game::GameplayEffectType::burning_fire) {
-      continue;
-    }
-    if (effect.type == game::GameplayEffectType::burning_fire) {
-      std::array<FireParticle, 12U> particles{};
-      for (std::size_t index = 0U; index < particles.size(); ++index) {
-        const auto row = static_cast<double>(index / 4U);
-        const auto column = static_cast<double>(index % 4U) - 1.5;
-        const auto flicker = std::sin(static_cast<double>(tick) * 0.16 +
-                                      static_cast<double>(index) * 1.7);
-        particles[index].x = static_cast<std::int32_t>(std::lround(
-            effect.x + column * 92.0 * effect.scale + flicker * 24.0));
-        particles[index].y = static_cast<std::int32_t>(
-            std::lround(effect.y - row * 92.0 - std::abs(flicker) * 55.0));
+  if (!guest_effects_authoritative) {
+    for (const auto &projectile : gameplay.projectiles()) {
+      if (!projectile.active ||
+          projectile.phase != game::ProjectilePhase::explosion) {
+        continue;
+      }
+      std::array<FireParticle, 6U> particles{};
+      for (std::size_t index = 0; index < particles.size(); ++index) {
+        const auto angle =
+            static_cast<double>(index) *
+            (2.0 * std::numbers::pi / static_cast<double>(particles.size()));
+        const auto expansion =
+            80.0 + static_cast<double>(projectile.age_updates) * 24.0;
+        particles[index].x = static_cast<std::int32_t>(
+            std::lround(projectile.x + std::cos(angle) * expansion));
+        particles[index].y = static_cast<std::int32_t>(std::lround(
+            projectile.y - std::sin(angle * 2.0) * expansion * 0.45));
         particles[index].z = static_cast<std::int32_t>(
-            std::lround(effect.z + (row - 1.0) * 105.0 * effect.scale));
-        particles[index].frame = static_cast<std::uint8_t>(
-            (tick / 4U + index * 2U) % fire.frames.size());
+            std::lround(projectile.z + std::sin(angle) * expansion));
+        particles[index].frame =
+            static_cast<std::uint8_t>(std::min<std::size_t>(
+                projectile.age_updates / 2U, fire.frames.size() - 1U));
       }
       renderFireObject(fire, particles, fire_texture_placement, view,
                        fire_ordering_table, primitives, stats);
-      continue;
     }
-    const auto age = static_cast<std::size_t>(effect.total_updates -
-                                              effect.remaining_updates);
-    std::array<FireParticle, 9U> particles{};
-    for (std::size_t index = 0U; index < particles.size(); ++index) {
-      const auto angle =
-          static_cast<double>(index) *
-          (2.0 * std::numbers::pi / static_cast<double>(particles.size()));
-      const auto expansion =
-          (45.0 + static_cast<double>(age) * 22.0) * effect.scale;
-      particles[index].x = static_cast<std::int32_t>(
-          std::lround(effect.x + std::cos(angle) * expansion));
-      particles[index].y = static_cast<std::int32_t>(std::lround(
-          effect.y - 80.0 - std::sin(angle * 2.0) * expansion * 0.4));
-      particles[index].z = static_cast<std::int32_t>(
-          std::lround(effect.z + std::sin(angle) * expansion));
-      particles[index].frame = static_cast<std::uint8_t>(
-          std::min<std::size_t>(age / 2U, fire.frames.size() - 1U));
+    for (const auto &effect : gameplay.effects()) {
+      if (effect.type != game::GameplayEffectType::explosion &&
+          effect.type != game::GameplayEffectType::burning_fire) {
+        continue;
+      }
+      if (effect.type == game::GameplayEffectType::burning_fire) {
+        std::array<FireParticle, 12U> particles{};
+        for (std::size_t index = 0U; index < particles.size(); ++index) {
+          const auto row = static_cast<double>(index / 4U);
+          const auto column = static_cast<double>(index % 4U) - 1.5;
+          const auto flicker = std::sin(static_cast<double>(tick) * 0.16 +
+                                        static_cast<double>(index) * 1.7);
+          particles[index].x = static_cast<std::int32_t>(std::lround(
+              effect.x + column * 92.0 * effect.scale + flicker * 24.0));
+          particles[index].y = static_cast<std::int32_t>(
+              std::lround(effect.y - row * 92.0 - std::abs(flicker) * 55.0));
+          particles[index].z = static_cast<std::int32_t>(
+              std::lround(effect.z + (row - 1.0) * 105.0 * effect.scale));
+          particles[index].frame = static_cast<std::uint8_t>(
+              (tick / 4U + index * 2U) % fire.frames.size());
+        }
+        renderFireObject(fire, particles, fire_texture_placement, view,
+                         fire_ordering_table, primitives, stats);
+        continue;
+      }
+      const auto age = static_cast<std::size_t>(effect.total_updates -
+                                                effect.remaining_updates);
+      std::array<FireParticle, 9U> particles{};
+      for (std::size_t index = 0U; index < particles.size(); ++index) {
+        const auto angle =
+            static_cast<double>(index) *
+            (2.0 * std::numbers::pi / static_cast<double>(particles.size()));
+        const auto expansion =
+            (45.0 + static_cast<double>(age) * 22.0) * effect.scale;
+        particles[index].x = static_cast<std::int32_t>(
+            std::lround(effect.x + std::cos(angle) * expansion));
+        particles[index].y = static_cast<std::int32_t>(std::lround(
+            effect.y - 80.0 - std::sin(angle * 2.0) * expansion * 0.4));
+        particles[index].z = static_cast<std::int32_t>(
+            std::lround(effect.z + std::sin(angle) * expansion));
+        particles[index].frame = static_cast<std::uint8_t>(
+            std::min<std::size_t>(age / 2U, fire.frames.size() - 1U));
+      }
+      renderFireObject(fire, particles, fire_texture_placement, view,
+                       fire_ordering_table, primitives, stats);
     }
-    renderFireObject(fire, particles, fire_texture_placement, view,
-                     fire_ordering_table, primitives, stats);
   }
 }
 
@@ -1411,11 +1419,10 @@ VertexColor localSceneBackColor(const game::GameplaySession &gameplay,
     double vertical_distance{};
     VertexColor color{};
   };
-  const auto sample_triangle =
-      [&](const assets::EmdSection &section,
-          const assets::EmdPolygon &polygon,
-          std::span<const std::uint16_t> live_colors,
-          std::array<std::size_t, 3U> corners)
+  const auto sample_triangle = [&](const assets::EmdSection &section,
+                                   const assets::EmdPolygon &polygon,
+                                   std::span<const std::uint16_t> live_colors,
+                                   std::array<std::size_t, 3U> corners)
       -> std::optional<SampledLighting> {
     const auto point = [&](std::size_t corner) {
       const auto &source =
@@ -1443,8 +1450,7 @@ VertexColor localSceneBackColor(const game::GameplaySession &gameplay,
         .color = {sample->color.red, sample->color.green, sample->color.blue},
     };
   };
-  const auto sample_reference =
-      [&](const LocalSceneLightingSample &reference)
+  const auto sample_reference = [&](const LocalSceneLightingSample &reference)
       -> std::optional<VertexColor> {
     if (reference.model >= gameplay.models().size()) {
       return std::nullopt;
@@ -1458,9 +1464,9 @@ VertexColor localSceneBackColor(const game::GameplaySession &gameplay,
       return std::nullopt;
     }
     const auto &polygon = section.polygons[reference.polygon];
-    const auto live_colors = liveWorldVertexColors(
-        presentation, reference.model, reference.section,
-        section.vertices.size());
+    const auto live_colors =
+        liveWorldVertexColors(presentation, reference.model, reference.section,
+                              section.vertices.size());
     const auto sampled =
         sample_triangle(section, polygon, live_colors, reference.corners);
     return sampled ? std::optional<VertexColor>{sampled->color} : std::nullopt;
@@ -1484,8 +1490,7 @@ VertexColor localSceneBackColor(const game::GameplaySession &gameplay,
                             const assets::EmdPolygon &polygon,
                             std::span<const std::uint16_t> live_colors,
                             std::array<std::size_t, 3U> corners) {
-    const auto sample =
-        sample_triangle(section, polygon, live_colors, corners);
+    const auto sample = sample_triangle(section, polygon, live_colors, corners);
     if (!sample) {
       return;
     }
@@ -1505,7 +1510,7 @@ VertexColor localSceneBackColor(const game::GameplaySession &gameplay,
         .corners = corners,
     };
   };
-  for (const auto model_index : gameplay.activeModels()) {
+  for (const auto model_index : gameplay.presentationModels()) {
     if (model_index >= gameplay.models().size()) {
       continue;
     }
@@ -1527,8 +1532,8 @@ VertexColor localSceneBackColor(const game::GameplaySession &gameplay,
                  live_colors, {0U, 1U, 2U});
         if (polygon.quad) {
           consider(model_index, static_cast<std::uint16_t>(section_index),
-                   static_cast<std::uint32_t>(polygon_index), section,
-                   polygon, live_colors, {1U, 3U, 2U});
+                   static_cast<std::uint32_t>(polygon_index), section, polygon,
+                   live_colors, {1U, 3U, 2U});
         }
       }
     }

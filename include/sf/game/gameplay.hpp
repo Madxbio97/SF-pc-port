@@ -3,6 +3,7 @@
 #include "sf/assets/emd_scene.hpp"
 #include "sf/assets/gmd_model.hpp"
 #include "sf/assets/hmd_model.hpp"
+#include "sf/assets/level_layout.hpp"
 #include "sf/assets/mission_objects.hpp"
 #include "sf/assets/tim_image.hpp"
 #include "sf/game/campaign_state.hpp"
@@ -60,6 +61,51 @@ struct GameplayAudioVolumes {
 [[nodiscard]] std::uint8_t
 composeMapFadeIntensity(std::uint8_t native_intensity,
                         const LegacyFadeBridgeState *guest_fade) noexcept;
+
+// Expand the authored portal envelope by exactly one graph level. The DAT
+// prefetch tail is a resource schedule, not portal adjacency; selecting an
+// arbitrary entry from it does not guarantee that the next visible room is
+// retained. The returned models are only the additional outer ring.
+[[nodiscard]] inline std::vector<std::uint16_t>
+nativeWorldLookaheadRing(std::uint16_t room,
+                         std::span<const std::uint16_t> active_models,
+                         const assets::LevelLayout &layout) {
+  std::vector<std::uint16_t> envelope;
+  envelope.reserve(active_models.size() + 1U);
+  const auto add_unique = [&envelope](std::uint16_t model) {
+    for (const auto existing : envelope) {
+      if (existing == model) {
+        return;
+      }
+    }
+    envelope.push_back(model);
+  };
+  add_unique(room);
+  for (const auto model : active_models) {
+    add_unique(model);
+  }
+
+  std::vector<std::uint16_t> lookahead;
+  for (const auto model : envelope) {
+    if (model >= layout.modelCount()) {
+      continue;
+    }
+    for (const auto neighbour : layout.visibility(model).active_models) {
+      bool already_visible = false;
+      for (const auto visible : envelope) {
+        already_visible = already_visible || visible == neighbour;
+      }
+      bool already_added = false;
+      for (const auto added : lookahead) {
+        already_added = already_added || added == neighbour;
+      }
+      if (!already_visible && !already_added) {
+        lookahead.push_back(neighbour);
+      }
+    }
+  }
+  return lookahead;
+}
 
 struct WorldModel {
   std::string name;
@@ -265,9 +311,45 @@ legacyManualAimControlAvailable(bool control_locked, bool target_lock_active,
 }
 
 [[nodiscard]] constexpr bool
-legacyRadioConversationPresentationActive(bool xa_stream_active,
-                                          bool xa_samples_queued) noexcept {
+legacyTargetFollowCameraPresentationActive(bool previously_active,
+                                           bool camera_scripted,
+                                           bool target_lock_active) noexcept {
+  // A locked shot clears the target flag one guest frame before its 0x0b
+  // follower camera is released. Retain ownership until that camera ends so
+  // the final tracking frames cannot masquerade as an authored cinematic.
+  return target_lock_active || (previously_active && camera_scripted);
+}
+
+[[nodiscard]] constexpr bool legacyCinematicCameraPresentationActive(
+    bool camera_scripted, bool target_follow_camera_active) noexcept {
+  return camera_scripted && !target_follow_camera_active;
+}
+
+[[nodiscard]] constexpr bool legacyRadioAudioPresentationActive(
+    bool previously_active, bool retail_viewport_active, bool xa_stream_active,
+    bool xa_samples_queued) noexcept {
+  // Starting requires both the authored retail viewport and a live XA stream.
+  // Once identified, queued XA samples sustain the presentation until the
+  // audible dialogue has drained, even if retail closes its viewport earlier.
+  if (!previously_active) {
+    return retail_viewport_active && xa_stream_active;
+  }
   return xa_stream_active || xa_samples_queued;
+}
+
+[[nodiscard]] constexpr bool
+legacyLetterboxPresentationActive(bool mission_intro_active,
+                                  bool retail_letterbox_active) noexcept {
+  // FUN_800cd824/FUN_800cd90c own the original 240 <-> 160 line viewport
+  // animation. It is the authoritative PS1 presentation state and cannot be
+  // confused with targeting, room streaming, ordinary XA or camera locks.
+  return mission_intro_active || retail_letterbox_active;
+}
+
+[[nodiscard]] constexpr bool
+legacyGameplayHudPresentationActive(bool mission_complete,
+                                    bool letterbox_active) noexcept {
+  return !mission_complete && !letterbox_active;
 }
 
 [[nodiscard]] constexpr bool legacyFirstPersonAimReleaseRearmRequired(
@@ -384,8 +466,23 @@ enum class ObjectVisualEffect : std::uint8_t {
   none,
   police_lightbar,
   billboard_glow,
+  lamp_fixture,
   scanner_xray,
 };
+
+// Class 0x15 uses both regional resource names for the same retail halo.
+// Missing YLIT here left that variant as scene-lit flat geometry.
+[[nodiscard]] constexpr bool
+legacyLampBillboardModel(std::string_view model_stem) noexcept {
+  return model_stem == "GLIT" || model_stem == "YLIT";
+}
+
+[[nodiscard]] constexpr bool
+legacyLampEmitterModel(std::uint32_t class_id,
+                       std::string_view model_stem) noexcept {
+  return legacyLampHaloSourceClass(static_cast<std::int16_t>(class_id)) ||
+         (class_id == 0x11U && model_stem == "HLITE");
+}
 
 inline constexpr std::uint32_t legacy_virus_scanner_target_class = 0x59U;
 inline constexpr std::uint32_t legacy_virus_scanner_marker_class = 0x6fU;
@@ -405,9 +502,17 @@ legacyVirusScannerMarker(std::uint32_t mission_index, std::uint32_t class_id,
 // Emissive object effects author their own intensity. Passing them through the
 // scene-lighting stack makes lamp halos and lightbars dim with the room or
 // acquire the colour of a nearby source even though they are the emitters.
+[[nodiscard]] constexpr bool objectVisualEffectReceivesSceneLighting(
+    ObjectVisualEffect effect, bool semi_transparent = false) noexcept {
+  return effect == ObjectVisualEffect::none ||
+         (effect == ObjectVisualEffect::lamp_fixture && !semi_transparent);
+}
+
 [[nodiscard]] constexpr bool
-objectVisualEffectReceivesSceneLighting(ObjectVisualEffect effect) noexcept {
-  return effect == ObjectVisualEffect::none;
+objectVisualEffectReceivesDepthCue(ObjectVisualEffect effect,
+                                   bool semi_transparent = false) noexcept {
+  return effect == ObjectVisualEffect::none ||
+         (effect == ObjectVisualEffect::lamp_fixture && !semi_transparent);
 }
 
 struct ObjectModel {
@@ -552,6 +657,7 @@ struct LegacyExplParticle {
   std::uint8_t red{};
   std::uint8_t green{};
   std::uint8_t blue{};
+  std::int16_t pool_index{-1};
 };
 
 struct LegacyProjectedFlamePoint {
@@ -750,6 +856,13 @@ public:
   [[nodiscard]] std::span<const std::uint16_t> activeModels() const noexcept {
     return active_models_;
   }
+  // Presentation may retain one extra portal ring so geometry can fade in
+  // behind the retail depth cue. This set must never affect gameplay
+  // residency, collision, objects or the guest renderer contract.
+  [[nodiscard]] std::span<const std::uint16_t>
+  presentationModels() const noexcept {
+    return presentation_models_;
+  }
   [[nodiscard]] const std::vector<WorldModel> &models() const noexcept {
     return models_;
   }
@@ -929,9 +1042,9 @@ public:
            legacyCinematicPresentationActive();
   }
   [[nodiscard]] bool letterboxActive() const noexcept {
-    // Keep bars only for the authored mission opening. Radio calls, scripted
-    // gameplay cameras and finale handoffs retain the full viewport.
-    return mission_cinematic_phase_ == MissionCinematicPhase::intro;
+    return legacyLetterboxPresentationActive(mission_cinematic_phase_ ==
+                                                 MissionCinematicPhase::intro,
+                                             legacyRadioConversationActive());
   }
   [[nodiscard]] std::uint8_t mapFade() const noexcept;
   [[nodiscard]] std::uint32_t missionObjectiveCount() const noexcept {
@@ -1031,7 +1144,11 @@ private:
   void stageLegacyHostState(const GameplayInput &input);
   [[nodiscard]] GameplayInput
   admittedFirstPersonAimInput(const GameplayInput &input) noexcept;
-  [[nodiscard]] bool legacyRadioConversationActive() const noexcept;
+  [[nodiscard]] bool legacyRadioConversationActive() const noexcept {
+    return legacy_radio_conversation_active_;
+  }
+  void refreshLegacyTargetFollowCameraState() noexcept;
+  void refreshLegacyRadioConversationState() noexcept;
   void syncLegacyGameplayBridge();
   void syncLegacyUiProjection(const LegacyGameplayBridgeState &bridge,
                               const LegacyUiCommandFrame &ui);
@@ -1072,7 +1189,11 @@ private:
   [[nodiscard]] std::vector<std::uint16_t>
   buildActiveModels(std::uint16_t room,
                     std::span<const std::uint16_t> retail_traversal = {}) const;
+  [[nodiscard]] std::vector<std::uint16_t>
+  buildPresentationModels(std::uint16_t room,
+                          std::span<const std::uint16_t> active_models) const;
   void rebuildActiveModels();
+  void rebuildPresentationModels();
   void rebuildActiveObjects();
   void updateCurrentRoom(std::uint16_t ground_model, double player_x,
                          double player_z);
@@ -1082,6 +1203,7 @@ private:
   const MissionPackage &mission_;
   std::vector<WorldModel> models_;
   std::vector<std::uint16_t> active_models_;
+  std::vector<std::uint16_t> presentation_models_;
   // Complete last-known guest BGR555 state. The guest publishes only its
   // current 4:3 streamed set, while native widescreen can retain adjacent DAT
   // models; absent sections therefore keep their last retail color instead
@@ -1183,6 +1305,8 @@ private:
   bool retail_host_aim_active_{};
   unsigned int first_person_aim_roll_block_updates_{};
   bool first_person_aim_release_rearm_required_{};
+  bool legacy_target_follow_camera_active_{};
+  bool legacy_radio_conversation_active_{};
   double host_manual_aim_strafe_{};
   std::optional<std::int32_t> host_manual_aim_body_heading_;
   std::optional<std::int32_t> pending_host_aim_heading_restore_;

@@ -643,9 +643,8 @@ runStartVisualScenario(sf::game::LegacyGameplayVm &vm,
       static_cast<std::uint16_t>(bridge->player.room) != *room) {
     return result;
   }
-  const auto active_models = sf::game::legacyActiveWorldModels(
-      *bridge, mission_package.layout().modelCount());
-  if (!active_models) {
+  if (!sf::game::validateLegacyWorldModelSets(
+          *bridge, mission_package.layout().modelCount())) {
     return result;
   }
 
@@ -657,7 +656,7 @@ runStartVisualScenario(sf::game::LegacyGameplayVm &vm,
                    bridge->camera.target.y, bridge->camera.target.z};
   result.fade_current = bridge->fade.current;
   result.fade_floor = bridge->fade.floor;
-  result.active_models = *active_models;
+  result.active_models = bridge->active_world_models;
   const auto camera_has_extent =
       bridge->camera.eye.x != bridge->camera.target.x ||
       bridge->camera.eye.y != bridge->camera.target.y ||

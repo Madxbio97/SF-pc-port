@@ -1,3 +1,4 @@
+#include "sf/game/legacy_effect_presentation_policy.hpp"
 #include "sf/game/legacy_presentation_bridge.hpp"
 
 #include <array>
@@ -973,6 +974,11 @@ void testPersistentWorldVertexColorCache() {
 }
 
 void testNativeFirstPersonOwnsEveryGuestScreenPrimitive() {
+  require(sf::game::legacyGuestEffectsAuthoritative(true, true) &&
+              !sf::game::legacyGuestEffectsAuthoritative(true, false) &&
+              !sf::game::legacyGuestEffectsAuthoritative(false, true),
+          "Guest SPFX ownership did not require a complete retail frame");
+
   require(!sf::game::legacyGuestCameraItemVisibleWithNativeFirstPerson(true,
                                                                        false) &&
               sf::game::legacyGuestCameraItemVisibleWithNativeFirstPerson(
@@ -984,8 +990,30 @@ void testNativeFirstPersonOwnsEveryGuestScreenPrimitive() {
   sf::game::LegacyGuestSpriteBridgeState particle_sprite;
   particle_sprite.effect_particle = 4;
   particle_sprite.effect_family = 1U;
+  particle_sprite.effect_frame = 2U;
   require(sf::game::legacyGuestSpriteUsesWorldDepth(particle_sprite),
           "SPFX sprite lost depth-tested world ownership");
+  const std::array particle_sprites{particle_sprite};
+  require(
+      sf::game::legacyGuestSpriteCoversExplParticle(4, 1U, particle_sprite,
+                                                    true, true) &&
+          sf::game::legacyExplParticleHasGuestSprite(4, 1U, particle_sprites,
+                                                     true, true) &&
+          !sf::game::legacyExplParticleHasGuestSprite(5, 1U, particle_sprites,
+                                                      true, true) &&
+          !sf::game::legacyExplParticleHasGuestSprite(4, 2U, particle_sprites,
+                                                      true, true) &&
+          !sf::game::legacyExplParticleHasGuestSprite(4, 1U, particle_sprites,
+                                                      false, true) &&
+          !sf::game::legacyExplParticleHasGuestSprite(4, 1U, particle_sprites,
+                                                      true, false) &&
+          !sf::game::legacyExplParticleHasGuestSprite(-1, 1U, particle_sprites,
+                                                      true, true),
+      "Guest SPFX ownership suppressed an unlinked distant EXPL particle");
+  particle_sprite.effect_frame = 9U;
+  require(sf::game::legacyGuestSpriteCoversExplParticle(4, 1U, particle_sprite,
+                                                        true, true),
+          "EXPL slot reuse incorrectly depended on the animated frame");
 
   sf::game::LegacyGuestRawPacketBridgeState particle_packet;
   particle_packet.effect_particle = 3;

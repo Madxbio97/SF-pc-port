@@ -2166,48 +2166,29 @@ std::int32_t LegacyCameraBridgeState::projectionForDisplayWidth(
   return static_cast<std::uint16_t>(projected);
 }
 
-std::optional<std::vector<std::uint16_t>>
-legacyActiveWorldModels(const LegacyGameplayBridgeState &state,
-                        std::size_t expected_model_count) noexcept {
+bool validateLegacyWorldModelSets(const LegacyGameplayBridgeState &state,
+                                  std::size_t expected_model_count) noexcept {
   if (expected_model_count == 0U || expected_model_count >= 0xfeU ||
       state.world_model_count != expected_model_count ||
       state.player.room < -1 ||
       (state.player.room >= 0 &&
        static_cast<std::size_t>(state.player.room) >= expected_model_count)) {
-    return std::nullopt;
+    return false;
   }
 
-  std::vector<std::uint16_t> result;
-  result.reserve(state.resident_world_models.size() +
-                 state.active_world_models.size() + 1U);
-  const auto append_set = [&](std::span<const std::uint16_t> source) {
-    std::vector<std::uint16_t> seen;
-    seen.reserve(source.size());
+  std::array<bool, 0xfeU> seen{};
+  const auto valid_set = [&](std::span<const std::uint16_t> source) {
+    seen.fill(false);
     for (const auto model : source) {
-      if (model >= expected_model_count ||
-          std::ranges::find(seen, model) != seen.end()) {
+      if (model >= expected_model_count || seen[model]) {
         return false;
       }
-      seen.push_back(model);
-      if (std::ranges::find(result, model) == result.end()) {
-        result.push_back(model);
-      }
+      seen[model] = true;
     }
     return true;
   };
-  if (!append_set(state.resident_world_models)) {
-    return std::nullopt;
-  }
-  if (state.player.room >= 0) {
-    const auto room = static_cast<std::uint16_t>(state.player.room);
-    if (std::ranges::find(result, room) == result.end()) {
-      result.push_back(room);
-    }
-  }
-  if (!append_set(state.active_world_models)) {
-    return std::nullopt;
-  }
-  return result;
+  return valid_set(state.resident_world_models) &&
+         valid_set(state.active_world_models);
 }
 
 bool LegacyGameplayVm::finalizeDeadActorDropsBeforeRenderer(
@@ -2938,9 +2919,7 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
       state.active_world_models.push_back(model);
     }
   }
-  const auto validated_world_models =
-      legacyActiveWorldModels(state, state.world_model_count);
-  if (!validated_world_models ||
+  if (!validateLegacyWorldModelSets(state, state.world_model_count) ||
       profile.world_model_descriptor_stride < 0x14U ||
       profile.maximum_world_sections != 31U ||
       profile.maximum_world_section_vertices == 0U ||
@@ -3085,16 +3064,30 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
   // transient payload preserves the last immutable host colors and must not
   // invalidate the complete guest renderer/UI snapshot.
   if (world_descriptors_available) {
-    for (const auto model_index : *validated_world_models) {
-      capture_world_model(model_index);
+    std::array<bool, 0xfeU> prioritized{};
+    const auto capture_set = [&](std::span<const std::uint16_t> source) {
+      for (const auto model_index : source) {
+        if (!prioritized[model_index]) {
+          prioritized[model_index] = true;
+          capture_world_model(model_index);
+        }
+      }
+    };
+
+    // Required camera-visible models are captured first. Resident models are
+    // preloaded resources, so their colors are useful but must not consume the
+    // bounded frame before the live retail traversal has been preserved.
+    capture_set(state.active_world_models);
+    if (state.player.room >= 0) {
+      const auto room = static_cast<std::uint16_t>(state.player.room);
+      capture_set(std::span<const std::uint16_t>{&room, 1U});
     }
+    capture_set(state.resident_world_models);
     for (std::uint16_t model_index = 0U; model_index < state.world_model_count;
          ++model_index) {
-      if (std::ranges::find(*validated_world_models, model_index) !=
-          validated_world_models->end()) {
-        continue;
+      if (!prioritized[model_index]) {
+        capture_world_model(model_index);
       }
-      capture_world_model(model_index);
     }
   }
   last_bridge_read_stage_ = LegacyGameplayBridgeReadStage::dropped_items;
@@ -3708,6 +3701,28 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
   state.camera.mode = std::bit_cast<std::int32_t>(camera_mode_bits);
   state.camera.scripted = state.camera.mode == 0x0b;
   state.camera.locked = camera_lock != 0U;
+
+  std::uint32_t presentation_viewport{};
+  if (!runtime_.read32(profile.presentation_viewport_pointer,
+                       presentation_viewport) ||
+      !readable_ram_pointer(presentation_viewport, 8U)) {
+    return std::nullopt;
+  }
+  const auto presentation_viewport_y =
+      address(presentation_viewport, profile.presentation_viewport_y_offset);
+  const auto presentation_viewport_height = address(
+      presentation_viewport, profile.presentation_viewport_height_offset);
+  if (!presentation_viewport_y || !presentation_viewport_height ||
+      !read_signed16(*presentation_viewport_y,
+                     state.camera.presentation_viewport_y) ||
+      !read_signed16(*presentation_viewport_height,
+                     state.camera.presentation_viewport_height) ||
+      state.camera.presentation_viewport_height <= 0 ||
+      state.camera.presentation_viewport_height > 240) {
+    return std::nullopt;
+  }
+  state.camera.retail_letterbox_active =
+      state.camera.presentation_viewport_height < 240;
 
   std::uint16_t fade_step{};
   std::uint8_t fade_initialized{};
@@ -4462,6 +4477,14 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
       return std::nullopt;
     }
     const auto &controller = controller_descriptors[controller_index];
+    const auto light_source_slot = [&](std::int16_t slot) {
+      return slot >= 0 &&
+             static_cast<std::size_t>(slot) < state.objects.size() &&
+             legacyLampHaloSourceClass(
+                 state.objects[static_cast<std::size_t>(slot)].class_id);
+    };
+    const auto lamp_halo = light_source_slot(controller.source) ||
+                           light_source_slot(controller.attached_slot);
     const auto particle_address = address(
         profile.effect_particle_pool,
         static_cast<std::uint64_t>(particle_index) * effect_particle_stride);
@@ -4510,6 +4533,7 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
         if (sprite.effect_particle ==
             static_cast<std::int16_t>(particle_index)) {
           sprite.effect_position = particle_position;
+          sprite.force_fullbright = lamp_halo;
         }
       }
       for (auto &packet : state.guest_raw_packets) {
@@ -4925,6 +4949,7 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
         !runtime_.read8(*blue_address, particle.blue)) {
       return std::nullopt;
     }
+    particle.pool_index = static_cast<std::int16_t>(particle_index);
     const auto frame =
         maximum_frame - maximum_frame * static_cast<std::int32_t>(lifetime) /
                             static_cast<std::int32_t>(total_lifetime);
@@ -5610,9 +5635,8 @@ bool LegacyGameplayVm::weakenRetailEnemySlots(
   }
   for (const auto slot : slots) {
     if (slot >= static_cast<std::uint32_t>(count) ||
-        !runtime_.write16(records + slot * object_record_stride +
-                              object_health_offset,
-                          1U)) {
+        !runtime_.write16(
+            records + slot * object_record_stride + object_health_offset, 1U)) {
       return false;
     }
   }
@@ -6341,8 +6365,8 @@ bool LegacyGameplayVm::advanceAudioFrameClock(
       profile.callback_hz % updates_per_second != 0U) {
     return false;
   }
-  return advanceAudioClockCallbacks(
-      profile, profile.callback_hz / updates_per_second);
+  return advanceAudioClockCallbacks(profile,
+                                    profile.callback_hz / updates_per_second);
 }
 
 bool LegacyGameplayVm::advanceAudioSliceClock(

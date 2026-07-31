@@ -1006,13 +1006,14 @@ emdTexturedVertex(const SVECTOR &position, const assets::EmdSection &section,
                   const assets::EmdPolygon &polygon, std::size_t corner,
                   std::span<const std::uint16_t> live_colors = {},
                   bool apply_lighting = true,
-                  game::DynamicLightPoint normal = {}) {
+                  game::DynamicLightPoint normal = {},
+                  const game::DynamicLightFrame *dynamic_lights = nullptr) {
   const auto vertex = polygon.vertex_indices[corner];
   return makeTexturedVertex(position, polygon.uv[corner],
                             decodeColor(live_colors.empty()
                                             ? section.vertices[vertex].color
                                             : live_colors[vertex]),
-                            apply_lighting, normal);
+                            apply_lighting, normal, dynamic_lights);
 }
 
 using OrderingDepthTransform = int (*)(int depth);
@@ -1032,7 +1033,8 @@ void submitClippedTriangle(
     std::vector<OT_TAG> &ordering_table,
     StableFrameVector<POLY_GT3> &primitive_buffer, RenderStats &stats,
     OrderingDepthTransform ordering_depth = worldOrderingDepth,
-    bool terrain_depth_cue = false, bool depth_cue_enabled = true) {
+    bool terrain_depth_cue = false, bool depth_cue_enabled = true,
+    long depth_cue_floor = 0L) {
   if (vertices.size() != 3U) {
     throw core::Error{core::ErrorCode::invalid_argument,
                       "Near-plane submission expects one triangle"};
@@ -1097,9 +1099,10 @@ void submitClippedTriangle(
     setProjected(&primitive.x1, xy1);
     setProjected(&primitive.x2, xy2);
     if (depth_cue_enabled && !material.semi_transparent) {
-      const auto cue = [terrain_depth_cue](double camera_z) {
-        return terrain_depth_cue ? retailTerrainDepthCue(camera_z)
-                                 : retailObjectDepthCue(camera_z);
+      const auto cue = [terrain_depth_cue, depth_cue_floor](double camera_z) {
+        return std::max(depth_cue_floor, terrain_depth_cue
+                                             ? retailTerrainDepthCue(camera_z)
+                                             : retailObjectDepthCue(camera_z));
       };
       depthCuePrimitive(primitive, {cue(cameraDepth(view, triangle[0])),
                                     cue(cameraDepth(view, triangle[1])),
@@ -1201,14 +1204,21 @@ void renderGmdObject(
 ) {
 #endif
   const auto reverse_winding = reversesWinding(object.transform);
-  const auto apply_scene_lighting =
-      game::objectVisualEffectReceivesSceneLighting(visual_effect);
   for (auto triangle_index = std::size_t{};
        triangle_index < model.triangles().size(); ++triangle_index) {
     const auto &triangle = model.triangles()[triangle_index];
     if (triangle.flags == 0) {
       continue;
     }
+    // Lamp fixtures combine an ordinarily lit opaque housing with a
+    // semi-transparent emissive halo. Only the halo bypasses scene lighting
+    // and depth cue; treating the complete model as fullbright washes out the
+    // fixture itself.
+    const auto apply_scene_lighting =
+        game::objectVisualEffectReceivesSceneLighting(
+            visual_effect, triangle.semi_transparent);
+    const auto apply_depth_cue = game::objectVisualEffectReceivesDepthCue(
+        visual_effect, triangle.semi_transparent);
     const auto transform_vertex = [&](std::uint8_t index) {
       const auto &vertex = model.vertices()[index];
       return visual_effect == game::ObjectVisualEffect::billboard_glow
@@ -1247,7 +1257,8 @@ void renderGmdObject(
               static_cast<std::uint8_t>(texture_bank),
           },
           two_sided_effect, reverse_winding, view, ordering_table,
-          primitives.objects, stats);
+          primitives.objects, stats, worldOrderingDepth, false,
+          apply_depth_cue);
       continue;
     }
 
@@ -1275,7 +1286,8 @@ void renderGmdObject(
     setProjected(&primitive.x0, xy0);
     setProjected(&primitive.x1, xy1);
     setProjected(&primitive.x2, xy2);
-    if (!triangle.semi_transparent && !force_semi_transparent) {
+    if (apply_depth_cue && !triangle.semi_transparent &&
+        !force_semi_transparent) {
       depthCuePrimitive(primitive,
                         {retailObjectDepthCue(cameraDepth(view, v0)),
                          retailObjectDepthCue(cameraDepth(view, v1)),

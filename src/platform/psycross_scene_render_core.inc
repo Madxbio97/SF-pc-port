@@ -402,9 +402,11 @@ VertexColor decodeColor(std::uint16_t color) {
   };
 }
 
-TexturedVertex makeTexturedVertex(const SVECTOR &position, assets::EmdUv uv,
-                                  VertexColor color, bool apply_lighting = true,
-                                  game::DynamicLightPoint normal = {}) {
+TexturedVertex
+makeTexturedVertex(const SVECTOR &position, assets::EmdUv uv, VertexColor color,
+                   bool apply_lighting = true,
+                   game::DynamicLightPoint normal = {},
+                   const game::DynamicLightFrame *dynamic_lights = nullptr) {
   auto lit = game::DynamicLightVertexColor{color.red, color.green, color.blue};
   if (apply_lighting) {
     lit = applyRetailBlackoutBase(lit);
@@ -418,10 +420,12 @@ TexturedVertex makeTexturedVertex(const SVECTOR &position, assets::EmdUv uv,
         static_cast<double>(position.vz)};
     const auto normal_length_squared =
         normal.x * normal.x + normal.y * normal.y + normal.z * normal.z;
+    const auto &light_frame =
+        dynamic_lights != nullptr ? *dynamic_lights : active_dynamic_lights;
     const auto modulation =
         normal_length_squared > 0.000001
-            ? game::sampleDynamicLighting(active_dynamic_lights, point, normal)
-            : game::sampleDynamicLighting(active_dynamic_lights, point);
+            ? game::sampleDynamicLighting(light_frame, point, normal)
+            : game::sampleDynamicLighting(light_frame, point);
     lit = game::applyDynamicLighting(retail_lit, modulation);
   }
   lit = applyRetailNightvision(lit);
@@ -446,16 +450,17 @@ VertexColor dynamicallyLit(VertexColor base, double x, double y,
   return VertexColor{lit.red, lit.green, lit.blue};
 }
 
-VertexColor dynamicallyLit(VertexColor base, double x, double y, double z,
-                           game::DynamicLightPoint normal) noexcept {
+VertexColor
+dynamicallyLit(VertexColor base, double x, double y, double z,
+               game::DynamicLightPoint normal,
+               const game::DynamicLightFrame &light_frame) noexcept {
   const auto dark_base =
       applyRetailBlackoutBase({base.red, base.green, base.blue});
   const auto retail_lit = game::applyRetailVertexLighting(
       dark_base, active_retail_vertex_lights, {x, y, z},
       active_retail_light_projection);
   const auto lit = applyRetailNightvision(game::applyDynamicLighting(
-      retail_lit,
-      game::sampleDynamicLighting(active_dynamic_lights, {x, y, z}, normal)));
+      retail_lit, game::sampleDynamicLighting(light_frame, {x, y, z}, normal)));
   return VertexColor{lit.red, lit.green, lit.blue};
 }
 
@@ -506,37 +511,41 @@ visibleSurfaceNormal(const std::array<SVECTOR, Count> &vertices) noexcept {
 }
 
 void dynamicallyLight(POLY_GT3 &primitive,
-                      const std::array<SVECTOR, 3U> &vertices) noexcept {
+                      const std::array<SVECTOR, 3U> &vertices,
+                      const game::DynamicLightFrame &light_frame =
+                          active_dynamic_lights) noexcept {
   const auto normal = visibleSurfaceNormal(vertices);
   const auto first =
       dynamicallyLit({primitive.r0, primitive.g0, primitive.b0}, vertices[0].vx,
-                     vertices[0].vy, vertices[0].vz, normal);
+                     vertices[0].vy, vertices[0].vz, normal, light_frame);
   const auto second =
       dynamicallyLit({primitive.r1, primitive.g1, primitive.b1}, vertices[1].vx,
-                     vertices[1].vy, vertices[1].vz, normal);
+                     vertices[1].vy, vertices[1].vz, normal, light_frame);
   const auto third =
       dynamicallyLit({primitive.r2, primitive.g2, primitive.b2}, vertices[2].vx,
-                     vertices[2].vy, vertices[2].vz, normal);
+                     vertices[2].vy, vertices[2].vz, normal, light_frame);
   setRGB0(&primitive, first.red, first.green, first.blue);
   setRGB1(&primitive, second.red, second.green, second.blue);
   setRGB2(&primitive, third.red, third.green, third.blue);
 }
 
 void dynamicallyLight(POLY_GT4 &primitive,
-                      const std::array<SVECTOR, 4U> &vertices) noexcept {
+                      const std::array<SVECTOR, 4U> &vertices,
+                      const game::DynamicLightFrame &light_frame =
+                          active_dynamic_lights) noexcept {
   const auto normal = visibleSurfaceNormal(vertices);
   const auto first =
       dynamicallyLit({primitive.r0, primitive.g0, primitive.b0}, vertices[0].vx,
-                     vertices[0].vy, vertices[0].vz, normal);
+                     vertices[0].vy, vertices[0].vz, normal, light_frame);
   const auto second =
       dynamicallyLit({primitive.r1, primitive.g1, primitive.b1}, vertices[1].vx,
-                     vertices[1].vy, vertices[1].vz, normal);
+                     vertices[1].vy, vertices[1].vz, normal, light_frame);
   const auto third =
       dynamicallyLit({primitive.r2, primitive.g2, primitive.b2}, vertices[2].vx,
-                     vertices[2].vy, vertices[2].vz, normal);
+                     vertices[2].vy, vertices[2].vz, normal, light_frame);
   const auto fourth =
       dynamicallyLit({primitive.r3, primitive.g3, primitive.b3}, vertices[3].vx,
-                     vertices[3].vy, vertices[3].vz, normal);
+                     vertices[3].vy, vertices[3].vz, normal, light_frame);
   setRGB0(&primitive, first.red, first.green, first.blue);
   setRGB1(&primitive, second.red, second.green, second.blue);
   setRGB2(&primitive, third.red, third.green, third.blue);

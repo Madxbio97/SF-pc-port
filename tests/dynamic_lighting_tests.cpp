@@ -8,6 +8,7 @@
 #include <iostream>
 #include <limits>
 #include <stdexcept>
+#include <utility>
 
 namespace {
 
@@ -163,6 +164,116 @@ void testRadialSamplingAndNeutralModulation() {
               {std::numeric_limits<double>::quiet_NaN(), -1.0, 0.0}) ==
               sf::game::DynamicLightVertexColor{30U, 40U, 50U},
           "Invalid lighting input changed authored vertex color");
+}
+
+void testDynamicLightSoftKneePreservesRetailHeadroom() {
+  const auto base = sf::game::DynamicLightVertexColor{248U, 240U, 232U};
+  const auto lit = sf::game::applyDynamicLighting(base, {64.0, 64.0, 64.0});
+  require(lit.red > base.red && lit.green > base.green &&
+              lit.blue > base.blue && lit.red < 255U && lit.green < 255U &&
+              lit.blue < 255U && lit.red > lit.green && lit.green > lit.blue,
+          "Dynamic soft knee clipped or flattened bright retail colours");
+
+  require(sf::game::applyDynamicLighting(
+              base, {std::numeric_limits<double>::quiet_NaN(), 0.5, 0.5}) ==
+              base,
+          "NaN dynamic modulation partially changed authored colour");
+  require(sf::game::applyDynamicLighting(
+              base, {0.5, std::numeric_limits<double>::infinity(), 0.5}) ==
+              base,
+          "Infinite dynamic modulation changed authored colour");
+  require(sf::game::applyDynamicLighting(base, {0.5, -0.01, 0.5}) == base,
+          "Negative dynamic modulation changed authored colour");
+}
+
+void testDynamicLightPreservesAuthoredDarkness() {
+  const auto dark = sf::game::DynamicLightVertexColor{24U, 20U, 16U};
+  const auto neutral = sf::game::DynamicLightVertexColor{128U, 128U, 128U};
+  const auto modulation = sf::game::DynamicLightModulation{64.0, 64.0, 64.0};
+  const auto dark_lit = sf::game::applyDynamicLighting(dark, modulation);
+  const auto neutral_lit = sf::game::applyDynamicLighting(neutral, modulation);
+
+  require(dark_lit.red > dark.red && dark_lit.green > dark.green &&
+              dark_lit.blue > dark.blue && dark_lit.red < 64U &&
+              dark_lit.green < 64U && dark_lit.blue < 64U,
+          "Dynamic light washed out an authored dark retail section");
+  require(neutral_lit.red > dark_lit.red &&
+              neutral_lit.green > dark_lit.green &&
+              neutral_lit.blue > dark_lit.blue,
+          "Retail darkness no longer limits native light exposure");
+}
+
+void testOverlappingDynamicLightsGrowWithoutWhitening() {
+  const std::array one{lamp(100U, 0.0)};
+  const std::array four{
+      lamp(100U, 0.0),
+      lamp(101U, 0.0),
+      lamp(102U, 0.0),
+      lamp(103U, 0.0),
+  };
+  const std::array sixteen{
+      lamp(100U, 0.0), lamp(101U, 0.0), lamp(102U, 0.0), lamp(103U, 0.0),
+      lamp(104U, 0.0), lamp(105U, 0.0), lamp(106U, 0.0), lamp(107U, 0.0),
+      lamp(108U, 0.0), lamp(109U, 0.0), lamp(110U, 0.0), lamp(111U, 0.0),
+      lamp(112U, 0.0), lamp(113U, 0.0), lamp(114U, 0.0), lamp(115U, 0.0),
+  };
+  const auto sample = [](const auto &sources) {
+    const auto frame = sf::game::buildDynamicLightFrame(
+        sources, {}, sf::game::DynamicLightPoint{});
+    const auto energy = sf::game::sampleDynamicLighting(
+        frame, sf::game::DynamicLightPoint{0.0, -700.0, 0.0});
+    const auto colour = sf::game::applyDynamicLighting(
+        sf::game::DynamicLightVertexColor{128U, 128U, 128U}, energy);
+    return std::pair{energy, colour};
+  };
+  const auto [one_energy, one_colour] = sample(one);
+  const auto [four_energy, four_colour] = sample(four);
+  const auto [many_energy, many_colour] = sample(sixteen);
+
+  require(one_energy.red < four_energy.red &&
+              four_energy.red < many_energy.red && four_energy.red > 0.55,
+          "Overlapping light energy stopped growing monotonically");
+  require(one_colour.red < four_colour.red &&
+              four_colour.red < many_colour.red && many_colour.red < 225U,
+          "Overlapping lights clipped neutral retail colour to white");
+}
+
+void testDynamicLightCompositionIgnoresSourceOrder() {
+  const std::array sources{
+      lamp(201U, -360.0),
+      lamp(202U, 75.0),
+      lamp(203U, 420.0),
+      lamp(204U, 900.0),
+  };
+  auto reversed = sources;
+  std::reverse(reversed.begin(), reversed.end());
+  const auto sample = [](const auto &ordered) {
+    const auto frame = sf::game::buildDynamicLightFrame(
+        ordered, {}, sf::game::DynamicLightPoint{});
+    const auto energy = sf::game::sampleDynamicLighting(
+        frame, sf::game::DynamicLightPoint{100.0, -700.0, 0.0});
+    return sf::game::applyDynamicLighting(
+        sf::game::DynamicLightVertexColor{128U, 96U, 64U}, energy);
+  };
+  require(sample(sources) == sample(reversed),
+          "Dynamic lighting changed when source order was reversed");
+}
+void testBakedWorldRejectsPersistentRelighting() {
+  auto frame = sf::game::DynamicLightFrame{};
+  frame.count = 4U;
+  frame.lights[0].kind = sf::game::DynamicLightKind::street_lamp;
+  frame.lights[1].kind = sf::game::DynamicLightKind::muzzle_flash;
+  frame.lights[1].transient = true;
+  frame.lights[2].kind = sf::game::DynamicLightKind::flashlight;
+  frame.lights[2].directional = true;
+  frame.lights[3].kind = sf::game::DynamicLightKind::steady_fire;
+
+  const auto baked = sf::game::dynamicLightFrameForBakedWorld(frame);
+  require(baked.count == 2U &&
+              baked.lights[0].kind ==
+                  sf::game::DynamicLightKind::muzzle_flash &&
+              baked.lights[1].kind == sf::game::DynamicLightKind::flashlight,
+          "Baked world accepted reconstructed persistent illumination");
 }
 
 void testSurfaceLightingRejectsBackFaces() {
@@ -715,7 +826,12 @@ int main() {
     testTransientLightsAreExactAndFinite();
     testFlashlightConeIsDirectionalAndAuthoritative();
     testRadialSamplingAndNeutralModulation();
+    testDynamicLightSoftKneePreservesRetailHeadroom();
+    testDynamicLightPreservesAuthoredDarkness();
+    testOverlappingDynamicLightsGrowWithoutWhitening();
+    testDynamicLightCompositionIgnoresSourceOrder();
     testSurfaceLightingRejectsBackFaces();
+    testBakedWorldRejectsPersistentRelighting();
     testActorShadowTracksEligibleDynamicLight();
     testActorShadowRejectsLowLightAndMalformedPlane();
     testActorShadowBlendsSourcesAndBoundsStretch();

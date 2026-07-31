@@ -2421,6 +2421,7 @@ void testLegacyGameplayVmBoundary() {
   bridge_profile.camera_controller_pointer = 0x80032000U;
   bridge_profile.camera_mode = 0x80032020U;
   bridge_profile.camera_lock = 0x80032024U;
+  bridge_profile.presentation_viewport_pointer = 0x800320fcU;
   bridge_profile.player_control_lock = 0x80032028U;
   bridge_profile.current_room = 0x8003202cU;
   bridge_profile.world_layout_pointer = 0x80032088U;
@@ -2524,6 +2525,7 @@ void testLegacyGameplayVmBoundary() {
   constexpr std::uint32_t actor_light_state = 0x8004a480U;
   constexpr std::uint32_t recycled_actor_light_state = 0x8004a4a0U;
   constexpr std::uint32_t player_light_state = 0x8004a4c0U;
+  constexpr std::uint32_t presentation_viewport = 0x8004a680U;
   constexpr std::uint32_t world_descriptors = 0x8004b000U;
   constexpr std::uint32_t guest_world_model = 0x8004b200U;
   constexpr std::uint32_t guest_world_resource = 0x8004b240U;
@@ -2537,6 +2539,16 @@ void testLegacyGameplayVmBoundary() {
                            camera_controller) &&
           vm.runtime().write32(bridge_profile.camera_mode, 0x0bU) &&
           vm.runtime().write32(bridge_profile.camera_lock, 1U) &&
+          vm.runtime().write32(bridge_profile.presentation_viewport_pointer,
+                               presentation_viewport) &&
+          vm.runtime().write16(
+              presentation_viewport +
+                  bridge_profile.presentation_viewport_y_offset,
+              0U) &&
+          vm.runtime().write16(
+              presentation_viewport +
+                  bridge_profile.presentation_viewport_height_offset,
+              240U) &&
           vm.runtime().write32(bridge_profile.player_control_lock, 1U) &&
           vm.runtime().write16(bridge_profile.current_room, 0xffffU) &&
           vm.runtime().write32(bridge_profile.dynamic_light_list,
@@ -3343,6 +3355,9 @@ void testLegacyGameplayVmBoundary() {
           bridge->camera.projectionForDisplayWidth(384) == 261 &&
           bridge->camera.fov_raw == 827 && bridge->camera.mode == 0x0b &&
           bridge->camera.scripted && bridge->camera.locked &&
+          bridge->camera.presentation_viewport_y == 0 &&
+          bridge->camera.presentation_viewport_height == 240 &&
+          !bridge->camera.retail_letterbox_active &&
           bridge->environment.clear_color ==
               sf::game::LegacyRgbBridgeState{7U, 11U, 13U} &&
           bridge->environment.back_color ==
@@ -3419,7 +3434,10 @@ void testLegacyGameplayVmBoundary() {
           bridge->vertex_lights[0].depth_shift == 6U &&
           bridge->vertex_lights[0].channel_mask == 0x00ffffffU &&
           bridge->world_vertex_colors.size() == 5U &&
-          bridge->world_vertex_colors[0].model == 0U &&
+          bridge->world_vertex_colors[0].model == 1U &&
+          bridge->world_vertex_colors[1].model == 3U &&
+          bridge->world_vertex_colors[2].model == 0U &&
+          bridge->world_vertex_colors[3].model == 4U &&
           bridge->world_vertex_colors[0].section == 0U &&
           bridge->world_vertex_colors[0].colors ==
               std::vector<std::uint16_t>({0x0421U, 0x0842U, 0x0c63U}) &&
@@ -3493,21 +3511,25 @@ void testLegacyGameplayVmBoundary() {
           bridge->objects[2].hmd_back_color_q12 ==
               std::array<std::int16_t, 3U>{900, 1000, 1100} &&
           bridge->expl_particles.size() == 4U &&
+          bridge->expl_particles[0].pool_index == 0 &&
           bridge->expl_particles[0].controller == 0U &&
           bridge->expl_particles[0].source_slot == 57 &&
           bridge->expl_particles[0].family == 2U &&
           bridge->expl_particles[0].scale_byte == 96U &&
           bridge->expl_particles[0].frame == 4U &&
+          bridge->expl_particles[1].pool_index == 1 &&
           bridge->expl_particles[1].controller == 1U &&
           bridge->expl_particles[1].source_slot == -1 &&
           bridge->expl_particles[1].family == 1U &&
           bridge->expl_particles[1].scale_byte == 72U &&
           bridge->expl_particles[1].frame == 8U &&
+          bridge->expl_particles[2].pool_index == 2 &&
           bridge->expl_particles[2].controller == 2U &&
           bridge->expl_particles[2].source_slot == 1 &&
           bridge->expl_particles[2].family == 3U &&
           bridge->expl_particles[2].scale_byte == 48U &&
           bridge->expl_particles[2].frame == 8U &&
+          bridge->expl_particles[3].pool_index == 3 &&
           bridge->expl_particles[3].controller == 3U &&
           bridge->expl_particles[3].source_slot == -1 &&
           bridge->expl_particles[3].family == 4U &&
@@ -3515,6 +3537,32 @@ void testLegacyGameplayVmBoundary() {
           bridge->expl_particles[3].frame == 4U &&
           bridge->park2_flamethrower_ribbons.empty(),
       "Legacy typed gameplay bridge mismatch");
+
+  require(
+      vm.runtime().write16(presentation_viewport +
+                               bridge_profile.presentation_viewport_y_offset,
+                           40U) &&
+          vm.runtime().write16(
+              presentation_viewport +
+                  bridge_profile.presentation_viewport_height_offset,
+              160U),
+      "Could not seed the retail radio viewport");
+  const auto radio_viewport_bridge = vm.readBridgeState(bridge_profile);
+  require(radio_viewport_bridge &&
+              radio_viewport_bridge->camera.presentation_viewport_y == 40 &&
+              radio_viewport_bridge->camera.presentation_viewport_height ==
+                  160 &&
+              radio_viewport_bridge->camera.retail_letterbox_active,
+          "The exact retail radio viewport did not own letterbox state");
+  require(
+      vm.runtime().write16(presentation_viewport +
+                               bridge_profile.presentation_viewport_y_offset,
+                           0U) &&
+          vm.runtime().write16(
+              presentation_viewport +
+                  bridge_profile.presentation_viewport_height_offset,
+              240U),
+      "Could not restore the gameplay viewport");
 
   require(
       vm.runtime().write32(bridge_profile.virus_scanner_target, 0U) &&
@@ -4076,12 +4124,17 @@ void testLegacyGameplayVmBoundary() {
               vm.runtime().write32(bridge_profile.active_terrain_depth_cue,
                                    (5U << 16U) | 0x0800U),
           "Legacy bridge accepted an unsafe active depth-cue shift");
-  const auto native_world_models =
-      sf::game::legacyActiveWorldModels(*bridge, 5U);
-  require(native_world_models &&
-              *native_world_models ==
-                  std::vector<std::uint16_t>({0U, 4U, 1U, 3U}),
-          "Legacy world visibility union mismatch");
+  require(sf::game::validateLegacyWorldModelSets(*bridge, 5U),
+          "Legacy bridge rejected valid world model sets");
+  auto duplicate_world_model = *bridge;
+  duplicate_world_model.active_world_models.push_back(
+      duplicate_world_model.active_world_models.front());
+  require(!sf::game::validateLegacyWorldModelSets(duplicate_world_model, 5U),
+          "Legacy bridge accepted a duplicate active world model");
+  auto out_of_range_world_model = *bridge;
+  out_of_range_world_model.resident_world_models.push_back(5U);
+  require(!sf::game::validateLegacyWorldModelSets(out_of_range_world_model, 5U),
+          "Legacy bridge accepted an out-of-range resident world model");
   require(vm.runtime().write32(world_descriptors + 2U * 0x3cU, 0x801ffff8U),
           "Could not seed an unloading optional world descriptor");
   const auto unloading_optional = vm.readBridgeState(bridge_profile);
@@ -6073,10 +6126,9 @@ void testLegacyGameplayVmBoundary() {
   require(!sf::game::legacyMissionFailureRestartReady(0U, failed_mission),
           "Retail failure must retain the 0xc8-unit delay before fade");
   failed_mission.failure_transition = true;
-  require(
-      !sf::game::legacyMissionFailureRestartReady(0U, failed_mission) &&
-          sf::game::legacyMissionFailureRestartReady(2U, failed_mission),
-      "Retail failure fade must finish before requesting restart");
+  require(!sf::game::legacyMissionFailureRestartReady(0U, failed_mission) &&
+              sf::game::legacyMissionFailureRestartReady(2U, failed_mission),
+          "Retail failure fade must finish before requesting restart");
   failed_mission.failure = false;
   failed_mission.success = true;
   require(!sf::game::legacyMissionFailureRestartReady(2U, failed_mission),

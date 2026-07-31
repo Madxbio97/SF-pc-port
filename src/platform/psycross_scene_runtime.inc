@@ -65,7 +65,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
                 world_filter);
   PsyX_Log_Info("Gameplay start: room=%u models=%zu objects=%zu "
                 "player=(%.0f,%.0f,%.0f) yaw=%d\n",
-                gameplay.currentRoom(), gameplay.activeModels().size(),
+                gameplay.currentRoom(), gameplay.presentationModels().size(),
                 gameplay.activeObjects().size(), gameplay.player().x,
                 gameplay.player().y, gameplay.player().z,
                 gameplay.player().yaw);
@@ -82,6 +82,8 @@ SceneViewerResult PsyCrossSceneViewer::run(
   ActorShadowPresentationCache actor_shadow_cache;
   DynamicLightFrameScratch dynamic_light_scratch;
   LocalSceneLightingCache local_scene_lighting_cache;
+  WorldChunkAppearance world_chunk_appearance;
+  GameplayPresentationTransition gameplay_presentation_transition;
   WeaponEffectsScratch weapon_effects_scratch;
   HmdPoseScratch hmd_pose_scratch;
   std::vector<WorldCalloutAnchor> world_callout_scratch;
@@ -217,6 +219,8 @@ SceneViewerResult PsyCrossSceneViewer::run(
     glass_shatter.reset(gameplay);
     actor_shadow_cache.reset();
     dynamic_light_scratch.reset();
+    world_chunk_appearance.reset();
+    gameplay_presentation_transition.reset();
     primitives.invalidateCapacityPlan();
     weapon_presentation_edges.observe(gameplay.legacyPresentationFrame());
     muzzle_flash_edges.observe(gameplay.effects());
@@ -397,6 +401,8 @@ SceneViewerResult PsyCrossSceneViewer::run(
     hud_textures.restoreGameplay(gameplay.hud(), presentation.first_person_aim,
                                  presentation.dropped_items,
                                  presentation.projectiles);
+    world_chunk_appearance.advance(gameplay.presentationModels(),
+                                   presentation_delta_seconds);
     const auto stats = renderWorld(
         gameplay, textures, hud_textures, fire_animation,
         textures.firePlacement(), effect_textures, actor_animations, actor_tick,
@@ -413,7 +419,8 @@ SceneViewerResult PsyCrossSceneViewer::run(
         surface_picker_ordering_table,
 #endif
         actor_shadow_cache, dynamic_light_scratch, local_scene_lighting_cache,
-        weapon_effects_scratch, hmd_pose_scratch, primitives
+        world_chunk_appearance, weapon_effects_scratch, hmd_pose_scratch,
+        primitives
 #if defined(SF_ENABLE_SURFACE_PICKER)
         ,
         surface_picker
@@ -510,9 +517,16 @@ SceneViewerResult PsyCrossSceneViewer::run(
     drawRetailScreenFilter(presentation.environment,
                            presentation.retail_environment_active);
     drawGameBrightness(pause_settings.brightness);
-    const auto cinematic = gameplay.cinematic();
-    const auto letterboxed = gameplay.letterboxActive();
-    if (letterboxed) {
+    const auto letterbox_requested = gameplay.letterboxActive();
+    gameplay_presentation_transition.advance(letterbox_requested,
+                                             presentation_delta_seconds);
+    const auto letterbox_amount =
+        gameplay_presentation_transition.letterboxAmount();
+    const auto hud_visibility =
+        gameplay_presentation_transition.hudVisibility();
+    const auto bar_height =
+        static_cast<int>(std::lround(letterbox_amount * 18.0));
+    if (bar_height > 0) {
       GR_SetBlendMode(BM_NONE);
       GR_EnableDepth(0);
       GR_SetDepthState(0, 0);
@@ -532,21 +546,28 @@ SceneViewerResult PsyCrossSceneViewer::run(
       const auto bar_right = static_cast<int>(
           std::ceil((static_cast<double>(screen_width) + visible_width) * 0.5));
       const auto bar_width = std::max(bar_right - bar_left, screen_width);
-      drawSolidRect(bar_left, 0, bar_width, 18, 0U, 0U, 0U);
-      drawSolidRect(bar_left, screen_height - 18, bar_width, 18, 0U, 0U, 0U);
+      drawSolidRect(bar_left, 0, bar_width, bar_height, 0U, 0U, 0U);
+      drawSolidRect(bar_left, screen_height - bar_height, bar_width, bar_height,
+                    0U, 0U, 0U);
       DrawSync(0);
       GR_EnableDepth(1);
       GR_SetDepthState(1, 1);
     }
-    if (!cinematic && !gameplay.missionComplete()) {
+    constexpr double hidden_hud_threshold = 0.001;
+    const auto hud_fully_hidden = hud_visibility <= hidden_hud_threshold;
+    if (game::legacyGameplayHudPresentationActive(gameplay.missionComplete(),
+                                                  hud_fully_hidden)) {
       drawGameplayHud(
           hud_textures, gameplay, camera, target_anchor, world_callout_scratch,
           input_, presentation.first_person_aim, aim_heading,
           presented_weapon_switch_frames, presentation_delta_seconds,
           pause_settings.screen_center_x, pause_settings.screen_center_y,
-          gameplay_hud_scratch);
-      drawRetailGrenadeTrajectory(presentation, pause_settings.screen_center_x,
-                                  pause_settings.screen_center_y);
+          hud_visibility, gameplay_hud_scratch);
+      if (hud_visibility > 0.5) {
+        drawRetailGrenadeTrajectory(presentation,
+                                    pause_settings.screen_center_x,
+                                    pause_settings.screen_center_y);
+      }
     }
     // Failure presentation belongs to retail FONT/TEXT and fade state.  The
     // guest publishes the same type-on glyph packets for player death and
@@ -1534,14 +1555,14 @@ SceneViewerResult PsyCrossSceneViewer::run(
       gameplay.advanceAnimationClock();
     }
     if (log_next_frame) {
-      PsyX_Log_Info("Gameplay frame: room=%u models=%zu objects=%zu "
-                    "submitted=%zu rejected=%zu depth=%d..%d "
-                    "screen=(%d..%d,%d..%d)\n",
-                    gameplay.currentRoom(), gameplay.activeModels().size(),
-                    gameplay.activeObjects().size(), stats.submitted,
-                    stats.rejected, stats.minimum_depth, stats.maximum_depth,
-                    stats.minimum_x, stats.maximum_x, stats.minimum_y,
-                    stats.maximum_y);
+      PsyX_Log_Info(
+          "Gameplay frame: room=%u models=%zu objects=%zu "
+          "submitted=%zu rejected=%zu depth=%d..%d "
+          "screen=(%d..%d,%d..%d)\n",
+          gameplay.currentRoom(), gameplay.presentationModels().size(),
+          gameplay.activeObjects().size(), stats.submitted, stats.rejected,
+          stats.minimum_depth, stats.maximum_depth, stats.minimum_x,
+          stats.maximum_x, stats.minimum_y, stats.maximum_y);
       log_next_frame = false;
     }
     end_presented_frame();

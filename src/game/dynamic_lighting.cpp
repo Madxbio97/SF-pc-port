@@ -244,14 +244,6 @@ void consider(std::array<SelectedLight, maximum_dynamic_lights> &selected,
   }
 }
 
-[[nodiscard]] std::uint8_t quantize(double value) noexcept {
-  if (!std::isfinite(value)) {
-    return 0U;
-  }
-  return static_cast<std::uint8_t>(
-      std::clamp<long>(std::lround(value), 0L, 255L));
-}
-
 [[nodiscard]] std::int32_t arithmeticShiftRight(std::int32_t value,
                                                 unsigned shift) noexcept {
   if (shift == 0U) {
@@ -619,6 +611,21 @@ DynamicLightFrame buildDynamicLightFrame(
   return result;
 }
 
+DynamicLightFrame
+dynamicLightFrameForBakedWorld(const DynamicLightFrame &frame) noexcept {
+  auto result = DynamicLightFrame{};
+  for (const auto &light : frame.active()) {
+    if (!light.transient && !light.directional) {
+      continue;
+    }
+    if (result.count >= result.lights.size()) {
+      break;
+    }
+    result.lights[result.count++] = light;
+  }
+  return result;
+}
+
 DynamicLightModulation sampleDynamicLightingImpl(
     const DynamicLightFrame &frame, DynamicLightPoint point,
     std::optional<DynamicLightPoint> surface_normal) noexcept {
@@ -696,9 +703,10 @@ DynamicLightModulation sampleDynamicLightingImpl(
     result.green += light.color.green * attenuation;
     result.blue += light.color.blue * attenuation;
   }
-  result.red = std::min(result.red, 0.55);
-  result.green = std::min(result.green, 0.55);
-  result.blue = std::min(result.blue, 0.55);
+  // Keep irradiance linear here. A hard per-channel ceiling made every
+  // sufficiently crowded light volume converge to the same flat value and
+  // destroyed texture contrast before the authored retail colour was known.
+  // The final composition owns the bounded, headroom-aware response.
   return result;
 }
 
@@ -1038,12 +1046,50 @@ sampleDynamicLighting(const DynamicLightFrame &frame, DynamicLightPoint point,
 DynamicLightVertexColor
 applyDynamicLighting(DynamicLightVertexColor base,
                      DynamicLightModulation modulation) noexcept {
-  constexpr double neutral_modulation = 96.0;
-  const auto apply = [](std::uint8_t value, double amount) {
-    if (!std::isfinite(amount) || amount <= 0.0) {
+  if (!std::isfinite(modulation.red) || !std::isfinite(modulation.green) ||
+      !std::isfinite(modulation.blue) || modulation.red < 0.0 ||
+      modulation.green < 0.0 || modulation.blue < 0.0) {
+    return base;
+  }
+
+  // Match the old response slope around neutral PS1 modulation (128) while
+  // approaching only a bounded fraction of the remaining channel headroom.
+  // This soft knee lets overlapping lights grow monotonically without
+  // clipping already bright retail colours to featureless white.
+  constexpr double neutral_modulation_delta = 96.0;
+  constexpr double neutral_headroom = 255.0 - 128.0;
+  constexpr double linear_response =
+      neutral_modulation_delta / neutral_headroom;
+  constexpr double maximum_headroom_fraction = 0.72;
+  // Dynamic sources sit on top of the authored PS1 vertex lighting. Keep that
+  // layer deliberately restrained so lamps, fire and muzzle flashes preserve
+  // local contrast instead of lifting an entire surface toward white.
+  constexpr double native_dynamic_light_exposure = 0.68;
+  // Retail encodes intentional darkness in the primitive modulation itself.
+  // An additive light which always targets white turns black alcoves and
+  // lamp-off sections into bright grey, and also leaks visibly through the
+  // deliberately coarse PS1 occlusion. Use the retail luminance as a shared
+  // exposure mask: neutral/brighter geometry keeps the full native response,
+  // while authored dark regions retain their original contrast and hue.
+  constexpr double neutral_retail_luminance = 128.0;
+  const auto retail_luminance = (54.0 * static_cast<double>(base.red) +
+                                 183.0 * static_cast<double>(base.green) +
+                                 19.0 * static_cast<double>(base.blue)) /
+                                256.0;
+  const auto authored_exposure =
+      std::clamp(retail_luminance / neutral_retail_luminance, 0.0, 1.0);
+  const auto apply = [authored_exposure](std::uint8_t value, double amount) {
+    if (amount <= 0.0 || value == 255U) {
       return value;
     }
-    return quantize(static_cast<double>(value) + amount * neutral_modulation);
+    const auto response =
+        -maximum_headroom_fraction *
+        std::expm1(-amount * native_dynamic_light_exposure * linear_response /
+                   maximum_headroom_fraction);
+    const auto headroom = 255.0 - static_cast<double>(value);
+    const auto delta = static_cast<unsigned>(
+        std::floor(headroom * response * authored_exposure));
+    return static_cast<std::uint8_t>(static_cast<unsigned>(value) + delta);
   };
   return DynamicLightVertexColor{apply(base.red, modulation.red),
                                  apply(base.green, modulation.green),

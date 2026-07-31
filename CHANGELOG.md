@@ -3,6 +3,46 @@
 All notable public-test changes are documented here. The project currently uses
 pre-release tags rather than a stable semantic-versioning promise.
 
+## 0.1.0-public-test.15 - 2026-07-31
+
+### Lighting and distance presentation
+
+- Restored PS1-authored darkness on static terrain by excluding persistent
+  reconstructed native lights from baked world geometry while preserving
+  transient muzzle flashes, fire, explosions and the player flashlight.
+- Extended native presentation by one portal-visibility ring and hid the extra
+  geometry behind the retail depth cue plus a 0.60-second appearance fade.
+  The lookahead is presentation-only and cannot alter collision, active
+  objects, guest state or retail always-resident models.
+- Kept GLIT/YLIT lamp halos and emissive billboards full-bright while allowing
+  physical lamp fixtures to retain appropriate scene lighting and fog.
+
+### Effects and presentation
+
+- Reconciled original guest SPFX packets with native fallback effects by exact
+  pool identity, preventing duplicated, oversized or distance-dependent fire,
+  smoke and explosion sprites.
+- Reworked HUD and letterbox transitions into an ordered fade sequence driven
+  by the original viewport/radio state, avoiding false activation from target
+  tracking, shots and streaming boundaries.
+- Preserved authored static vertex colours in dynamically lit areas instead of
+  washing dark mission regions toward white.
+
+### Validation
+
+- Restored and enforced the retail active/resident world-model contract for all
+  20 missions after separating render lookahead from authoritative gameplay.
+- Added regression coverage for dynamic-light policy, depth cue, chunk
+  appearance, SPFX ownership, HUD/letterbox transitions and R3000 state.
+- Validated complete MSVC and PsyCross Release suites, all supported-ROM probes,
+  package manifest, internal hashes and forbidden-file rules.
+
+### Release artifact
+
+- File: `SyphonFilterPC-0.1.0-public-test.15-win64.zip`
+- Checksum: supplied in the accompanying `.zip.sha256` file.
+- Supported disc: *Syphon Filter* USA v1.1 (`SCUS-94240`), BIN/CUE.
+
 ## 0.1.0-public-test.14 - 2026-07-30
 
 ### Mission flow and localization
