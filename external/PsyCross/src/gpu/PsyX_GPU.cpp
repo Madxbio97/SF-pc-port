@@ -883,7 +883,7 @@ static bool SplitUsesOnlyWorldDepth(const GPUDrawSplit& split)
 	return true;
 }
 
-void DrawSplit(const GPUDrawSplit& split)
+void DrawSplit(const GPUDrawSplit& split, bool splitUsesOnlyWorldDepth = false)
 {
 	if(split.debugText)
 		GR_PushDebugLabel(split.debugText);
@@ -924,9 +924,14 @@ void DrawSplit(const GPUDrawSplit& split)
 	{
 		const GrVertex* triangle = &g_vertexBuffer[vertexIndex];
 		const bool usesDepth =
+			splitUsesOnlyWorldDepth ||
 			GR_UsesWorldDepth(triangle, depthRequested) != 0;
-		const float averageDepth =
-			(triangle[0].z + triangle[1].z + triangle[2].z) / 3.0f;
+		float averageDepth = 0.0f;
+		if(usesDepth)
+		{
+			averageDepth =
+				(triangle[0].z + triangle[1].z + triangle[2].z) / 3.0f;
+		}
 		// Transparent geometry consumes the completed opaque depth buffer. It
 		// must never clear that buffer before its test-only draw.
 		const bool clearDepth = depthWrite && usesDepth &&
@@ -992,6 +997,18 @@ void DrawAllSplits()
 
 	if(g_RequestedDepthMode)
 	{
+		// Depth classification used to rescan every triangle each time the
+		// ordering loop tested the current split. Large world batches could be
+		// traversed two or three times before any draw was submitted, which is
+		// particularly expensive at 120/240 Hz. Classify each split exactly
+		// once and pass the result into DrawSplit so world-only runs also skip
+		// redundant per-triangle scr_h tests.
+		unsigned char worldDepthSplits[MAX_DRAW_SPLITS] = {};
+		for(int splitIndex = 1; splitIndex <= g_splitIndex; ++splitIndex)
+		{
+			worldDepthSplits[splitIndex] =
+				SplitUsesOnlyWorldDepth(g_splits[splitIndex]) ? 1 : 0;
+		}
 		// OT bins prepend packets. A transparent object submitted after its
 		// opaque receiver can therefore execute first when both quantize to the
 		// same bin, then be overwritten because transparent draws do not write Z.
@@ -1000,25 +1017,25 @@ void DrawAllSplits()
 		// boundaries retain exact PS1 painter order.
 		for(int i = 1; i <= g_splitIndex;)
 		{
-			if(!SplitUsesOnlyWorldDepth(g_splits[i]))
+			if(!worldDepthSplits[i])
 			{
 				DrawSplit(g_splits[i++]);
 				continue;
 			}
 
 			const int worldBegin = i;
-			while(i <= g_splitIndex && SplitUsesOnlyWorldDepth(g_splits[i]))
+			while(i <= g_splitIndex && worldDepthSplits[i])
 				++i;
 
 			for(int splitIndex = worldBegin; splitIndex < i; ++splitIndex)
 			{
 				if(g_splits[splitIndex].blendMode == BM_NONE)
-					DrawSplit(g_splits[splitIndex]);
+					DrawSplit(g_splits[splitIndex], true);
 			}
 			for(int splitIndex = worldBegin; splitIndex < i; ++splitIndex)
 			{
 				if(g_splits[splitIndex].blendMode != BM_NONE)
-					DrawSplit(g_splits[splitIndex]);
+					DrawSplit(g_splits[splitIndex], true);
 			}
 		}
 	}

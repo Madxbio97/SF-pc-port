@@ -3,7 +3,6 @@
 #include "sf/assets/emd_scene.hpp"
 #include "sf/assets/gmd_model.hpp"
 #include "sf/assets/hmd_model.hpp"
-#include "sf/assets/level_layout.hpp"
 #include "sf/assets/mission_objects.hpp"
 #include "sf/assets/tim_image.hpp"
 #include "sf/game/campaign_state.hpp"
@@ -61,51 +60,6 @@ struct GameplayAudioVolumes {
 [[nodiscard]] std::uint8_t
 composeMapFadeIntensity(std::uint8_t native_intensity,
                         const LegacyFadeBridgeState *guest_fade) noexcept;
-
-// Expand the authored portal envelope by exactly one graph level. The DAT
-// prefetch tail is a resource schedule, not portal adjacency; selecting an
-// arbitrary entry from it does not guarantee that the next visible room is
-// retained. The returned models are only the additional outer ring.
-[[nodiscard]] inline std::vector<std::uint16_t>
-nativeWorldLookaheadRing(std::uint16_t room,
-                         std::span<const std::uint16_t> active_models,
-                         const assets::LevelLayout &layout) {
-  std::vector<std::uint16_t> envelope;
-  envelope.reserve(active_models.size() + 1U);
-  const auto add_unique = [&envelope](std::uint16_t model) {
-    for (const auto existing : envelope) {
-      if (existing == model) {
-        return;
-      }
-    }
-    envelope.push_back(model);
-  };
-  add_unique(room);
-  for (const auto model : active_models) {
-    add_unique(model);
-  }
-
-  std::vector<std::uint16_t> lookahead;
-  for (const auto model : envelope) {
-    if (model >= layout.modelCount()) {
-      continue;
-    }
-    for (const auto neighbour : layout.visibility(model).active_models) {
-      bool already_visible = false;
-      for (const auto visible : envelope) {
-        already_visible = already_visible || visible == neighbour;
-      }
-      bool already_added = false;
-      for (const auto added : lookahead) {
-        already_added = already_added || added == neighbour;
-      }
-      if (!already_visible && !already_added) {
-        lookahead.push_back(neighbour);
-      }
-    }
-  }
-  return lookahead;
-}
 
 struct WorldModel {
   std::string name;
@@ -329,12 +283,57 @@ legacyTargetFollowCameraPresentationActive(bool previously_active,
     bool previously_active, bool retail_viewport_active, bool xa_stream_active,
     bool xa_samples_queued) noexcept {
   // Starting requires both the authored retail viewport and a live XA stream.
-  // Once identified, queued XA samples sustain the presentation until the
-  // audible dialogue has drained, even if retail closes its viewport earlier.
+  // Once identified, the authored viewport remains the visual authority. A
+  // skip closes it before buffered XA has drained; that tail must never retain
+  // the letterbox or suppress the HUD.
   if (!previously_active) {
     return retail_viewport_active && xa_stream_active;
   }
+  if (!retail_viewport_active) {
+    return false;
+  }
   return xa_stream_active || xa_samples_queued;
+}
+
+[[nodiscard]] constexpr bool
+legacyRadioPresentationClosed(bool previously_active,
+                              bool currently_active) noexcept {
+  return previously_active && !currently_active;
+}
+
+struct LegacyRadioSkipSuppressionState {
+  bool active{};
+  std::uint8_t quiescent_updates{};
+
+  [[nodiscard]] friend constexpr bool
+  operator==(const LegacyRadioSkipSuppressionState &,
+             const LegacyRadioSkipSuppressionState &) = default;
+};
+
+[[nodiscard]] constexpr LegacyRadioSkipSuppressionState
+advanceLegacyRadioSkipSuppression(LegacyRadioSkipSuppressionState state,
+                                  bool conversation_closed,
+                                  bool retail_viewport_active,
+                                  bool xa_stream_active,
+                                  bool xa_samples_queued) noexcept {
+  constexpr std::uint8_t required_quiescent_updates = 3U;
+  if (conversation_closed) {
+    state = {.active = true, .quiescent_updates = 0U};
+  }
+  if (!state.active) {
+    return {};
+  }
+  // A viewport/XA rebound belongs to the call being dismissed, not a new
+  // conversation. Keep it suppressed and restart the quiet-period debounce.
+  if (retail_viewport_active || xa_stream_active || xa_samples_queued) {
+    state.quiescent_updates = 0U;
+    return state;
+  }
+  ++state.quiescent_updates;
+  if (state.quiescent_updates >= required_quiescent_updates) {
+    return {};
+  }
+  return state;
 }
 
 [[nodiscard]] constexpr bool
@@ -856,9 +855,9 @@ public:
   [[nodiscard]] std::span<const std::uint16_t> activeModels() const noexcept {
     return active_models_;
   }
-  // Presentation may retain one extra portal ring so geometry can fade in
-  // behind the retail depth cue. This set must never affect gameplay
-  // residency, collision, objects or the guest renderer contract.
+  // Presentation follows the authored retail portal envelope. Keeping the
+  // set separate allows newly active chunks to fade in without extending
+  // draw distance or changing gameplay residency and collision.
   [[nodiscard]] std::span<const std::uint16_t>
   presentationModels() const noexcept {
     return presentation_models_;
@@ -1046,6 +1045,11 @@ public:
                                                  MissionCinematicPhase::intro,
                                              legacyRadioConversationActive());
   }
+  [[nodiscard]] bool radioConversationActive() const noexcept {
+    return legacyRadioConversationActive();
+  }
+  // Native presentation-only acknowledgement of the authored skip input.
+  void dismissRadioConversationPresentation() noexcept;
   [[nodiscard]] std::uint8_t mapFade() const noexcept;
   [[nodiscard]] std::uint32_t missionObjectiveCount() const noexcept {
     return legacy_mission_objective_count_;
@@ -1189,9 +1193,6 @@ private:
   [[nodiscard]] std::vector<std::uint16_t>
   buildActiveModels(std::uint16_t room,
                     std::span<const std::uint16_t> retail_traversal = {}) const;
-  [[nodiscard]] std::vector<std::uint16_t>
-  buildPresentationModels(std::uint16_t room,
-                          std::span<const std::uint16_t> active_models) const;
   void rebuildActiveModels();
   void rebuildPresentationModels();
   void rebuildActiveObjects();
@@ -1307,6 +1308,7 @@ private:
   bool first_person_aim_release_rearm_required_{};
   bool legacy_target_follow_camera_active_{};
   bool legacy_radio_conversation_active_{};
+  LegacyRadioSkipSuppressionState legacy_radio_skip_suppression_{};
   double host_manual_aim_strafe_{};
   std::optional<std::int32_t> host_manual_aim_body_heading_;
   std::optional<std::int32_t> pending_host_aim_heading_restore_;

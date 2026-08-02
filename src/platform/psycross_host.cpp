@@ -53,6 +53,8 @@ void configureGraphics(const GraphicsSettings &settings) noexcept {
   g_cfg_aspectMode = settings.aspect_ratio == AspectRatioMode::adaptive
                          ? PSYX_ASPECT_ADAPTIVE
                          : PSYX_ASPECT_ORIGINAL_4_3;
+  g_cfg_renderWidth = std::max(settings.width, 1);
+  g_cfg_renderHeight = std::max(settings.height, 1);
   g_cfg_swapInterval = settings.vsync ? 1 : 0;
   // Presentation is native: no game code samples the displayed framebuffer
   // through PSX VRAM, and the guest simulation has its own deterministic

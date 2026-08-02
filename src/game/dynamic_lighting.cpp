@@ -20,26 +20,106 @@ struct LightProfile {
   double intensity;
 };
 
+// Native dynamic lights are an enhancement layered over the authored PS1
+// vertex lighting. Keep their volumes local: the former full-size profiles
+// reached across neighbouring rooms and lifted too much of the scene at once.
+inline constexpr double native_dynamic_light_radius_scale = 0.82;
+
+// Keep grading in the vertex-colour path: doing the same work in the fragment
+// shader would repeat it for every 4K pixel. The tiny contrast lift restores
+// separation between authored dark rooms and highlights without touching HUD,
+// movies or emissive sprites.
+inline constexpr double native_gameplay_gamma = 1.045;
+inline constexpr double native_gameplay_contrast = 1.012;
+inline constexpr double maximum_headroom_fraction = 0.72;
+inline constexpr double native_dynamic_light_exposure = 0.60;
+inline constexpr double dynamic_response_scale = (96.0 / 127.0) / 0.72;
+
+[[nodiscard]] const std::array<std::uint8_t, 256U> &
+gameplayGammaTable() noexcept {
+  static const auto table = [] {
+    auto result = std::array<std::uint8_t, 256U>{};
+    for (std::size_t value = 0; value < result.size(); ++value) {
+      const auto normalized = static_cast<double>(value) / 255.0;
+      const auto gamma = std::pow(normalized, native_gameplay_gamma);
+      const auto contrasted =
+          std::clamp(0.5 + (gamma - 0.5) * native_gameplay_contrast, 0.0, 1.0);
+      auto encoded =
+          std::clamp<long>(std::lround(contrasted * 255.0), 0L, 255L);
+      if (value > 0U && value < 255U) {
+        encoded = std::min(encoded, static_cast<long>(value - 1U));
+      }
+      result[value] = static_cast<std::uint8_t>(encoded);
+    }
+    return result;
+  }();
+  return table;
+}
+
+[[nodiscard]] constexpr double scaledRadius(double radius) noexcept {
+  return radius * native_dynamic_light_radius_scale;
+}
+// applyDynamicLighting() is called for every lit vertex. Evaluating expm1
+// three times there dominated native-light cost in rooms with several actors.
+// A 1/64-energy LUT is visually indistinguishable from the analytic curve and
+// keeps the expensive function at one-time process initialisation.
+inline constexpr std::size_t dynamic_response_steps = 4096U;
+inline constexpr double dynamic_response_maximum = 64.0;
+
+[[nodiscard]] const std::array<double, dynamic_response_steps + 1U> &
+dynamicLightResponseTable() noexcept {
+  static const auto table = [] {
+    auto result = std::array<double, dynamic_response_steps + 1U>{};
+    for (std::size_t index = 0U; index < result.size(); ++index) {
+      const auto amount = dynamic_response_maximum *
+                          static_cast<double>(index) /
+                          static_cast<double>(dynamic_response_steps);
+      result[index] = -maximum_headroom_fraction *
+                      std::expm1(-amount * native_dynamic_light_exposure *
+                                 dynamic_response_scale);
+    }
+    return result;
+  }();
+  return table;
+}
+
+[[nodiscard]] double dynamicLightResponse(double amount) noexcept {
+  if (amount <= 0.0) {
+    return 0.0;
+  }
+  const auto &table = dynamicLightResponseTable();
+  if (amount >= dynamic_response_maximum) {
+    return table.back();
+  }
+  const auto position = amount * static_cast<double>(dynamic_response_steps) /
+                        dynamic_response_maximum;
+  const auto index = static_cast<std::size_t>(position);
+  const auto fraction = position - static_cast<double>(index);
+  return table[index] + (table[index + 1U] - table[index]) * fraction;
+}
+
 [[nodiscard]] constexpr LightProfile profile(DynamicLightKind kind) noexcept {
   switch (kind) {
   case DynamicLightKind::street_lamp:
-    return {{1.0, 0.82, 0.58}, 1400.0, 0.18};
+    return {{1.0, 0.82, 0.58}, scaledRadius(1400.0), 0.18};
   case DynamicLightKind::police_lightbar:
-    return {{0.48, 0.58, 1.0}, 760.0, 0.10};
+    return {{0.48, 0.58, 1.0}, scaledRadius(760.0), 0.10};
   case DynamicLightKind::steady_fire:
-    return {{1.0, 0.36, 0.08}, 920.0, 0.16};
+    return {{1.0, 0.36, 0.08}, scaledRadius(920.0), 0.16};
   case DynamicLightKind::muzzle_flash:
     // Retail weapon flashes briefly saturate nearby floor and wall vertices.
     // Keep this a single accepted-shot frame, but preserve that strong warm
     // pulse instead of the former barely visible ambient lift.
-    return {{1.0, 0.78, 0.42}, 1050.0, 0.78};
+    return {{1.0, 0.78, 0.42}, scaledRadius(1050.0), 0.78};
   case DynamicLightKind::explosion:
-    return {{1.0, 0.43, 0.10}, 2200.0, 0.34};
+    return {{1.0, 0.43, 0.10}, scaledRadius(2200.0), 0.34};
   case DynamicLightKind::flashlight:
     // The flashlight is a bounded vertex-light volume, not visible beam
-    // geometry. Keep all channels neutral so authored material color is
-    // brightened without the former blue-grey cast.
-    return {{1.0, 1.0, 1.0}, 2800.0, 0.55};
+    // geometry. It is functional equipment rather than environmental fill:
+    // its radius must match the retail surface ray/cone distance and must not
+    // inherit the global ambience-volume reduction. Compensate only for the
+    // restrained native exposure so the usable beam retains its prior level.
+    return {{1.0, 1.0, 1.0}, 2800.0, 0.62};
   }
   return {};
 }
@@ -626,10 +706,18 @@ dynamicLightFrameForBakedWorld(const DynamicLightFrame &frame) noexcept {
   return result;
 }
 
-DynamicLightModulation sampleDynamicLightingImpl(
-    const DynamicLightFrame &frame, DynamicLightPoint point,
-    std::optional<DynamicLightPoint> surface_normal) noexcept {
+DynamicLightModulation
+sampleDynamicLightingImpl(const DynamicLightFrame &frame,
+                          DynamicLightPoint point,
+                          std::optional<DynamicLightPoint> surface_normal,
+                          bool surface_normal_is_normalized = false) noexcept {
   auto result = DynamicLightModulation{};
+  // Most authored world geometry is lit by the retail vertex colours alone.
+  // Avoid validating and normalising a surface once per vertex when the
+  // immutable frame contains no native dynamic sources to sample.
+  if (frame.count == 0U) {
+    return result;
+  }
   if (!finite(point)) {
     return result;
   }
@@ -638,14 +726,20 @@ DynamicLightModulation sampleDynamicLightingImpl(
     if (!finite(*surface_normal)) {
       return result;
     }
-    const auto length = std::sqrt(surface_normal->x * surface_normal->x +
-                                  surface_normal->y * surface_normal->y +
-                                  surface_normal->z * surface_normal->z);
-    if (!std::isfinite(length) || length <= 0.000001) {
+    const auto length_squared = surface_normal->x * surface_normal->x +
+                                surface_normal->y * surface_normal->y +
+                                surface_normal->z * surface_normal->z;
+    if (!std::isfinite(length_squared) || length_squared <= 0.000000000001) {
       return result;
     }
-    normal = {surface_normal->x / length, surface_normal->y / length,
-              surface_normal->z / length};
+    if (surface_normal_is_normalized) {
+      normal = *surface_normal;
+    } else {
+      const auto inverse_length = 1.0 / std::sqrt(length_squared);
+      normal = {surface_normal->x * inverse_length,
+                surface_normal->y * inverse_length,
+                surface_normal->z * inverse_length};
+    }
   }
   for (const auto &light : frame.active()) {
     if (!finite(light.position) || !std::isfinite(light.radius) ||
@@ -659,15 +753,15 @@ DynamicLightModulation sampleDynamicLightingImpl(
         distance_squared >= radius_squared) {
       continue;
     }
-    const auto distance = std::sqrt(distance_squared);
     const auto radial = 1.0 - distance_squared / radius_squared;
     auto attenuation = radial * radial * light.intensity;
+    auto inverse_distance = 0.0;
     if (light.directional) {
-      if (distance <= 0.000001 ||
+      if (distance_squared <= 0.000000000001 ||
           light.inner_cone_cosine <= light.outer_cone_cosine) {
         continue;
       }
-      const auto inverse_distance = 1.0 / distance;
+      inverse_distance = 1.0 / std::sqrt(distance_squared);
       const auto to_point = DynamicLightPoint{
           (point.x - light.position.x) * inverse_distance,
           (point.y - light.position.y) * inverse_distance,
@@ -685,8 +779,10 @@ DynamicLightModulation sampleDynamicLightingImpl(
                      0.0, 1.0);
       attenuation *= cone * cone;
     }
-    if (surface_normal && distance > 0.000001) {
-      const auto inverse_distance = 1.0 / distance;
+    if (surface_normal && distance_squared > 0.000000000001) {
+      if (inverse_distance == 0.0) {
+        inverse_distance = 1.0 / std::sqrt(distance_squared);
+      }
       const auto to_light = DynamicLightPoint{
           (light.position.x - point.x) * inverse_distance,
           (light.position.y - point.y) * inverse_distance,
@@ -712,7 +808,7 @@ DynamicLightModulation sampleDynamicLightingImpl(
 
 DynamicLightModulation sampleDynamicLighting(const DynamicLightFrame &frame,
                                              DynamicLightPoint point) noexcept {
-  return sampleDynamicLightingImpl(frame, point, std::nullopt);
+  return sampleDynamicLightingImpl(frame, point, std::nullopt, false);
 }
 
 DynamicShadowProjection
@@ -1040,7 +1136,14 @@ projectDynamicShadowPoint(DynamicLightPoint vertex,
 DynamicLightModulation
 sampleDynamicLighting(const DynamicLightFrame &frame, DynamicLightPoint point,
                       DynamicLightPoint surface_normal) noexcept {
-  return sampleDynamicLightingImpl(frame, point, surface_normal);
+  return sampleDynamicLightingImpl(frame, point, surface_normal, false);
+}
+
+DynamicLightModulation sampleDynamicLightingNormalized(
+    const DynamicLightFrame &frame, DynamicLightPoint point,
+    DynamicLightPoint normalized_surface_normal) noexcept {
+  return sampleDynamicLightingImpl(frame, point, normalized_surface_normal,
+                                   true);
 }
 
 DynamicLightVertexColor
@@ -1052,19 +1155,18 @@ applyDynamicLighting(DynamicLightVertexColor base,
     return base;
   }
 
+  // Give the native scene a slightly moodier transfer curve without applying
+  // a full-screen tint. Midtones and shadows become subtly darker while black
+  // and authored highlights remain anchored; HUD and raw glow sprites never
+  // enter this vertex-lighting path.
+  const auto &gamma_table = gameplayGammaTable();
+  const auto graded_base = DynamicLightVertexColor{
+      gamma_table[base.red], gamma_table[base.green], gamma_table[base.blue]};
+
   // Match the old response slope around neutral PS1 modulation (128) while
   // approaching only a bounded fraction of the remaining channel headroom.
   // This soft knee lets overlapping lights grow monotonically without
   // clipping already bright retail colours to featureless white.
-  constexpr double neutral_modulation_delta = 96.0;
-  constexpr double neutral_headroom = 255.0 - 128.0;
-  constexpr double linear_response =
-      neutral_modulation_delta / neutral_headroom;
-  constexpr double maximum_headroom_fraction = 0.72;
-  // Dynamic sources sit on top of the authored PS1 vertex lighting. Keep that
-  // layer deliberately restrained so lamps, fire and muzzle flashes preserve
-  // local contrast instead of lifting an entire surface toward white.
-  constexpr double native_dynamic_light_exposure = 0.68;
   // Retail encodes intentional darkness in the primitive modulation itself.
   // An additive light which always targets white turns black alcoves and
   // lamp-off sections into bright grey, and also leaks visibly through the
@@ -1082,18 +1184,15 @@ applyDynamicLighting(DynamicLightVertexColor base,
     if (amount <= 0.0 || value == 255U) {
       return value;
     }
-    const auto response =
-        -maximum_headroom_fraction *
-        std::expm1(-amount * native_dynamic_light_exposure * linear_response /
-                   maximum_headroom_fraction);
+    const auto response = dynamicLightResponse(amount);
     const auto headroom = 255.0 - static_cast<double>(value);
     const auto delta = static_cast<unsigned>(
         std::floor(headroom * response * authored_exposure));
     return static_cast<std::uint8_t>(static_cast<unsigned>(value) + delta);
   };
-  return DynamicLightVertexColor{apply(base.red, modulation.red),
-                                 apply(base.green, modulation.green),
-                                 apply(base.blue, modulation.blue)};
+  return DynamicLightVertexColor{apply(graded_base.red, modulation.red),
+                                 apply(graded_base.green, modulation.green),
+                                 apply(graded_base.blue, modulation.blue)};
 }
 
 std::optional<RetailVertexLightRay>

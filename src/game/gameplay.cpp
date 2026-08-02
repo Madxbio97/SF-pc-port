@@ -4,6 +4,7 @@
 #include "sf/game/legacy_first_mission_runtime.hpp"
 #include "sf/game/legacy_presentation_bridge.hpp"
 #include "sf/game/mission.hpp"
+#include "sf/game/virus_scanner_target.hpp"
 
 #include <algorithm>
 #include <array>
@@ -1665,6 +1666,7 @@ void GameplaySession::reset() {
   first_person_aim_release_rearm_required_ = false;
   legacy_target_follow_camera_active_ = false;
   legacy_radio_conversation_active_ = false;
+  legacy_radio_skip_suppression_ = {};
   host_manual_aim_strafe_ = 0.0;
   host_manual_aim_body_heading_.reset();
   pending_host_aim_heading_restore_.reset();
@@ -1915,6 +1917,7 @@ bool GameplaySession::restartCheckpoint() {
   first_person_aim_release_rearm_required_ = false;
   legacy_target_follow_camera_active_ = false;
   legacy_radio_conversation_active_ = false;
+  legacy_radio_skip_suppression_ = {};
   host_manual_aim_strafe_ = 0.0;
   host_manual_aim_body_heading_.reset();
   pending_host_aim_heading_restore_.reset();
@@ -2052,34 +2055,6 @@ std::vector<std::uint16_t> GameplaySession::buildActiveModels(
   return result;
 }
 
-std::vector<std::uint16_t> GameplaySession::buildPresentationModels(
-    std::uint16_t room, std::span<const std::uint16_t> active_models) const {
-  std::vector<std::uint16_t> result;
-  const auto &visibility = mission_.layout().visibility(room);
-  const auto lookahead = nativeWorldLookaheadRing(
-      room, visibility.active_models, mission_.layout());
-  result.reserve(active_models.size() + lookahead.size());
-  const auto add_unique = [this, &result](std::uint16_t model) {
-    if (model >= models_.size()) {
-      throw core::Error{core::ErrorCode::invalid_format,
-                        "Presentation world model is invalid"};
-    }
-    if (std::ranges::find(result, model) == result.end()) {
-      result.push_back(model);
-    }
-  };
-  for (const auto model : active_models) {
-    add_unique(model);
-  }
-  // The outer ring is render-only. Retail depth cue and the native appearance
-  // fade hide it until it approaches the camera; it must not activate objects,
-  // collision or guest-owned resource state.
-  for (const auto model : lookahead) {
-    add_unique(model);
-  }
-  return result;
-}
-
 void GameplaySession::rebuildActiveModels() {
   active_models_ = buildActiveModels(current_room_);
   rebuildPresentationModels();
@@ -2087,7 +2062,7 @@ void GameplaySession::rebuildActiveModels() {
 }
 
 void GameplaySession::rebuildPresentationModels() {
-  presentation_models_ = buildPresentationModels(current_room_, active_models_);
+  presentation_models_ = active_models_;
 }
 void GameplaySession::rebuildActiveObjects() {
   active_objects_.clear();
@@ -3718,25 +3693,31 @@ GameplaySession::legacyVirusScannerTargetObject() const noexcept {
     return std::nullopt;
   }
   const auto *bridge = legacy_first_mission_->bridge();
-  if (bridge == nullptr || !bridge->virus_scanner_target_valid ||
-      bridge->virus_scanner_target_slot < 0) {
+  if (bridge == nullptr || !bridge->virus_scanner_target_valid) {
     return std::nullopt;
   }
-  for (std::size_t scene_object = 0U;
-       scene_object < legacy_guest_slot_by_scene_object_.size();
-       ++scene_object) {
-    if (legacy_guest_slot_by_scene_object_[scene_object] !=
-        bridge->virus_scanner_target_slot) {
-      continue;
-    }
-    if (scene_object >= objects_.size() ||
-        scene_object > std::numeric_limits<std::uint16_t>::max() ||
-        objects_[scene_object].class_id != legacy_virus_scanner_target_class) {
-      return std::nullopt;
-    }
-    return static_cast<std::uint16_t>(scene_object);
-  }
-  return std::nullopt;
+
+  const auto request = VirusScannerTargetRequest{
+      true,
+      bridge->virus_scanner_target_slot};
+  return selectVirusScannerTarget(
+      request, objects_.size(),
+      [&](std::size_t scene_object) noexcept
+          -> std::optional<VirusScannerTargetCandidate> {
+        if (scene_object > std::numeric_limits<std::uint16_t>::max()) {
+          return std::nullopt;
+        }
+        const auto &object = objects_[scene_object];
+        const auto guest_slot =
+            scene_object < legacy_guest_slot_by_scene_object_.size()
+                ? legacy_guest_slot_by_scene_object_[scene_object]
+                : -1;
+        return VirusScannerTargetCandidate{
+            static_cast<std::uint16_t>(scene_object), guest_slot,
+            object.class_id,
+            {object.transform.x, object.transform.y, object.transform.z}};
+      },
+      legacy_virus_scanner_target_class);
 }
 
 std::optional<std::uint16_t> GameplaySession::legacyVirusScannerMarkerObject(
@@ -3749,41 +3730,33 @@ std::optional<std::uint16_t> GameplaySession::legacyVirusScannerMarkerObject(
   }
 
   const auto &target = objects_[target_object].transform;
-  auto nearest = std::optional<std::uint16_t>{};
-  auto nearest_distance_squared = std::numeric_limits<std::int64_t>::max();
-  for (std::size_t index = 0U; index < objects_.size(); ++index) {
-    const auto &candidate = objects_[index];
-    if (index > std::numeric_limits<std::uint16_t>::max() ||
-        candidate.model >= object_models_.size() ||
-        !candidate.destroyed_model ||
-        *candidate.destroyed_model >= object_models_.size() ||
-        !legacyVirusScannerMarker(
-            mission_.definition().index, candidate.class_id,
-            object_models_[candidate.model].name,
-            object_models_[*candidate.destroyed_model].name)) {
-      continue;
-    }
-    const auto dx = static_cast<std::int64_t>(candidate.transform.x) -
-                    static_cast<std::int64_t>(target.x);
-    const auto dy = static_cast<std::int64_t>(candidate.transform.y) -
-                    static_cast<std::int64_t>(target.y);
-    const auto dz = static_cast<std::int64_t>(candidate.transform.z) -
-                    static_cast<std::int64_t>(target.z);
-    const auto distance_squared = dx * dx + dy * dy + dz * dz;
-    if (distance_squared < nearest_distance_squared) {
-      nearest_distance_squared = distance_squared;
-      nearest = static_cast<std::uint16_t>(index);
-    }
-  }
-
   // The largest authored BOMB/GRGLO offset in the two scanner missions is
   // 122 world units. Leave room for integer transforms without ever pairing
   // a marker from another corpse.
   constexpr auto maximum_pair_distance = std::int64_t{192};
-  return nearest && nearest_distance_squared <=
-                        maximum_pair_distance * maximum_pair_distance
-             ? nearest
-             : std::nullopt;
+  return selectVirusScannerMarker(
+      {target.x, target.y, target.z}, objects_.size(),
+      [&](std::size_t index) noexcept
+          -> std::optional<VirusScannerTargetCandidate> {
+        if (index > std::numeric_limits<std::uint16_t>::max()) {
+          return std::nullopt;
+        }
+        const auto &candidate = objects_[index];
+        if (candidate.model >= object_models_.size() ||
+            !candidate.destroyed_model ||
+            *candidate.destroyed_model >= object_models_.size() ||
+            !legacyVirusScannerMarker(
+                mission_.definition().index, candidate.class_id,
+                object_models_[candidate.model].name,
+                object_models_[*candidate.destroyed_model].name)) {
+          return std::nullopt;
+        }
+        return VirusScannerTargetCandidate{
+            static_cast<std::uint16_t>(index), -1, candidate.class_id,
+            {candidate.transform.x, candidate.transform.y,
+             candidate.transform.z}};
+      },
+      maximum_pair_distance);
 }
 
 std::uint64_t GameplaySession::legacyAimRayPatchCount() const noexcept {
@@ -3852,25 +3825,46 @@ bool GameplaySession::legacyWeaponMenuReady() const noexcept {
          mission->weapon_menu_input_ready;
 }
 
+void GameplaySession::dismissRadioConversationPresentation() noexcept {
+  if (!legacy_radio_conversation_active_) {
+    return;
+  }
+  legacy_radio_conversation_active_ = false;
+  legacy_radio_skip_suppression_ = {.active = true, .quiescent_updates = 0U};
+}
+
 void GameplaySession::refreshLegacyRadioConversationState() noexcept {
   if (legacy_first_mission_ == nullptr || !legacy_first_mission_->ready() ||
       !legacy_first_mission_->bridge()) {
     legacy_radio_conversation_active_ = false;
+    legacy_radio_skip_suppression_ = {};
     return;
   }
   const auto diagnostics = legacy_first_mission_->audioDiagnostics();
   if (!diagnostics) {
     legacy_radio_conversation_active_ = false;
+    legacy_radio_skip_suppression_ = {};
     return;
   }
 
-  // The viewport identifies the authored Lian presentation; XA owns its exact
-  // audible lifetime. This prevents ordinary dialogue, targeting and room
-  // streaming from requesting bars while keeping their exit sample-accurate.
-  legacy_radio_conversation_active_ = legacyRadioAudioPresentationActive(
-      legacy_radio_conversation_active_,
-      legacy_first_mission_->bridge()->camera.retail_letterbox_active,
-      diagnostics->xa_stream_set != 0U, diagnostics->spu_cd_frames != 0U);
+  const auto retail_viewport_active =
+      legacy_first_mission_->bridge()->camera.retail_letterbox_active;
+  const auto xa_stream_active = diagnostics->xa_stream_set != 0U;
+  const auto xa_samples_queued = diagnostics->spu_cd_frames != 0U;
+  const auto next_active = legacyRadioAudioPresentationActive(
+      legacy_radio_conversation_active_, retail_viewport_active,
+      xa_stream_active, xa_samples_queued);
+  const auto conversation_closed = legacyRadioPresentationClosed(
+      legacy_radio_conversation_active_, next_active);
+  legacy_radio_skip_suppression_ = advanceLegacyRadioSkipSuppression(
+      legacy_radio_skip_suppression_, conversation_closed,
+      retail_viewport_active, xa_stream_active, xa_samples_queued);
+  if (legacy_radio_skip_suppression_.active) {
+    legacy_radio_conversation_active_ = false;
+    return;
+  }
+
+  legacy_radio_conversation_active_ = next_active;
 }
 
 GameplayInput GameplaySession::admittedFirstPersonAimInput(

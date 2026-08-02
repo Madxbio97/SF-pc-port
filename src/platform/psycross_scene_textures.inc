@@ -812,7 +812,7 @@ public:
         // or malformed records and could exhaust native alias space.
         for (const auto &section : scene.sections()) {
           for (const auto &polygon : section.polygons) {
-            if (!polygon.renderable) {
+            if (!polygon.renderable || polygon.degenerate) {
               continue;
             }
             const auto source_page = assets::resolveEmdTexturePageSource(
@@ -870,7 +870,7 @@ public:
             if (gmd != nullptr) {
               require_mask(gmd->renderableTexturePageMask(), bank);
               for (const auto &triangle : gmd->triangles()) {
-                if (triangle.flags == 0U) {
+                if (triangle.flags == 0U || triangle.degenerate) {
                   continue;
                 }
                 const auto page = triangle.texture_page & 0x1fU;
@@ -1404,48 +1404,6 @@ public:
     return residency_revision_;
   }
 
-#if defined(SF_ENABLE_SURFACE_PICKER)
-  [[nodiscard]] SurfacePickerResidency
-  surfacePickerResidency(unsigned int logical_page,
-                         unsigned int texture_bank) const {
-    auto result = SurfacePickerResidency{};
-    result.residency_revision = residency_revision_;
-    if (logical_page >= 32U || texture_bank >= 2U) {
-      return result;
-    }
-    const auto bank = static_cast<std::size_t>(texture_bank);
-    if (!authored_page_hash_valid_[bank][logical_page]) {
-      authored_page_hash_[bank][logical_page] = fingerprint(
-          authoredTexturePage(logical_page, static_cast<int>(texture_bank)));
-      authored_page_hash_valid_[bank][logical_page] = true;
-    }
-    result.authored_hash = authored_page_hash_[bank][logical_page];
-    result.physical_page =
-        residentPhysicalPage(logical_page, static_cast<int>(texture_bank));
-    if (!result.physical_page) {
-      return result;
-    }
-    const auto physical = *result.physical_page;
-    result.required_logical_page = required_pages_[physical];
-    result.required_bank = required_banks_[physical];
-    result.loaded_logical_page = loaded_pages_[physical].logical_page;
-    result.loaded_bank = loaded_pages_[physical].bank;
-    result.generation = page_generations_[physical];
-    result.upload_write_sequence = page_upload_write_sequences_[physical];
-    if (runtime_expected_hash_valid_[physical]) {
-      result.runtime_expected_hash = runtime_expected_hash_[physical];
-    }
-    result.scrim_dirty = scrim_dirty_pages_[physical];
-    result.crate_overlay = crate_overlay_pages_[physical];
-    for (const auto &owner : required_page_owners_[physical]) {
-      if (!result.owners.empty()) {
-        result.owners += '|';
-      }
-      result.owners += owner;
-    }
-    return result;
-  }
-#endif
 
   [[nodiscard]] std::uint8_t
   residentTextureBankMask(unsigned int logical_page) const noexcept {
@@ -2591,7 +2549,10 @@ public:
   void invalidate() noexcept {
     resident_copies_.clear();
     touched_pages_.clear();
+    input_presentation_sequence_ = std::numeric_limits<std::uint64_t>::max();
+    input_tick_ = std::numeric_limits<std::uint64_t>::max();
     residency_revision_ = 0U;
+    inputs_valid_ = false;
   }
 
   [[nodiscard]] bool
@@ -2599,6 +2560,14 @@ public:
               TextureStreamer &textures,
               std::span<const game::LegacyGuestSpritePresentationState>
                   retained_sprites = {}) {
+    const auto presentation_sequence = gameplay.legacyPresentationSequence();
+    const auto residency_revision = textures.residencyRevision();
+    if (inputs_valid_ && input_tick_ == tick &&
+        input_presentation_sequence_ == presentation_sequence &&
+        residency_revision_ == residency_revision) {
+      return false;
+    }
+
     const auto &frame = game::policeLightbarFrame(tick);
     std::vector<game::EffectTextureCopy> required_copies;
     for (const auto object_index : gameplay.activeObjects()) {
@@ -2623,7 +2592,10 @@ public:
       }
     }
     if (required_copies == resident_copies_ &&
-        residency_revision_ == textures.residencyRevision()) {
+        residency_revision_ == residency_revision) {
+      input_tick_ = tick;
+      input_presentation_sequence_ = presentation_sequence;
+      inputs_valid_ = true;
       return false;
     }
 
@@ -2637,6 +2609,9 @@ public:
     resident_copies_.clear();
     if (required_copies.empty()) {
       residency_revision_ = textures.residencyRevision();
+      input_tick_ = tick;
+      input_presentation_sequence_ = presentation_sequence;
+      inputs_valid_ = true;
       return false;
     }
 
@@ -2665,6 +2640,9 @@ public:
     }
     resident_copies_ = std::move(required_copies);
     residency_revision_ = textures.residencyRevision();
+    input_tick_ = tick;
+    input_presentation_sequence_ = presentation_sequence;
+    inputs_valid_ = true;
     return true;
   }
 
@@ -2672,6 +2650,9 @@ private:
   std::vector<game::EffectTextureCopy> resident_copies_;
   std::vector<unsigned int> touched_pages_;
   std::uint64_t residency_revision_{};
+  std::uint64_t input_presentation_sequence_{};
+  std::uint64_t input_tick_{};
+  bool inputs_valid_{};
 };
 
 class RetailScrimAnimation final {

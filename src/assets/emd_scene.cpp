@@ -54,6 +54,20 @@ EmdUv decodeUv(std::uint16_t packed) {
   };
 }
 
+bool degenerateTriangle(const EmdVertex &first, const EmdVertex &second,
+                        const EmdVertex &third) noexcept {
+  const auto first_x = static_cast<std::int64_t>(second.x) - first.x;
+  const auto first_y = static_cast<std::int64_t>(second.y) - first.y;
+  const auto first_z = static_cast<std::int64_t>(second.z) - first.z;
+  const auto second_x = static_cast<std::int64_t>(third.x) - first.x;
+  const auto second_y = static_cast<std::int64_t>(third.y) - first.y;
+  const auto second_z = static_cast<std::int64_t>(third.z) - first.z;
+  const auto cross_x = first_y * second_z - first_z * second_y;
+  const auto cross_y = first_z * second_x - first_x * second_z;
+  const auto cross_z = first_x * second_y - first_y * second_x;
+  return cross_x == 0 && cross_y == 0 && cross_z == 0;
+}
+
 std::uint16_t vertexIndex(std::uint32_t packed, unsigned int shift) {
   const auto byte_offset = static_cast<std::uint8_t>(packed >> shift);
   if (byte_offset % 3U != 0) {
@@ -178,6 +192,14 @@ EmdSection parseSection(std::span<const std::byte> bytes,
         readLe16(bytes, offset + 6),
     });
   }
+  for (auto &polygon : section.polygons) {
+    // Retail NCLIP evaluates the first three vertices for triangles and
+    // quads alike. Preserve that exact rejection rule before PGXP projection.
+    polygon.degenerate = degenerateTriangle(
+        section.vertices[polygon.vertex_indices[0]],
+        section.vertices[polygon.vertex_indices[1]],
+        section.vertices[polygon.vertex_indices[2]]);
+  }
   return section;
 }
 
@@ -260,7 +282,7 @@ EmdScene::resolvedTexturePageMask(std::uint32_t vlf_page_mask) const noexcept {
   auto result = texture_page_mask_;
   for (const auto &section : sections_) {
     for (const auto &polygon : section.polygons) {
-      if (!polygon.renderable) {
+      if (!polygon.renderable || polygon.degenerate) {
         continue;
       }
       const auto page = resolveEmdTexturePageSource(

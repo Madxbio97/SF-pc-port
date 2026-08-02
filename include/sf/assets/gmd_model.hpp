@@ -23,6 +23,11 @@ struct GmdTriangle {
     std::uint16_t texture_page{};
     std::uint8_t flags{};
     bool semi_transparent{};
+    // Retail GMD resources can retain zero-area seam triangles whose
+    // duplicated vertices carry different normals/UVs. The PS1 NCLIP path
+    // rejects them before submission; PGXP must not attempt to reconstruct
+    // or rasterize them as visible surfaces.
+    bool degenerate{};
 };
 
 class GmdModel final {

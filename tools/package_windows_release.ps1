@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "0.1.0-public-test.15",
+    [string]$Version = "0.1.0-public-test.16",
     [string]$Configuration = "Release"
 )
 
@@ -221,6 +221,11 @@ PUBLIC TEST $Version
 
 Архив не содержит образ игры, сохранения, настройки или syphon_filter_cheats.
 "@
+
+$releaseNotesPath = Join-Path $repoRoot "docs\releases\$Version.md"
+if (Test-Path -LiteralPath $releaseNotesPath -PathType Leaf) {
+    $notes = [IO.File]::ReadAllText($releaseNotesPath, [Text.Encoding]::UTF8)
+}
 
 $commit = try { (& git -C $repoRoot rev-parse --short HEAD 2>$null).Trim() } catch { "unknown" }
 if (-not $commit) { $commit = "unknown" }

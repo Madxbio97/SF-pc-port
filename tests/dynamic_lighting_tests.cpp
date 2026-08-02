@@ -127,7 +127,9 @@ void testFlashlightConeIsDirectionalAndAuthoritative() {
   const auto behind = sf::game::sampleDynamicLighting(
       frame, sf::game::DynamicLightPoint{0.0, 0.0, -600.0});
   require(frame.count == 1U && frame.active().front().directional &&
-              forward.blue > 0.0 && outside.blue == 0.0 && behind.blue == 0.0,
+              frame.active().front().radius == 2800.0 &&
+              frame.active().front().intensity > 0.60 && forward.blue > 0.0 &&
+              outside.blue == 0.0 && behind.blue == 0.0,
           "Flashlight escaped its normalized forward cone");
   require(forward.red == forward.green && forward.green == forward.blue &&
               feathered_edge.red > 0.0 && feathered_edge.red < forward.red &&
@@ -150,7 +152,10 @@ void testRadialSamplingAndNeutralModulation() {
   const auto centre = sf::game::sampleDynamicLighting(
       frame, sf::game::DynamicLightPoint{0.0, -700.0, 0.0});
   const auto boundary = sf::game::sampleDynamicLighting(
-      frame, sf::game::DynamicLightPoint{1400.0, -700.0, 0.0});
+      frame, sf::game::DynamicLightPoint{1200.0, -700.0, 0.0});
+  require(frame.active().front().radius > 1100.0 &&
+              frame.active().front().radius < 1200.0,
+          "Native dynamic-light radius scale regressed");
   require(centre.red > centre.green && centre.green > centre.blue &&
               centre.blue > 0.0,
           "Street lamp lost its warm radial light profile");
@@ -164,6 +169,18 @@ void testRadialSamplingAndNeutralModulation() {
               {std::numeric_limits<double>::quiet_NaN(), -1.0, 0.0}) ==
               sf::game::DynamicLightVertexColor{30U, 40U, 50U},
           "Invalid lighting input changed authored vertex color");
+}
+
+void testGameplayGammaDarkensOnlyValidSceneLighting() {
+  const auto base = sf::game::DynamicLightVertexColor{32U, 128U, 224U};
+  const auto graded = sf::game::applyDynamicLighting(base, {});
+  require(graded.red < base.red && graded.green < base.green &&
+              graded.blue < base.blue,
+          "Native gameplay gamma no longer darkens scene midtones");
+  require(sf::game::applyDynamicLighting(
+              base, {std::numeric_limits<double>::quiet_NaN(), 0.0, 0.0}) ==
+              base,
+          "Invalid light input unexpectedly applied the gameplay gamma");
 }
 
 void testDynamicLightSoftKneePreservesRetailHeadroom() {
@@ -826,6 +843,7 @@ int main() {
     testTransientLightsAreExactAndFinite();
     testFlashlightConeIsDirectionalAndAuthoritative();
     testRadialSamplingAndNeutralModulation();
+    testGameplayGammaDarkensOnlyValidSceneLighting();
     testDynamicLightSoftKneePreservesRetailHeadroom();
     testDynamicLightPreservesAuthoredDarkness();
     testOverlappingDynamicLightsGrowWithoutWhitening();

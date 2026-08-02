@@ -56,7 +56,7 @@ void drawVirusScannerFilter(bool active) {
   TILE tile{};
   setTile(&tile);
   setSemiTrans(&tile, 1);
-  setRGB0(&tile, 112U, 62U, 18U);
+  setRGB0(&tile, 128U, 80U, 30U);
   setXY0(&tile, 0.0F, 0.0F);
   setWH(&tile, static_cast<float>(screen_width),
         static_cast<float>(screen_height));
@@ -2114,6 +2114,10 @@ void drawPresentationFrameMeter(const HudTextureAtlas &textures,
   const auto left = screen_width - right_margin - width;
   drawSolidRect(left - 2, top - 2, width + 4, 11, 0U, 0U, 0U);
   drawOriginalHudTextSolid(textures, text, left, top, 255U);
+  // The regular HUD has already flushed its immediate PsyCross primitives.
+  // Submit this late diagnostic layer before EndScene instead of silently
+  // leaving its rectangle and glyphs in the next frame's command queue.
+  DrawSync(0);
   GR_EnableDepth(1);
   GR_SetDepthState(1, 1);
 }

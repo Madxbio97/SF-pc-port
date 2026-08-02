@@ -1,15 +1,55 @@
+struct WorldProjectedVertex {
+  long packed_xy{};
+  int ordering_depth{};
+  PGXPVData precise{};
+  bool precise_valid{};
+};
+
+struct OpticProjectedTriangle {
+  std::array<long, 3U> packed_xy{};
+  std::array<PGXPVData, 3U> precise{};
+  std::array<bool, 3U> precise_valid{};
+  int ordering_depth{};
+};
+
+using OpticProjectedFrame = std::vector<OpticProjectedTriangle>;
+using OpticHistory = sf::platform::RetailOpticHistory<OpticProjectedFrame>;
+
+struct ActorFrameScratch {
+  std::vector<Vector3> hmd_world_vertices;
+  std::vector<Vector3> shadow_world_vertices;
+  std::vector<ActorShadowTriangle> shadow_triangles;
+  std::vector<std::optional<ActorShadowReceiverVertex>> shadow_receivers;
+
+  void reset() noexcept {
+    hmd_world_vertices.clear();
+    shadow_world_vertices.clear();
+    shadow_triangles.clear();
+    shadow_receivers.clear();
+  }
+};
+
+struct WorldVertexFrameScratch {
+  std::vector<double> precise_depths;
+  std::vector<int> depth_cues;
+  std::vector<WorldProjectedVertex> projected_vertices;
+
+  void reset() noexcept {
+    precise_depths.clear();
+    depth_cues.clear();
+    projected_vertices.clear();
+  }
+};
+
 struct PrimitiveBuffer {
   StableFrameVector<POLY_GT3> triangles{"Terrain triangles"};
   StableFrameVector<POLY_GT4> quads{"Terrain quads"};
   StableFrameVector<POLY_GT3> objects{"Object triangles"};
   StableFrameVector<POLY_GT4> object_quads{"Object quads"};
-#if defined(SF_ENABLE_SURFACE_PICKER)
-  StableFrameVector<POLY_F3> surface_picker_triangles{
-      "Surface picker triangles"};
-  StableFrameVector<POLY_F4> surface_picker_quads{"Surface picker quads"};
-#endif
   StableFrameVector<POLY_F3> actor_shadows{"Dynamic actor shadows"};
   StableFrameVector<POLY_F3> player{"Fallback player triangles"};
+  StableFrameVector<POLY_F3> optic_subjects{"Optic subject silhouettes"};
+  StableFrameVector<POLY_F3> optic_trails{"Optic motion trails"};
   StableFrameVector<LINE_G2> effects{"Effect lines"};
   StableFrameVector<LINE_F2> combat_effect_lines{"Combat effect lines"};
   StableFrameVector<POLY_F3> combat_effect_triangles{"Combat effect triangles"};
@@ -32,23 +72,27 @@ struct PrimitiveBuffer {
   StableFrameVector<POLY_G3> guest_raw_gouraud_triangles{
       "Retail raw Gouraud triangles"};
   StableFrameVector<DR_TPAGE> guest_raw_modes{"Retail raw draw modes"};
-  // Actor geometry is consumed immediately; these reusable vectors never
-  // enter an ordering table and avoid per-actor allocations at high FPS.
-  std::vector<Vector3> hmd_world_vertex_scratch;
-  std::vector<Vector3> actor_shadow_world_vertex_scratch;
-  std::vector<ActorShadowTriangle> actor_shadow_triangle_scratch;
-  std::vector<std::optional<ActorShadowReceiverVertex>>
-      actor_shadow_receiver_scratch;
+  ActorFrameScratch actor_scratch;
+  WorldVertexFrameScratch world_vertex_scratch;
 
   [[nodiscard]] bool needsCapacityPlan(std::uint64_t guest_frame,
-                                       std::uint16_t room) noexcept {
+                                       std::uint16_t room,
+                                       bool first_person_aim,
+                                       std::uint8_t optic_mode,
+                                       bool scanner_active) noexcept {
     if (capacity_plan_valid_ && capacity_guest_frame_ == guest_frame &&
-        capacity_room_ == room) {
+        capacity_room_ == room &&
+        capacity_first_person_aim_ == first_person_aim &&
+        capacity_optic_mode_ == optic_mode &&
+        capacity_scanner_active_ == scanner_active) {
       return false;
     }
     capacity_plan_valid_ = true;
     capacity_guest_frame_ = guest_frame;
     capacity_room_ = room;
+    capacity_first_person_aim_ = first_person_aim;
+    capacity_optic_mode_ = optic_mode;
+    capacity_scanner_active_ = scanner_active;
     return true;
   }
 
@@ -59,12 +103,10 @@ struct PrimitiveBuffer {
     quads.reset();
     objects.reset();
     object_quads.reset();
-#if defined(SF_ENABLE_SURFACE_PICKER)
-    surface_picker_triangles.reset();
-    surface_picker_quads.reset();
-#endif
     actor_shadows.reset();
     player.reset();
+    optic_subjects.reset();
+    optic_trails.reset();
     effects.reset();
     combat_effect_lines.reset();
     combat_effect_triangles.reset();
@@ -83,10 +125,8 @@ struct PrimitiveBuffer {
     guest_raw_gouraud_lines.reset();
     guest_raw_gouraud_triangles.reset();
     guest_raw_modes.reset();
-    hmd_world_vertex_scratch.clear();
-    actor_shadow_world_vertex_scratch.clear();
-    actor_shadow_triangle_scratch.clear();
-    actor_shadow_receiver_scratch.clear();
+    actor_scratch.reset();
+    world_vertex_scratch.reset();
   }
 
   void lockStorage() noexcept {
@@ -94,12 +134,10 @@ struct PrimitiveBuffer {
     quads.lockStorage();
     objects.lockStorage();
     object_quads.lockStorage();
-#if defined(SF_ENABLE_SURFACE_PICKER)
-    surface_picker_triangles.lockStorage();
-    surface_picker_quads.lockStorage();
-#endif
     actor_shadows.lockStorage();
     player.lockStorage();
+    optic_subjects.lockStorage();
+    optic_trails.lockStorage();
     effects.lockStorage();
     combat_effect_lines.lockStorage();
     combat_effect_triangles.lockStorage();
@@ -123,11 +161,8 @@ struct PrimitiveBuffer {
   [[nodiscard]] bool storageStable() const noexcept {
     return triangles.storageStable() && quads.storageStable() &&
            objects.storageStable() && object_quads.storageStable() &&
-#if defined(SF_ENABLE_SURFACE_PICKER)
-           surface_picker_triangles.storageStable() &&
-           surface_picker_quads.storageStable() &&
-#endif
            actor_shadows.storageStable() && player.storageStable() &&
+           optic_subjects.storageStable() && optic_trails.storageStable() &&
            effects.storageStable() && combat_effect_lines.storageStable() &&
            combat_effect_triangles.storageStable() &&
            flashlight_cone_quads.storageStable() &&
@@ -149,10 +184,14 @@ struct PrimitiveBuffer {
 private:
   std::uint64_t capacity_guest_frame_{};
   std::uint16_t capacity_room_{};
+  std::uint8_t capacity_optic_mode_{};
+  bool capacity_first_person_aim_{};
+  bool capacity_scanner_active_{};
   bool capacity_plan_valid_{};
 };
 
 struct RenderStats {
+  bool collect_details{true};
   std::size_t submitted{};
   std::size_t rejected{};
   int minimum_depth{std::numeric_limits<int>::max()};
@@ -188,75 +227,6 @@ SVECTOR makeVertex(double x, double y, double z) {
   return result;
 }
 
-#if defined(SF_ENABLE_SURFACE_PICKER)
-template <std::size_t VertexCount>
-SurfacePickerSurface makeSurfacePickerSurface(
-    SurfacePickerId id, std::string label, std::uint16_t room,
-    std::uint64_t guest_frame, const std::array<SVECTOR, VertexCount> &world,
-    const std::array<long, VertexCount> &projected,
-    const std::array<assets::EmdUv, VertexCount> &uv, int depth,
-    std::uint16_t raw_tpage, std::uint16_t relocated_tpage,
-    std::uint16_t raw_clut, std::uint16_t relocated_clut,
-    unsigned int logical_page, unsigned int texture_bank,
-    const TextureStreamer &textures) {
-  auto result = SurfacePickerSurface{
-      .id = id,
-      .label = std::move(label),
-      .guest_frame = guest_frame,
-      .room = room,
-      .vertex_count = static_cast<std::uint8_t>(VertexCount),
-      .depth = depth,
-      .raw_tpage = raw_tpage,
-      .relocated_tpage = relocated_tpage,
-      .raw_clut = raw_clut,
-      .relocated_clut = relocated_clut,
-      .logical_page = logical_page,
-      .texture_bank = texture_bank,
-      .residency = textures.surfacePickerResidency(logical_page, texture_bank),
-  };
-  for (auto index = std::size_t{}; index < VertexCount; ++index) {
-    result.world[index] = SurfacePickerPoint3{
-        static_cast<double>(world[index].vx),
-        static_cast<double>(world[index].vy),
-        static_cast<double>(world[index].vz),
-    };
-    result.screen[index] = SurfacePickerPoint2{
-        static_cast<std::int32_t>(std::lround(screenX(projected[index]))),
-        static_cast<std::int32_t>(std::lround(screenY(projected[index]))),
-    };
-    result.uv[index] = SurfacePickerUv{uv[index].u, uv[index].v};
-  }
-  return result;
-}
-
-template <std::size_t VertexCount>
-void submitSurfacePickerHighlight(
-    const std::array<long, VertexCount> &projected, int depth,
-    std::vector<OT_TAG> &ordering_table, PrimitiveBuffer &primitives) {
-  if constexpr (VertexCount == 3U) {
-    auto &primitive = primitives.surface_picker_triangles.emplace_back();
-    setPolyF3(&primitive);
-    setRGB0(&primitive, 255U, 0U, 255U);
-    setProjected(&primitive.x0, projected[0]);
-    setProjected(&primitive.x1, projected[1]);
-    setProjected(&primitive.x2, projected[2]);
-    addPrim(&ordering_table[std::clamp(depth, 1, ordering_table_size - 1)],
-            &primitive);
-  } else {
-    static_assert(VertexCount == 4U);
-    auto &primitive = primitives.surface_picker_quads.emplace_back();
-    setPolyF4(&primitive);
-    setRGB0(&primitive, 255U, 0U, 255U);
-    setProjected(&primitive.x0, projected[0]);
-    setProjected(&primitive.x1, projected[1]);
-    setProjected(&primitive.x2, projected[2]);
-    setProjected(&primitive.x3, projected[3]);
-    addPrim(&ordering_table[std::clamp(depth, 1, ordering_table_size - 1)],
-            &primitive);
-  }
-}
-#endif
-
 int cameraDepth(const MATRIX &view, const SVECTOR &vertex) {
   return static_cast<int>(
              (static_cast<std::int64_t>(view.m[2][0]) * vertex.vx +
@@ -285,6 +255,73 @@ struct VertexColor {
   std::uint8_t red;
   std::uint8_t green;
   std::uint8_t blue;
+};
+
+struct WorldPolygonLightingCacheEntry {
+  std::array<VertexColor, 4U> colors{};
+  std::uint64_t generation{};
+};
+
+class WorldPolygonLightingCache final {
+public:
+  void beginFrame(std::uint64_t guest_frame, std::uint16_t room) {
+    cursor_ = 0U;
+    if (valid_ && guest_frame_ == guest_frame && room_ == room) {
+      return;
+    }
+    guest_frame_ = guest_frame;
+    room_ = room;
+    valid_ = true;
+    ++generation_;
+    if (generation_ == 0U) {
+      for (auto &entry : entries_) {
+        entry.generation = 0U;
+      }
+      generation_ = 1U;
+    }
+  }
+
+  [[nodiscard]] WorldPolygonLightingCacheEntry &nextPolygon() {
+    if (cursor_ == entries_.size()) {
+      entries_.emplace_back();
+    }
+    return entries_[cursor_++];
+  }
+
+  void advance(std::size_t polygon_count) {
+    if (polygon_count > std::numeric_limits<std::size_t>::max() - cursor_) {
+      throw core::Error{core::ErrorCode::invalid_format,
+                        "World lighting cache index overflows"};
+    }
+    cursor_ += polygon_count;
+    if (entries_.size() < cursor_) {
+      entries_.resize(cursor_);
+    }
+  }
+
+  [[nodiscard]] bool
+  current(const WorldPolygonLightingCacheEntry &entry) const noexcept {
+    return valid_ && entry.generation == generation_;
+  }
+
+  void commit(WorldPolygonLightingCacheEntry &entry) const noexcept {
+    entry.generation = generation_;
+  }
+
+  void reset() noexcept {
+    cursor_ = 0U;
+    guest_frame_ = std::numeric_limits<std::uint64_t>::max();
+    room_ = std::numeric_limits<std::uint16_t>::max();
+    valid_ = false;
+  }
+
+private:
+  std::vector<WorldPolygonLightingCacheEntry> entries_;
+  std::size_t cursor_{};
+  std::uint64_t guest_frame_{std::numeric_limits<std::uint64_t>::max()};
+  std::uint64_t generation_{1U};
+  std::uint16_t room_{std::numeric_limits<std::uint16_t>::max()};
+  bool valid_{};
 };
 
 struct LocalSceneLightingSample {
@@ -424,7 +461,7 @@ makeTexturedVertex(const SVECTOR &position, assets::EmdUv uv, VertexColor color,
         dynamic_lights != nullptr ? *dynamic_lights : active_dynamic_lights;
     const auto modulation =
         normal_length_squared > 0.000001
-            ? game::sampleDynamicLighting(light_frame, point, normal)
+            ? game::sampleDynamicLightingNormalized(light_frame, point, normal)
             : game::sampleDynamicLighting(light_frame, point);
     lit = game::applyDynamicLighting(retail_lit, modulation);
   }
@@ -460,7 +497,8 @@ dynamicallyLit(VertexColor base, double x, double y, double z,
       dark_base, active_retail_vertex_lights, {x, y, z},
       active_retail_light_projection);
   const auto lit = applyRetailNightvision(game::applyDynamicLighting(
-      retail_lit, game::sampleDynamicLighting(light_frame, {x, y, z}, normal)));
+      retail_lit,
+      game::sampleDynamicLightingNormalized(light_frame, {x, y, z}, normal)));
   return VertexColor{lit.red, lit.green, lit.blue};
 }
 
@@ -683,6 +721,69 @@ bool frontFacing(long first, long second, long third,
   return area > 1.0e-8;
 }
 
+[[nodiscard]] double projectedX(const WorldProjectedVertex &vertex) noexcept {
+  return vertex.precise_valid ? vertex.precise.sx
+                              : static_cast<double>(screenX(vertex.packed_xy));
+}
+
+[[nodiscard]] double projectedY(const WorldProjectedVertex &vertex) noexcept {
+  return vertex.precise_valid ? vertex.precise.sy
+                              : static_cast<double>(screenY(vertex.packed_xy));
+}
+
+[[nodiscard]] bool
+frontFacingProjected(const WorldProjectedVertex &first,
+                     const WorldProjectedVertex &second,
+                     const WorldProjectedVertex &third) noexcept {
+  const auto first_x = projectedX(first);
+  const auto first_y = projectedY(first);
+  const auto second_x = projectedX(second);
+  const auto second_y = projectedY(second);
+  const auto third_x = projectedX(third);
+  const auto third_y = projectedY(third);
+  const auto area = (second_x - first_x) * (third_y - first_y) -
+                    (second_y - first_y) * (third_x - first_x);
+  return area > 1.0e-8;
+}
+
+template <std::size_t Count>
+[[nodiscard]] bool triviallyOutsideViewport(
+    const std::array<const WorldProjectedVertex *, Count> &vertices) noexcept {
+  constexpr auto margin = 96.0;
+  auto all_left = true;
+  auto all_right = true;
+  auto all_above = true;
+  auto all_below = true;
+  for (const auto *vertex : vertices) {
+    const auto x = projectedX(*vertex);
+    const auto y = projectedY(*vertex);
+    all_left = all_left && x < -margin;
+    all_right = all_right && x > static_cast<double>(screen_width) + margin;
+    all_above = all_above && y < -margin;
+    all_below = all_below && y > static_cast<double>(screen_height) + margin;
+  }
+  return all_left || all_right || all_above || all_below;
+}
+
+template <std::size_t Count>
+[[nodiscard]] bool
+triviallyOutsideViewport(const std::array<long, Count> &vertices) noexcept {
+  constexpr auto margin = 96;
+  auto all_left = true;
+  auto all_right = true;
+  auto all_above = true;
+  auto all_below = true;
+  for (const auto vertex : vertices) {
+    const auto x = static_cast<int>(screenX(vertex));
+    const auto y = static_cast<int>(screenY(vertex));
+    all_left = all_left && x < -margin;
+    all_right = all_right && x > screen_width + margin;
+    all_above = all_above && y < -margin;
+    all_below = all_below && y > screen_height + margin;
+  }
+  return all_left || all_right || all_above || all_below;
+}
+
 std::uint8_t emdTextureSourcePage(const assets::EmdScene &scene,
                                   const assets::EmdPolygon &polygon) {
   const auto page = assets::resolveEmdTexturePageSource(
@@ -823,6 +924,156 @@ Vector3 transformPoint(double x, double y, double z,
       static_cast<double>(transform.z) + component(2),
   };
 }
+
+class WorldSectionFrustum final {
+public:
+  WorldSectionFrustum(const MATRIX &view, int projection)
+      : projection_(static_cast<double>(std::max(projection, 1))) {
+    if (!PGXP_MatrixLookup(&view, rotation_.data()) ||
+        !PGXP_MatrixLookupTranslation(&view, translation_.data())) {
+      for (auto row = std::size_t{}; row < 3U; ++row) {
+        for (auto column = std::size_t{}; column < 3U; ++column) {
+          rotation_[row * 3U + column] =
+              static_cast<double>(view.m[row][column]) / 4096.0;
+        }
+        translation_[row] = static_cast<double>(view.t[row]);
+      }
+    }
+  }
+
+  [[nodiscard]] bool outside(const assets::EmdBounds &bounds) const noexcept {
+    return outside(
+        bounds, [](double x, double y, double z) { return Vector3{x, y, z}; });
+  }
+
+  [[nodiscard]] bool
+  outside(const assets::EmdBounds &bounds,
+          const assets::MissionTransform &transform) const noexcept {
+    return outside(bounds, [&](double x, double y, double z) {
+      return transformPoint(x, y, z, transform);
+    });
+  }
+
+  [[nodiscard]] bool
+  outside(std::span<const Vector3> world_points) const noexcept {
+    if (world_points.empty()) {
+      return false;
+    }
+    constexpr double near_margin = 32.0;
+    constexpr double horizontal_margin = 96.0;
+    constexpr double vertical_margin = 72.0;
+    constexpr double horizontal_extent =
+        static_cast<double>(screen_width) * 0.5 + horizontal_margin;
+    constexpr double vertical_extent =
+        static_cast<double>(screen_height) * 0.5 + vertical_margin;
+    const auto conservative_near = active_near_clip_depth - near_margin;
+    auto all_behind_near = true;
+    auto any_behind_near = false;
+    auto all_left = true;
+    auto all_right = true;
+    auto all_above = true;
+    auto all_below = true;
+    for (const auto &world : world_points) {
+      const auto camera_x = rotation_[0] * world.x + rotation_[1] * world.y +
+                            rotation_[2] * world.z + translation_[0];
+      const auto camera_y = rotation_[3] * world.x + rotation_[4] * world.y +
+                            rotation_[5] * world.z + translation_[1];
+      const auto camera_z = rotation_[6] * world.x + rotation_[7] * world.y +
+                            rotation_[8] * world.z + translation_[2];
+      const auto behind_near = camera_z < conservative_near;
+      all_behind_near = all_behind_near && behind_near;
+      any_behind_near = any_behind_near || behind_near;
+      all_left =
+          all_left && camera_x * projection_ < -horizontal_extent * camera_z;
+      all_right =
+          all_right && camera_x * projection_ > horizontal_extent * camera_z;
+      all_above =
+          all_above && camera_y * projection_ < -vertical_extent * camera_z;
+      all_below =
+          all_below && camera_y * projection_ > vertical_extent * camera_z;
+    }
+    if (all_behind_near) {
+      return true;
+    }
+    // Keep geometry crossing the near plane: its projection can cover the
+    // complete output even when all remaining points share a side plane.
+    if (any_behind_near) {
+      return false;
+    }
+    return all_left || all_right || all_above || all_below;
+  }
+
+private:
+  struct CameraPoint {
+    double x{};
+    double y{};
+    double z{};
+  };
+
+  template <typename Transform>
+  [[nodiscard]] bool outside(const assets::EmdBounds &bounds,
+                             Transform &&transform) const noexcept {
+    std::array<CameraPoint, 8U> points{};
+    auto point_index = std::size_t{};
+    for (const auto x : {bounds.minimum_x, bounds.maximum_x}) {
+      for (const auto y : {bounds.minimum_y, bounds.maximum_y}) {
+        for (const auto z : {bounds.minimum_z, bounds.maximum_z}) {
+          const auto world =
+              transform(static_cast<double>(x), static_cast<double>(y),
+                        static_cast<double>(z));
+          auto &camera = points[point_index++];
+          camera.x = rotation_[0] * world.x + rotation_[1] * world.y +
+                     rotation_[2] * world.z + translation_[0];
+          camera.y = rotation_[3] * world.x + rotation_[4] * world.y +
+                     rotation_[5] * world.z + translation_[1];
+          camera.z = rotation_[6] * world.x + rotation_[7] * world.y +
+                     rotation_[8] * world.z + translation_[2];
+        }
+      }
+    }
+
+    constexpr double near_margin = 32.0;
+    const auto conservative_near = active_near_clip_depth - near_margin;
+    if (std::ranges::all_of(points, [conservative_near](const auto &point) {
+          return point.z < conservative_near;
+        })) {
+      return true;
+    }
+    // A box crossing the near plane can fan out over the complete screen.
+    // Leave it to the polygon clipper rather than risk a false side-plane
+    // rejection. Fully forward boxes use deliberately oversized margins.
+    if (std::ranges::any_of(points, [conservative_near](const auto &point) {
+          return point.z < conservative_near;
+        })) {
+      return false;
+    }
+    constexpr double horizontal_margin = 96.0;
+    constexpr double vertical_margin = 72.0;
+    constexpr double horizontal_extent =
+        static_cast<double>(screen_width) * 0.5 + horizontal_margin;
+    constexpr double vertical_extent =
+        static_cast<double>(screen_height) * 0.5 + vertical_margin;
+    const auto outside_plane = [&](const auto &predicate) {
+      return std::ranges::all_of(points, predicate);
+    };
+    return outside_plane([&](const auto &point) {
+             return point.x * projection_ < -horizontal_extent * point.z;
+           }) ||
+           outside_plane([&](const auto &point) {
+             return point.x * projection_ > horizontal_extent * point.z;
+           }) ||
+           outside_plane([&](const auto &point) {
+             return point.y * projection_ < -vertical_extent * point.z;
+           }) ||
+           outside_plane([&](const auto &point) {
+             return point.y * projection_ > vertical_extent * point.z;
+           });
+  }
+
+  std::array<double, 9U> rotation_{};
+  std::array<double, 3U> translation_{};
+  double projection_{};
+};
 
 SVECTOR transformVertex(std::int16_t x, std::int16_t y, std::int16_t z,
                         const assets::MissionTransform &transform) {

@@ -15,6 +15,7 @@ function(sf_check_forbidden_includes layer)
     foreach(path IN LISTS arg_PATHS)
         file(GLOB_RECURSE path_files
             "${SF_SOURCE_ROOT}/${path}/*.cpp"
+            "${SF_SOURCE_ROOT}/${path}/*.inc"
             "${SF_SOURCE_ROOT}/${path}/*.hpp")
         list(APPEND files ${path_files})
     endforeach()
@@ -92,6 +93,7 @@ foreach(module IN LISTS _sf_cmake_modules)
 endforeach()
 file(GLOB_RECURSE _sf_translation_units
     "${SF_SOURCE_ROOT}/src/*.cpp"
+    "${SF_SOURCE_ROOT}/src/*.inc"
     "${SF_SOURCE_ROOT}/apps/*.cpp"
     "${SF_SOURCE_ROOT}/tests/*.cpp")
 foreach(file IN LISTS _sf_translation_units)
@@ -100,7 +102,7 @@ foreach(file IN LISTS _sf_translation_units)
     string(FIND "${_sf_build_manifest}" "${relative}" position)
     if(position EQUAL -1)
         list(APPEND _sf_errors
-            "targets: ${relative} is not assigned to a CMake target")
+            "targets: ${relative} is not assigned to a CMake target or source manifest")
     endif()
 endforeach()
 

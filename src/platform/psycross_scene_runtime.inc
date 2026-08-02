@@ -50,9 +50,6 @@ SceneViewerResult PsyCrossSceneViewer::run(
   CombatEffectTextureAtlas effect_textures{mission};
   PoliceLightbarAnimation police_lightbar_animation;
   RetailScrimAnimation retail_scrim_animation;
-#if defined(SF_ENABLE_SURFACE_PICKER)
-  PsyCrossSurfacePicker surface_picker;
-#endif
   // TextureStreamer already uploaded VLF and the effect atlas occupies a
   // reserved page. Reconcile only bank-specific scene data here; invalidating
   // and restoring both atlases doubled the synchronous startup transfer.
@@ -71,19 +68,23 @@ SceneViewerResult PsyCrossSceneViewer::run(
                 gameplay.player().yaw);
 
   std::vector<OT_TAG> ordering_table(ordering_table_size);
+  std::vector<OT_TAG> optic_trail_ordering_table(ordering_table_size);
+  std::vector<OT_TAG> optic_subject_ordering_table(ordering_table_size);
   std::vector<OT_TAG> shadow_ordering_table(ordering_table_size);
   std::vector<OT_TAG> scrim_ordering_table(ordering_table_size);
+  std::vector<OT_TAG> scanner_xray_ordering_table(ordering_table_size);
   std::vector<OT_TAG> guest_overlay_ordering_table(ordering_table_size);
   std::vector<OT_TAG> fire_ordering_table(ordering_table_size);
-#if defined(SF_ENABLE_SURFACE_PICKER)
-  std::vector<OT_TAG> surface_picker_ordering_table(ordering_table_size);
-#endif
   PrimitiveBuffer primitives;
+  OpticHistory optic_history;
   ActorShadowPresentationCache actor_shadow_cache;
   DynamicLightFrameScratch dynamic_light_scratch;
+  WorldPolygonLightingCache world_lighting_cache;
   LocalSceneLightingCache local_scene_lighting_cache;
+  FlashlightSurfaceCache flashlight_surface_cache;
   WorldChunkAppearance world_chunk_appearance;
   GameplayPresentationTransition gameplay_presentation_transition;
+  bool previous_radio_presentation_active{};
   WeaponEffectsScratch weapon_effects_scratch;
   HmdPoseScratch hmd_pose_scratch;
   std::vector<WorldCalloutAnchor> world_callout_scratch;
@@ -203,6 +204,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
   scrim_copy_edges.observe(gameplay.legacyPresentationFrame());
   auto previous_render_presentation = current_render_presentation;
   auto interpolated_render_presentation = current_render_presentation;
+  auto native_aim_held = current_render_presentation.first_person_aim;
   const auto reset_render_presentation = [&] {
     dropped_item_presentation.reset();
     captureRenderPresentation(gameplay, current_render_presentation);
@@ -211,16 +213,21 @@ SceneViewerResult PsyCrossSceneViewer::run(
         current_render_presentation.dropped_items);
     previous_render_presentation = current_render_presentation;
     interpolated_render_presentation = current_render_presentation;
+    native_aim_held = current_render_presentation.first_person_aim;
     gameplay_hud_scratch = {};
     current_weapon_switch_countdown = gameplay.hud().weaponSwitchFrames();
     previous_weapon_switch_countdown = current_weapon_switch_countdown;
     weapon_presentation_edges.reset();
     muzzle_flash_edges.reset();
     glass_shatter.reset(gameplay);
+    optic_history.reset();
     actor_shadow_cache.reset();
     dynamic_light_scratch.reset();
+    world_lighting_cache.reset();
+    flashlight_surface_cache.reset();
     world_chunk_appearance.reset();
     gameplay_presentation_transition.reset();
+    previous_radio_presentation_active = false;
     primitives.invalidateCapacityPlan();
     weapon_presentation_edges.observe(gameplay.legacyPresentationFrame());
     muzzle_flash_edges.observe(gameplay.effects());
@@ -336,8 +343,10 @@ SceneViewerResult PsyCrossSceneViewer::run(
       mission.definition().resource_name == "CAVE2";
   const auto draw_gameplay_frame = [&](unsigned int effect_updates) {
     glass_shatter.observe(gameplay, current_render_presentation);
-    // Reconcile streamed world ownership before every frame. Dynamic effects
-    // live in dedicated native pages and never patch these mission slots.
+    // Resource selectors are published atomically by the 20 Hz guest. Do not
+    // rescan the static scene for every 120/240 Hz presentation. ensure()
+    // retains a compact exact-key fast path for host-owned sprites and glass,
+    // which may still change between two guest publications.
     textures.ensure(gameplay, weapon_presentation_edges.sprites(),
                     glass_shatter.shards());
     static_cast<void>(police_lightbar_animation.synchronize(
@@ -352,6 +361,12 @@ SceneViewerResult PsyCrossSceneViewer::run(
         previous_render_presentation, current_render_presentation,
         interpolation_amount, interpolated_render_presentation);
     auto &presentation = interpolated_render_presentation;
+    if (!native_aim_held) {
+      // The guest publishes aim/environment at 20 Hz. Host release must clear
+      // SVD/virus optics on this presentation frame, not one retail tick later.
+      presentation.optic_mode = 0U;
+      presentation.environment.nightvision_enabled = false;
+    }
     static_cast<void>(retail_scrim_animation.prepareFrame(
         gameplay, presentation.scrim, scrim_copy_edges.phases(),
         presentation.guest_frame, textures));
@@ -364,14 +379,6 @@ SceneViewerResult PsyCrossSceneViewer::run(
                                  ? first_person_near_clip_depth
                                  : near_clip_depth;
     const auto &camera = presentation.camera;
-#if defined(SF_ENABLE_SURFACE_PICKER)
-    surface_picker.beginFrame(SurfacePickerFrameContext{
-        .mission = std::string{mission.definition().resource_name},
-        .guest_frame = presentation.guest_frame,
-        .room = gameplay.currentRoom(),
-        .camera = SurfacePickerPoint3{camera.x, camera.y, camera.z},
-    });
-#endif
     applyRetailEnvironment(presentation.environment, camera.projection,
                            presentation.retail_environment_active,
                            retail_blackout_mission);
@@ -412,23 +419,19 @@ SceneViewerResult PsyCrossSceneViewer::run(
         weapon_presentation_edges.particles(),
         weapon_presentation_edges.sprites(),
         weapon_presentation_edges.rawPackets(), glass_shatter.shards(),
-        interpolation_amount, presentation, view, ordering_table,
+        interpolation_amount, previous_render_presentation,
+        current_render_presentation, presentation, view, ordering_table,
+        optic_trail_ordering_table,
+        optic_subject_ordering_table,
         shadow_ordering_table, scrim_ordering_table,
+        scanner_xray_ordering_table,
         guest_overlay_ordering_table, fire_ordering_table,
-#if defined(SF_ENABLE_SURFACE_PICKER)
-        surface_picker_ordering_table,
-#endif
-        actor_shadow_cache, dynamic_light_scratch, local_scene_lighting_cache,
-        world_chunk_appearance, weapon_effects_scratch, hmd_pose_scratch,
-        primitives
-#if defined(SF_ENABLE_SURFACE_PICKER)
-        ,
-        surface_picker
-#endif
+        optic_history,
+        actor_shadow_cache, dynamic_light_scratch, world_lighting_cache,
+        local_scene_lighting_cache, flashlight_surface_cache,
+        world_chunk_appearance,
+        weapon_effects_scratch, hmd_pose_scratch, primitives, log_next_frame
     );
-#if defined(SF_ENABLE_SURFACE_PICKER)
-    surface_picker.finishFrame();
-#endif
     if (effect_updates != 0U) {
       fire_animation.update();
       glass_shatter.advance(effect_updates);
@@ -444,19 +447,17 @@ SceneViewerResult PsyCrossSceneViewer::run(
     GR_EnableDepth(1);
     GR_SetDepthState(1, 1);
     DrawOTag(reinterpret_cast<u_long *>(&ordering_table.back()));
-#if defined(SF_ENABLE_SURFACE_PICKER)
-    // Picker tint is a diagnostic overlay over the exact selected model
-    // surface. It writes no depth and a small offset prevents z-fighting while
-    // preserving ordinary world occlusion.
-    if (surface_picker.active()) {
-      GR_SetDepthState(1, 0);
-      GR_SetPolygonOffset(0.0F, -2.0F);
-      DrawOTag(
-          reinterpret_cast<u_long *>(&surface_picker_ordering_table.back()));
-      GR_SetPolygonOffset(0.0F, 0.0F);
-      GR_SetDepthState(1, 1);
-    }
-#endif
+    // Retail SVD replays three opaque projected packet snapshots at -8 depth
+    // steps. They read world depth without writing it; the live lime subject
+    // then owns depth and cleanly covers the overlapping newest echo.
+    GR_SetBlendMode(BM_NONE);
+    GR_SetDepthState(1, 0);
+    DrawOTag(
+        reinterpret_cast<u_long *>(&optic_trail_ordering_table.back()));
+    GR_SetDepthState(1, 1);
+    DrawOTag(
+        reinterpret_cast<u_long *>(&optic_subject_ordering_table.back()));
+    GR_SetBlendMode(BM_NONE);
     // Posed silhouettes are projected onto exact gameplay receiver surfaces.
     // First union their model triangles into a dedicated stencil bit, then
     // shade that union once. This preserves limbs and equipment detail without
@@ -489,8 +490,17 @@ SceneViewerResult PsyCrossSceneViewer::run(
     GR_SetPolygonOffset(0.0F, 0.0F);
     GR_SetDepthState(1, 1);
     GR_SetBlendMode(BM_NONE);
-    drawVirusScannerFilter(virusScannerXrayActive(
-        presentation.first_person_aim, gameplay.hud().inventory().current()));
+    drawVirusScannerFilter(presentation.first_person_aim &&
+                           presentation.optic_mode == 4U);
+    // The scanner changes the normal textured target packets to retail 0x36
+    // semitransparency. Submit them after the amber filter with depth disabled
+    // so the infected body is visible through authored walls and crates.
+    GR_SetBlendMode(BM_AVERAGE);
+    GR_EnableDepth(0);
+    GR_SetDepthState(0, 0);
+    DrawOTag(
+        reinterpret_cast<u_long *>(&scanner_xray_ordering_table.back()));
+    GR_SetBlendMode(BM_NONE);
     // Remaining non-world raw packets and non-particle retail sprites are
     // already projected presentation. Rain and other identified particles
     // were reprojected into the world OT above; only true screen-space data
@@ -517,9 +527,19 @@ SceneViewerResult PsyCrossSceneViewer::run(
     drawRetailScreenFilter(presentation.environment,
                            presentation.retail_environment_active);
     drawGameBrightness(pause_settings.brightness);
+    const auto radio_presentation_active = gameplay.radioConversationActive();
     const auto letterbox_requested = gameplay.letterboxActive();
-    gameplay_presentation_transition.advance(letterbox_requested,
-                                             presentation_delta_seconds);
+    const auto radio_presentation_closed =
+        game::legacyRadioPresentationClosed(previous_radio_presentation_active,
+                                            radio_presentation_active) &&
+        !letterbox_requested;
+    previous_radio_presentation_active = radio_presentation_active;
+    if (radio_presentation_closed) {
+      gameplay_presentation_transition.reset();
+    } else {
+      gameplay_presentation_transition.advance(letterbox_requested,
+                                               presentation_delta_seconds);
+    }
     const auto letterbox_amount =
         gameplay_presentation_transition.letterboxAmount();
     const auto hud_visibility =
@@ -638,7 +658,11 @@ SceneViewerResult PsyCrossSceneViewer::run(
   };
 
   PresentationFrameMeter presentation_frame_meter;
+  auto meter_elapsed_seconds = 0.0;
+  auto meter_simulation_updates = 0U;
   const auto end_presented_frame = [&] {
+    presentation_frame_meter.advance(meter_elapsed_seconds,
+                                     meter_simulation_updates);
     drawPresentationFrameMeter(hud_textures, presentation_frame_meter.text());
     PsyX_EndScene();
   };
@@ -713,7 +737,8 @@ SceneViewerResult PsyCrossSceneViewer::run(
             ? 0.0
             : static_cast<double>(counter_delta) /
                   static_cast<double>(performance_frequency);
-    presentation_frame_meter.advance(raw_elapsed_seconds);
+    meter_elapsed_seconds = raw_elapsed_seconds;
+    meter_simulation_updates = 0U;
     const auto elapsed_seconds =
         std::clamp(raw_elapsed_seconds, 0.0, maximum_frame_time_seconds);
     presentation_delta_seconds = elapsed_seconds;
@@ -750,9 +775,6 @@ SceneViewerResult PsyCrossSceneViewer::run(
             ? std::span<const std::uint8_t>{keyboard, static_cast<std::size_t>(
                                                           keyboard_count)}
             : std::span<const std::uint8_t>{};
-#if defined(SF_ENABLE_SURFACE_PICKER)
-    surface_picker.handleInput(keyboard_state);
-#endif
     const auto bound_actions = sampleKeyboardMouseActions(
         input_, KeyboardMouseDeviceState{
                     .keyboard = keyboard_state,
@@ -851,6 +873,15 @@ SceneViewerResult PsyCrossSceneViewer::run(
         (controller_held & interact_button) != 0U;
     raw_player_input.controller.target_lock =
         (controller_held & target_lock_button) != 0U;
+    const auto dismiss_radio_pressed =
+        interact_pressed || (controller_pressed & interact_button) != 0U;
+    if (!paused && dismiss_radio_pressed &&
+        gameplay.radioConversationActive()) {
+      gameplay.dismissRadioConversationPresentation();
+      // A deliberate skip must expose the objective update on the next
+      // presented frame, rather than replaying the normal two-phase exit.
+      gameplay_presentation_transition.reset();
+    }
     raw_player_input.controller.run =
         raw_player_input.controller.left_y >= controller_run_threshold;
     raw_player_input.controller.quick_turn = quick_turn_pulse;
@@ -1235,6 +1266,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
       }
     }
     const auto manual_aim = mapped_input.aim.held;
+    native_aim_held = manual_aim;
     const auto first_person_input =
         sf::platform::firstPersonAimInput(mapped_input);
     auto sampled_input = game::GameplayInput{
@@ -1334,6 +1366,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
       simulation_accumulator_seconds = std::max(
           0.0, simulation_accumulator_seconds - retail_simulation_step_seconds);
 
+      meter_simulation_updates = simulation_updates_this_frame;
       // State 2 retires the guest runtime on the exact tick which publishes
       // the failure-restart request. Do not execute a second catch-up tick on
       // that finished timeline; the coherent checkpoint is restored below.
@@ -1521,6 +1554,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
     }
     if (gameplay.currentRoom() != previous_room) {
       previous_room = gameplay.currentRoom();
+      optic_history.reset();
       actor_shadow_cache.transitionRoom();
       primitives.invalidateCapacityPlan();
       log_next_frame = true;

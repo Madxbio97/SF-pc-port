@@ -54,6 +54,12 @@ extern "C"
 	/* clears PGXP vertex buffer */
 	void PGXP_ClearCache();
 
+	/* saves/restores the transient PGXP vertex cursor without invalidating
+	 * matrices or exact-vector generations. Intended for capture-only passes
+	 * whose projected packets are copied out before the real scene is built. */
+	uint PGXP_MarkCache();
+	void PGXP_RewindCache(uint mark);
+
 	/* emits new PGXP vertex */
 	ushort PGXP_EmitCacheData(PGXPVData* newData);
 

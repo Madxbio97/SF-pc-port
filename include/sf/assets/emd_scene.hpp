@@ -24,6 +24,9 @@ struct EmdUv {
 struct EmdPolygon {
     bool quad{};
     bool renderable{};
+    // Retail EMDs retain zero-area seams. The PS1 NCLIP path rejects them;
+    // PGXP must not reconstruct those records into visible stretched faces.
+    bool degenerate{};
     std::array<std::uint16_t, 4> vertex_indices{};
     std::array<EmdUv, 4> uv{};
     std::uint16_t clut{};

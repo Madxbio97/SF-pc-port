@@ -31,6 +31,15 @@ and license boundaries remain intact.
   tests, so parallel CTest runs cannot share or leak scratch state.
 - Restricted the architecture scanner to actual include directives; comments
   and diagnostic text can no longer create false dependency violations.
+- Extended the architecture gate to project-owned `.inc` implementation
+  fragments. Every fragment must be listed in the source manifest and obey the
+  same one-way dependency policy as normal translation units.
+- Consolidated transient actor and world-vertex storage into explicit
+  frame-scratch owners. Reset and lifetime rules now live with the cache instead
+  of being duplicated across the renderer.
+- Removed the orphaned Surface Picker preprocessor path. Its implementation had
+  already been retired and no build target defined the feature, so the remaining
+  branches were unreachable and could not form a valid diagnostic build.
 - Kept generated Python caches and local scratch output outside source control.
 
 ## Current ownership boundaries

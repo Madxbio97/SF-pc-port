@@ -4,9 +4,6 @@
 #include "psycross_font_texture.hpp"
 #include "psycross_movie_player.hpp"
 #include "psycross_runtime_guards.hpp"
-#if defined(SF_ENABLE_SURFACE_PICKER)
-#include "psycross_surface_picker.hpp"
-#endif
 #include "psycross_vram.hpp"
 #include "psycross_window_mode.hpp"
 
@@ -26,6 +23,7 @@
 #include "sf/platform/actor_shadow_stability.hpp"
 #include "sf/platform/gameplay_message_reveal_policy.hpp"
 #include "sf/platform/gameplay_presentation_transition.hpp"
+#include "sf/platform/optic_history.hpp"
 #include "sf/platform/player_camera_fade.hpp"
 #include "sf/platform/player_input.hpp"
 #include "sf/platform/presentation_frame_meter.hpp"

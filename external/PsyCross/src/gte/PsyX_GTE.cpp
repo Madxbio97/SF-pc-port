@@ -700,6 +700,18 @@ void PGXP_ClearCache()
 	PGXP_MatrixNextGeneration();
 }
 
+uint PGXP_MarkCache()
+{
+	return (g_pgxpVertexIndex & 0xffffu) |
+		   (g_pgxpTransformed != 0 ? 0x10000u : 0u);
+}
+
+void PGXP_RewindCache(uint mark)
+{
+	g_pgxpVertexIndex = mark & 0xffffu;
+	g_pgxpTransformed = (mark & 0x10000u) != 0u;
+}
+
 ushort PGXP_GetIndex(int checkTransform)
 {
 	if(!checkTransform || g_pgxpTransformed)

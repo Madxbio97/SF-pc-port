@@ -46,6 +46,20 @@ std::int16_t unpackSigned(std::uint32_t value, unsigned int shift, unsigned int 
     return static_cast<std::int16_t>(component);
 }
 
+bool degenerateTriangle(const GmdVertex& first, const GmdVertex& second,
+                        const GmdVertex& third) noexcept {
+    const auto first_x = static_cast<std::int64_t>(second.x) - first.x;
+    const auto first_y = static_cast<std::int64_t>(second.y) - first.y;
+    const auto first_z = static_cast<std::int64_t>(second.z) - first.z;
+    const auto second_x = static_cast<std::int64_t>(third.x) - first.x;
+    const auto second_y = static_cast<std::int64_t>(third.y) - first.y;
+    const auto second_z = static_cast<std::int64_t>(third.z) - first.z;
+    const auto cross_x = first_y * second_z - first_z * second_y;
+    const auto cross_y = first_z * second_x - first_x * second_z;
+    const auto cross_z = first_x * second_y - first_y * second_x;
+    return cross_x == 0 && cross_y == 0 && cross_z == 0;
+}
+
 EmdUv decodeUv(std::uint16_t packed) {
     return EmdUv{
         static_cast<std::uint8_t>(packed),
@@ -132,6 +146,10 @@ GmdModel GmdModel::parse(std::span<const std::byte> bytes) {
             })) {
             throw core::Error{core::ErrorCode::invalid_format, "GMD vertex index is out of range"};
         }
+        triangle.degenerate = degenerateTriangle(
+            vertices[triangle.vertex_indices[0]],
+            vertices[triangle.vertex_indices[1]],
+            vertices[triangle.vertex_indices[2]]);
         triangle.uv = {
             decodeUv(static_cast<std::uint16_t>(word0)),
             decodeUv(static_cast<std::uint16_t>(word1)),
@@ -145,7 +163,7 @@ GmdModel GmdModel::parse(std::span<const std::byte> bytes) {
         const auto texture_page_bit =
             1U << (triangle.texture_page & 0x1fU);
         texture_page_mask |= texture_page_bit;
-        if (triangle.flags != 0U) {
+        if (triangle.flags != 0U && !triangle.degenerate) {
             renderable_texture_page_mask |= texture_page_bit;
         }
         triangles.push_back(triangle);

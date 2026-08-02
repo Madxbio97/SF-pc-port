@@ -189,7 +189,7 @@ private:
     }
     const auto renderable_count = static_cast<std::size_t>(
         std::ranges::count_if(model->triangles(), [](const auto &triangle) {
-          return triangle.flags != 0U;
+          return triangle.flags != 0U && !triangle.degenerate;
         }));
     const auto subdivide = renderable_count <= 20U;
     auto emitted = std::size_t{};
@@ -199,7 +199,7 @@ private:
          emitted < maximum_shards_per_break;
          ++triangle_index) {
       const auto &triangle = model->triangles()[triangle_index];
-      if (triangle.flags == 0U) {
+      if (triangle.flags == 0U || triangle.degenerate) {
         continue;
       }
       std::array<SourceVertex, 3U> source{};
@@ -724,6 +724,239 @@ void worldCalloutAnchors(
   }
 }
 
+enum class OpticSubjectStyle : std::uint8_t;
+
+[[nodiscard]] constexpr VertexColor
+opticSubjectColor(OpticSubjectStyle style) noexcept;
+
+void submitStats(RenderStats &stats, int depth,
+                 std::span<const long> projected);
+
+void renderProjectedOpticFrame(
+    const OpticProjectedFrame &frame, OpticSubjectStyle style,
+    std::size_t echo_index, std::vector<OT_TAG> &ordering_table,
+    PrimitiveBuffer &primitives, RenderStats &stats) {
+  const auto color = opticSubjectColor(style);
+  for (const auto &triangle : frame) {
+    auto &primitive = primitives.optic_trails.emplace_back();
+    // SVDN2 replays the cached 0x18-byte packet as an opaque POLY_F3
+    // (opcode 0x20). The three history colors are flat packet colors; no
+    // Gouraud interpolation or ABR/semitransparency participates.
+    setPolyF3(&primitive);
+    setRGB0(&primitive, color.red, color.green, color.blue);
+    setProjected(&primitive.x0, triangle.packed_xy[0]);
+    setProjected(&primitive.x1, triangle.packed_xy[1]);
+    setProjected(&primitive.x2, triangle.packed_xy[2]);
+
+    const auto precise_begin = PGXP_GetIndex(0);
+    const auto precise_emitted =
+        triangle.precise_valid[0] && triangle.precise_valid[1] &&
+        triangle.precise_valid[2] && precise_begin != 0xffffU &&
+        static_cast<unsigned int>(precise_begin) + 3U < 0xffffU;
+    if (precise_emitted) {
+      // PGXP is renderer-thread-owned. Once the atomic three-slot preflight
+      // succeeds these writes cannot fail, and addPrim consumes their end
+      // cursor as one precise triangle.
+      for (auto corner = std::size_t{}; corner < 3U; ++corner) {
+        auto precise = triangle.precise[corner];
+        static_cast<void>(PGXP_EmitCacheData(&precise));
+      }
+    }
+    if (!precise_emitted) {
+      // Clear any stale transform latch without emitting a partial replay.
+      static_cast<void>(PGXP_GetIndex(1));
+    }
+    const auto depth =
+        sf::platform::retailOpticEchoDepth(triangle.ordering_depth, echo_index);
+    addPrim(&ordering_table[std::clamp(depth, 1, ordering_table_size - 1)],
+            &primitive);
+    submitStats(stats, depth, triangle.packed_xy);
+  }
+}
+
+enum class OpticSubjectStyle : std::uint8_t {
+  nightvision,
+  nightvision_trail_oldest,
+  nightvision_trail_middle,
+  nightvision_trail_recent,
+};
+
+[[nodiscard]] constexpr bool
+isNightvisionTrail(OpticSubjectStyle style) noexcept {
+  return style != OpticSubjectStyle::nightvision;
+}
+
+[[nodiscard]] constexpr VertexColor
+opticSubjectColor(OpticSubjectStyle style) noexcept {
+  switch (style) {
+  case OpticSubjectStyle::nightvision:
+    // Retail live SVD silhouette (opaque POLY_F3 word 0x2000ff48).
+    return {72U, 255U, 0U};
+  case OpticSubjectStyle::nightvision_trail_oldest:
+    return {5U, 26U, 98U};
+  case OpticSubjectStyle::nightvision_trail_middle:
+    return {7U, 104U, 149U};
+  case OpticSubjectStyle::nightvision_trail_recent:
+    return {0U, 165U, 171U};
+  }
+  return {};
+}
+
+void captureOpticTriangle(OpticProjectedFrame &capture, long xy0, long xy1,
+                          long xy2, int depth, ushort cache_end) {
+  auto triangle = OpticProjectedTriangle{
+      .packed_xy = {xy0, xy1, xy2}, .ordering_depth = depth};
+  if (cache_end != 0xffffU && cache_end >= 3U) {
+    for (auto corner = std::size_t{}; corner < 3U; ++corner) {
+      triangle.precise_valid[corner] =
+          PGXP_GetCacheDataExact(
+              &triangle.precise[corner],
+              static_cast<ushort>(cache_end - 3U + corner)) != 0;
+    }
+  }
+  capture.push_back(std::move(triangle));
+}
+
+void renderOpticHmdObject(
+    const assets::HmdModel &model, std::span<const Vector3> world_vertices,
+    OpticSubjectStyle style, const MATRIX &view,
+    std::vector<OT_TAG> &ordering_table, PrimitiveBuffer &primitives,
+    RenderStats &stats, std::size_t triangle_stride = 1U,
+    int ordering_bias = 0, OpticProjectedFrame *capture = nullptr,
+    bool emit_primitive = true) {
+  if (world_vertices.size() != model.vertices().size() ||
+      triangle_stride == 0U) {
+    return;
+  }
+  for (auto triangle_index = std::size_t{};
+       triangle_index < model.triangles().size();
+       triangle_index += triangle_stride) {
+    const auto &triangle = model.triangles()[triangle_index];
+    const auto &first = world_vertices[triangle.vertex_indices[0]];
+    const auto &second = world_vertices[triangle.vertex_indices[1]];
+    const auto &third = world_vertices[triangle.vertex_indices[2]];
+    auto v0 = makeVertex(first.x, first.y, first.z);
+    auto v1 = makeVertex(second.x, second.y, second.z);
+    auto v2 = makeVertex(third.x, third.y, third.z);
+    const std::array positions{v0, v1, v2};
+    if (classifyNearPlane(view, positions) != NearPlaneStatus::inside) {
+      ++stats.rejected;
+      continue;
+    }
+    long xy0{};
+    long xy1{};
+    long xy2{};
+    long depth_cue{};
+    long flags{};
+    const auto depth =
+        RotTransPers3(&v0, &v1, &v2, &xy0, &xy1, &xy2, &depth_cue, &flags);
+    const auto capture_cache_end =
+        capture != nullptr
+            ? PGXP_GetIndex(emit_primitive ? 0 : 1)
+            : static_cast<ushort>(0xffffU);
+    if (depth <= 0 ||
+        triviallyOutsideViewport(std::array<long, 3U>{xy0, xy1, xy2})) {
+      if (emit_primitive) {
+        ++stats.rejected;
+      }
+      continue;
+    }
+    if (capture != nullptr) {
+      captureOpticTriangle(*capture, xy0, xy1, xy2, depth,
+                           capture_cache_end);
+    }
+    if (!emit_primitive) {
+      continue;
+    }
+    const auto color = opticSubjectColor(style);
+    auto &primitive = isNightvisionTrail(style)
+                          ? primitives.optic_trails.emplace_back()
+                          : primitives.optic_subjects.emplace_back();
+    setPolyF3(&primitive);
+    setRGB0(&primitive, color.red, color.green, color.blue);
+    setProjected(&primitive.x0, xy0);
+    setProjected(&primitive.x1, xy1);
+    setProjected(&primitive.x2, xy2);
+    addPrim(&ordering_table[std::clamp(
+                depth + ordering_bias, 1, ordering_table_size - 1)],
+            &primitive);
+    const std::array projected{xy0, xy1, xy2};
+    submitStats(stats, depth, projected);
+  }
+}
+
+void renderOpticGmdObject(
+    const assets::GmdModel &model, const assets::MissionTransform &transform,
+    OpticSubjectStyle style, const MATRIX &view,
+    std::vector<OT_TAG> &ordering_table, PrimitiveBuffer &primitives,
+    RenderStats &stats, OpticProjectedFrame *capture = nullptr,
+    bool emit_primitive = true) {
+  if (model.vertices().empty()) {
+    return;
+  }
+  for (const auto &triangle : model.triangles()) {
+    if (triangle.flags == 0U || triangle.degenerate) {
+      continue;
+    }
+    const auto first = transformPoint(
+        model.vertices()[triangle.vertex_indices[0]].x,
+        model.vertices()[triangle.vertex_indices[0]].y,
+        model.vertices()[triangle.vertex_indices[0]].z, transform);
+    const auto second = transformPoint(
+        model.vertices()[triangle.vertex_indices[1]].x,
+        model.vertices()[triangle.vertex_indices[1]].y,
+        model.vertices()[triangle.vertex_indices[1]].z, transform);
+    const auto third = transformPoint(
+        model.vertices()[triangle.vertex_indices[2]].x,
+        model.vertices()[triangle.vertex_indices[2]].y,
+        model.vertices()[triangle.vertex_indices[2]].z, transform);
+    auto v0 = makeVertex(first.x, first.y, first.z);
+    auto v1 = makeVertex(second.x, second.y, second.z);
+    auto v2 = makeVertex(third.x, third.y, third.z);
+    const std::array positions{v0, v1, v2};
+    if (classifyNearPlane(view, positions) != NearPlaneStatus::inside) {
+      ++stats.rejected;
+      continue;
+    }
+    long xy0{};
+    long xy1{};
+    long xy2{};
+    long depth_cue{};
+    long flags{};
+    const auto depth =
+        RotTransPers3(&v0, &v1, &v2, &xy0, &xy1, &xy2, &depth_cue, &flags);
+    const auto capture_cache_end =
+        capture != nullptr
+            ? PGXP_GetIndex(emit_primitive ? 0 : 1)
+            : static_cast<ushort>(0xffffU);
+    if (depth <= 0 ||
+        triviallyOutsideViewport(std::array<long, 3U>{xy0, xy1, xy2})) {
+      if (emit_primitive) {
+        ++stats.rejected;
+      }
+      continue;
+    }
+    if (capture != nullptr) {
+      captureOpticTriangle(*capture, xy0, xy1, xy2, depth,
+                           capture_cache_end);
+    }
+    if (!emit_primitive) {
+      continue;
+    }
+    const auto color = opticSubjectColor(style);
+    auto &primitive = primitives.optic_subjects.emplace_back();
+    setPolyF3(&primitive);
+    setRGB0(&primitive, color.red, color.green, color.blue);
+    setProjected(&primitive.x0, xy0);
+    setProjected(&primitive.x1, xy1);
+    setProjected(&primitive.x2, xy2);
+    addPrim(&ordering_table[std::clamp(depth, 1, ordering_table_size - 1)],
+            &primitive);
+    const std::array projected{xy0, xy1, xy2};
+    submitStats(stats, depth, projected);
+  }
+}
+
 std::optional<Vector3> weaponMuzzleAnchor(const game::GameplaySession &gameplay,
                                           const assets::HmdModel &actor_model,
                                           const game::SceneObject &actor_object,
@@ -929,9 +1162,6 @@ Vector3 attachedEffectCentre(const game::GameplaySession &gameplay,
                                effect.owner_object, state->weapon)
       .value_or(fallback);
 }
-
-void submitStats(RenderStats &stats, int depth,
-                 std::span<const long> projected);
 
 void configurePrimitive(POLY_GT3 &primitive,
                         const std::array<TexturedVertex, 3> &vertices,
@@ -1177,18 +1407,6 @@ void renderGlassShards(std::span<const GlassShardPresentationState> shards,
   }
 }
 
-#if defined(SF_ENABLE_SURFACE_PICKER)
-struct SurfacePickerObjectContext {
-  PsyCrossSurfacePicker *picker{};
-  const TextureStreamer *textures{};
-  std::vector<OT_TAG> *ordering_table{};
-  SurfacePickerKind kind{SurfacePickerKind::gmd_object};
-  std::uint32_t owner{};
-  std::string label;
-  std::uint16_t room{};
-  std::uint64_t guest_frame{};
-};
-#endif
 
 void renderGmdObject(
     const assets::GmdModel &model, const game::SceneObject &object,
@@ -1197,17 +1415,12 @@ void renderGmdObject(
     std::vector<OT_TAG> &ordering_table, PrimitiveBuffer &primitives,
     RenderStats &stats, VertexColor back_color = {128U, 128U, 128U},
     bool force_two_sided = false, bool force_semi_transparent = false
-#if defined(SF_ENABLE_SURFACE_PICKER)
-    ,
-    const SurfacePickerObjectContext *picker_context = nullptr) {
-#else
 ) {
-#endif
   const auto reverse_winding = reversesWinding(object.transform);
   for (auto triangle_index = std::size_t{};
        triangle_index < model.triangles().size(); ++triangle_index) {
     const auto &triangle = model.triangles()[triangle_index];
-    if (triangle.flags == 0) {
+    if (triangle.flags == 0 || triangle.degenerate) {
       continue;
     }
     // Lamp fixtures combine an ordinarily lit opaque housing with a
@@ -1270,7 +1483,8 @@ void renderGmdObject(
     const auto depth =
         RotTransPers3(&v0, &v1, &v2, &xy0, &xy1, &xy2, &depth_cue, &flags);
     const auto visible_face = frontFacing(xy0, xy1, xy2, 3U) != reverse_winding;
-    if (depth <= 0 || (!two_sided_effect && !visible_face)) {
+    if (depth <= 0 || (!two_sided_effect && !visible_face) ||
+        triviallyOutsideViewport(std::array<long, 3U>{xy0, xy1, xy2})) {
       ++stats.rejected;
       continue;
     }
@@ -1296,24 +1510,6 @@ void renderGmdObject(
     addPrim(&ordering_table[std::clamp(depth, 1, ordering_table_size - 1)],
             &primitive);
     const std::array projected{xy0, xy1, xy2};
-#if defined(SF_ENABLE_SURFACE_PICKER)
-    if (picker_context != nullptr && picker_context->picker != nullptr &&
-        picker_context->textures != nullptr &&
-        picker_context->ordering_table != nullptr) {
-      const std::array uv{triangle.uv[0], triangle.uv[1], triangle.uv[2]};
-      if (picker_context->picker->observe(makeSurfacePickerSurface(
-              SurfacePickerId{picker_context->kind, picker_context->owner, 0U,
-                              static_cast<std::uint32_t>(triangle_index)},
-              picker_context->label, picker_context->room,
-              picker_context->guest_frame, positions, projected, uv, depth,
-              triangle.texture_page, primitive.tpage, triangle.clut,
-              primitive.clut, triangle.texture_page & 0x1fU, texture_bank,
-              *picker_context->textures))) {
-        submitSurfacePickerHighlight(
-            projected, depth, *picker_context->ordering_table, primitives);
-      }
-    }
-#endif
     submitStats(stats, depth, projected);
   }
 }
@@ -1403,8 +1599,8 @@ void prepareActorShadowGeometry(const assets::HmdModel &body_model,
                                 std::span<const Vector3> body_world_vertices,
                                 const ActorWeaponPresentation *weapon,
                                 PrimitiveBuffer &primitives) {
-  auto &vertices = primitives.actor_shadow_world_vertex_scratch;
-  auto &triangles = primitives.actor_shadow_triangle_scratch;
+  auto &vertices = primitives.actor_scratch.shadow_world_vertices;
+  auto &triangles = primitives.actor_scratch.shadow_triangles;
   vertices.clear();
   triangles.clear();
   if (body_world_vertices.size() != body_model.vertices().size()) {
@@ -1433,7 +1629,7 @@ void prepareActorShadowGeometry(const assets::HmdModel &body_model,
         transformPoint(vertex.x, vertex.y, vertex.z, weapon->transform));
   }
   for (const auto &triangle : weapon->geometry->triangles()) {
-    if (triangle.flags == 0U ||
+    if (triangle.flags == 0U || triangle.degenerate ||
         std::ranges::any_of(triangle.vertex_indices, [&](std::uint8_t index) {
           return index >= weapon->geometry->vertices().size();
         })) {
@@ -1454,11 +1650,12 @@ void renderHmdObject(
     RenderStats &stats,
     std::optional<VertexColor> back_color_override = std::nullopt,
     std::span<const Vector3> prepared_world_vertices = {},
-    bool force_semi_transparent = false) {
+    bool force_semi_transparent = false,
+    bool apply_scene_lighting = true) {
   if (prepared_world_vertices.empty()) {
     prepareHmdWorldVertices(model, object, animation_pose, pose_scratch,
-                            primitives.hmd_world_vertex_scratch);
-    prepared_world_vertices = primitives.hmd_world_vertex_scratch;
+                            primitives.actor_scratch.hmd_world_vertices);
+    prepared_world_vertices = primitives.actor_scratch.hmd_world_vertices;
   }
   const auto world_vertices = prepared_world_vertices;
   const auto back_color =
@@ -1480,9 +1677,12 @@ void renderHmdObject(
     if (near_status == NearPlaneStatus::intersecting) {
       const auto normal = visibleSurfaceNormal(positions);
       const std::array textured{
-          makeTexturedVertex(v0, triangle.uv[0], back_color, true, normal),
-          makeTexturedVertex(v1, triangle.uv[1], back_color, true, normal),
-          makeTexturedVertex(v2, triangle.uv[2], back_color, true, normal),
+          makeTexturedVertex(v0, triangle.uv[0], back_color,
+                             apply_scene_lighting, normal),
+          makeTexturedVertex(v1, triangle.uv[1], back_color,
+                             apply_scene_lighting, normal),
+          makeTexturedVertex(v2, triangle.uv[2], back_color,
+                             apply_scene_lighting, normal),
       };
       submitClippedTriangle(
           textured,
@@ -1500,7 +1700,8 @@ void renderHmdObject(
     long flags{};
     const auto depth =
         RotTransPers3(&v0, &v1, &v2, &xy0, &xy1, &xy2, &depth_cue, &flags);
-    if (depth <= 0) {
+    if (depth <= 0 ||
+        triviallyOutsideViewport(std::array<long, 3U>{xy0, xy1, xy2})) {
       ++stats.rejected;
       continue;
     }
@@ -1509,7 +1710,9 @@ void renderHmdObject(
     if (force_semi_transparent) {
       setSemiTrans(&primitive, 1);
     }
-    dynamicallyLight(primitive, positions);
+    if (apply_scene_lighting) {
+      dynamicallyLight(primitive, positions);
+    }
     setProjected(&primitive.x0, xy0);
     setProjected(&primitive.x1, xy1);
     setProjected(&primitive.x2, xy2);
@@ -1632,7 +1835,7 @@ void renderActorShadow(
     }
     return ActorShadowReceiverVertex{*floor, ground_normal, false};
   };
-  auto &receivers = primitives.actor_shadow_receiver_scratch;
+  auto &receivers = primitives.actor_scratch.shadow_receivers;
   receivers.clear();
   receivers.reserve(world_vertices.size());
   for (auto index = std::size_t{}; index < world_vertices.size(); ++index) {

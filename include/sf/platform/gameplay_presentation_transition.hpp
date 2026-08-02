@@ -8,10 +8,18 @@ class GameplayPresentationTransition {
 public:
   static constexpr double phase_duration_seconds = 0.16;
   static constexpr double duration_seconds = phase_duration_seconds * 2.0;
+  // Leaving a skipped radio call must uncover objective updates promptly.
+  // Preserve the authored order (bars first, HUD second), but use a short
+  // display-time phase for dismissal instead of replaying the slow entrance.
+  static constexpr double exit_phase_duration_seconds = 0.05;
+  static constexpr double exit_duration_seconds =
+      exit_phase_duration_seconds * 2.0;
   void reset() noexcept { progress_ = 0.0; }
   void advance(bool letterbox_requested, double delta_seconds) noexcept {
-    const auto safe_delta = std::clamp(delta_seconds, 0.0, duration_seconds);
-    const auto step = safe_delta / duration_seconds;
+    const auto transition_duration =
+        letterbox_requested ? duration_seconds : exit_duration_seconds;
+    const auto safe_delta = std::clamp(delta_seconds, 0.0, transition_duration);
+    const auto step = safe_delta / transition_duration;
     progress_ =
         std::clamp(progress_ + (letterbox_requested ? step : -step), 0.0, 1.0);
   }

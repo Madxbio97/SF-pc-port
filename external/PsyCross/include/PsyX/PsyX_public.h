@@ -83,6 +83,10 @@ extern "C"
 	extern int g_cfg_pgxpTextureCorrection;
 	extern int g_cfg_msaaSamples;
 	extern int g_cfg_aspectMode;
+	/* Native color/depth target size. Kept separate from the output drawable so
+	 * fullscreen and high-DPI presentation do not silently override the user's
+	 * selected internal resolution. */
+	extern int g_cfg_renderWidth, g_cfg_renderHeight;
 	/* Native clients can opt out of legacy display-to-VRAM feedback. */
 	extern int g_cfg_framebufferFeedback;
 	/* Native clients with their own fixed-step clock do not need the PSX VBlank

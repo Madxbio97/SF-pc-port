@@ -60,7 +60,10 @@ extern SDL_Window *g_window;
 
 static GLfloat g_maxTextureAnisotropy = 1.0f;
 
-#define MAX_NUM_VERTEX_BUFFERS (2)
+// One host frame submits world, shadows, effects and UI separately. Keep an
+// explicit ring large enough that the driver never waits for the VBO used by
+// the preceding passes at high presentation rates.
+#define MAX_NUM_VERTEX_BUFFERS (8)
 
 // The display width is selected by the game (320, 384, 512, ...). A fixed
 // 320x240 pixel aspect rescales every wider mode a second time after GPU
@@ -163,13 +166,23 @@ static PsyXPresentationViewport PsyX_GetPresentationViewport() {
       g_cfg_aspectMode);
 }
 
-// Rasterize directly at the selected presentation size. PSX coordinates remain
-// logical inputs, while color/depth/MSAA use the real high-DPI drawable area.
+// The native color/depth target always has the exact launcher-selected extent.
+// Keeping allocation separate from the content viewport is important for DSR:
+// 3840x2160 must remain a real 3840x2160 target even in original 4:3 mode.
+static PsyXPresentationViewport PsyX_GetRenderTargetExtent() {
+  const int width =
+      g_cfg_renderWidth > 0 ? g_cfg_renderWidth : std::max(g_windowWidth, 1);
+  const int height =
+      g_cfg_renderHeight > 0 ? g_cfg_renderHeight : std::max(g_windowHeight, 1);
+  return PsyXPresentationViewport{0, 0, width, height};
+}
+
+// Aspect correction is a viewport inside the exact target, never a smaller
+// allocation. Adaptive mode occupies it completely; original mode centers 4:3.
 static PsyXPresentationViewport PsyX_GetRenderViewport() {
-  PsyXPresentationViewport viewport = PsyX_GetPresentationViewport();
-  viewport.x = 0;
-  viewport.y = 0;
-  return viewport;
+  const PsyXPresentationViewport target = PsyX_GetRenderTargetExtent();
+  return PsyX_CalculatePresentationViewport(target.w, target.h,
+                                            g_cfg_aspectMode);
 }
 
 PsyXPresentationScale PsyX_CalculatePresentationScale(int drawableWidth,
@@ -193,7 +206,10 @@ PsyXPresentationScale PsyX_CalculatePresentationScale(int drawableWidth,
 }
 
 static PsyXPresentationScale PsyX_GetPresentationScale() {
-  const PsyXPresentationViewport viewport = PsyX_GetRenderViewport();
+  // Hor+/Vert+ is a property of the final output aspect, not of the internal
+  // color target. Otherwise a 4:3 internal target on a 16:9 display would
+  // collapse adaptive presentation back to 4:3.
+  const PsyXPresentationViewport viewport = PsyX_GetPresentationViewport();
   return PsyX_CalculatePresentationScale(viewport.w, viewport.h,
                                          g_cfg_aspectMode);
 }
@@ -408,8 +424,8 @@ void PBO_Download(GrPBO *pbo) {
 #endif
 }
 
-GLuint g_glVertexArray[2];
-GLuint g_glVertexBuffer[2];
+GLuint g_glVertexArray[MAX_NUM_VERTEX_BUFFERS];
+GLuint g_glVertexBuffer[MAX_NUM_VERTEX_BUFFERS];
 int g_curVertexBuffer = 0;
 GLuint g_boundVertexArray = 0;
 
@@ -463,7 +479,7 @@ static GLuint PsyX_GetNativeDrawFramebuffer() {
 }
 
 static int PsyX_EnsureNativeFramebuffer() {
-  const PsyXPresentationViewport nativeViewport = PsyX_GetRenderViewport();
+  const PsyXPresentationViewport nativeViewport = PsyX_GetRenderTargetExtent();
   if (g_nativeFramebufferWidth == nativeViewport.w &&
       g_nativeFramebufferHeight == nativeViewport.h &&
       g_nativeFramebufferSamples == g_cfg_msaaSamples) {
@@ -599,6 +615,7 @@ static void PsyX_PresentNativeFramebuffer() {
     return;
 
   const PsyXPresentationViewport viewport = PsyX_GetPresentationViewport();
+  const PsyXPresentationViewport source = PsyX_GetRenderViewport();
   const int scissorEnabled = g_PreviousScissorState;
   glDisable(GL_SCISSOR_TEST);
   PsyX_ResolveNativeFramebuffer();
@@ -607,9 +624,10 @@ static void PsyX_PresentNativeFramebuffer() {
   glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
   glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
   glClear(GL_COLOR_BUFFER_BIT);
-  glBlitFramebuffer(0, 0, g_nativeFramebufferWidth, g_nativeFramebufferHeight,
-                    viewport.x, viewport.y, viewport.x + viewport.w,
-                    viewport.y + viewport.h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+  glBlitFramebuffer(source.x, source.y, source.x + source.w,
+                    source.y + source.h, viewport.x, viewport.y,
+                    viewport.x + viewport.w, viewport.y + viewport.h,
+                    GL_COLOR_BUFFER_BIT, GL_NEAREST);
 
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
   if (scissorEnabled)
@@ -779,8 +797,8 @@ int GR_InitialiseRender(char *windowName, int width, int height,
 
 void GR_Shutdown() {
 #if USE_OPENGL
-  glDeleteVertexArrays(2, g_glVertexArray);
-  glDeleteBuffers(2, g_glVertexBuffer);
+  glDeleteVertexArrays(MAX_NUM_VERTEX_BUFFERS, g_glVertexArray);
+  glDeleteBuffers(MAX_NUM_VERTEX_BUFFERS, g_glVertexBuffer);
 
   PBO_Destroy(&g_glFramebufferPBO);
   PBO_Destroy(&g_glOffscreenPBO);
@@ -824,10 +842,6 @@ void GR_BeginScene() {
   g_lastBoundTexture = 0;
 
 #if USE_OPENGL
-  // Query the high-DPI drawable exactly once per presented frame. Projection,
-  // native framebuffer, offscreen and present paths all consume this cache;
-  // repeatedly crossing SDL's window-system boundary was measurable at 240 Hz.
-  PsyX_UpdateDrawableSize();
   PsyX_EnsureNativeFramebuffer();
   // glClear obeys the depth write mask. The previous frame normally ends in
   // the depth-free HUD pass, so restore writes before clearing world depth.
@@ -846,7 +860,7 @@ void GR_BeginScene() {
 
   GR_UpdateVRAM();
   const PsyXPresentationViewport viewport = PsyX_GetRenderViewport();
-  GR_SetViewPort(0, 0, viewport.w, viewport.h);
+  GR_SetViewPort(viewport.x, viewport.y, viewport.w, viewport.h);
 
   if (g_dbg_wireframeMode) {
     GR_SetWireframe(1);
@@ -924,6 +938,9 @@ int GR_ReadVRAMWriteEvents(unsigned long long after_sequence,
 static u_char rgLUT[LUT_WIDTH * LUT_HEIGHT * sizeof(u_int)];
 
 void GR_ResetDevice() {
+  // Drawable size changes only on window/fullscreen/display events. Keeping
+  // the HiDPI query here avoids a window-system round trip on every frame.
+  PsyX_UpdateDrawableSize();
   g_appliedSwapInterval = -1000;
   GR_UpdateSwapIntervalState(0);
 }
@@ -2351,7 +2368,8 @@ void GR_StoreFrameBuffer(int x, int y, int w, int h) {
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, g_glBlitFramebuffer);
 
     const PsyXPresentationViewport viewport = PsyX_GetRenderViewport();
-    glBlitFramebuffer(0, 0, viewport.w, viewport.h, x, y + h, x + w, y,
+    glBlitFramebuffer(viewport.x, viewport.y, viewport.x + viewport.w,
+                      viewport.y + viewport.h, x, y + h, x + w, y,
                       GL_COLOR_BUFFER_BIT, GL_NEAREST);
 
     // Blit framebuffer to VRAM screen area
@@ -2779,8 +2797,7 @@ void GR_BindVertexBuffer() {
   glVertexAttribPointer(a_precise_uv, 2, GL_FLOAT, GL_FALSE, sizeof(GrVertex),
                         &((GrVertex *)NULL)->precise_u);
 
-  g_curVertexBuffer++;
-  g_curVertexBuffer &= 1;
+  g_curVertexBuffer = (g_curVertexBuffer + 1) % MAX_NUM_VERTEX_BUFFERS;
 #else
 #error
 #endif

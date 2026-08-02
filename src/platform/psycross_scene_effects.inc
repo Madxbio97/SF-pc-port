@@ -1218,12 +1218,7 @@ void renderEmdObject(
     unsigned int texture_bank, const MATRIX &view,
     std::vector<OT_TAG> &ordering_table, PrimitiveBuffer &primitives,
     RenderStats &stats, bool retail_scrim = false
-#if defined(SF_ENABLE_SURFACE_PICKER)
-    ,
-    const SurfacePickerObjectContext *picker_context = nullptr) {
-#else
 ) {
-#endif
   const auto reverse_winding = reversesWinding(object.transform);
   for (auto section_index = std::size_t{};
        section_index < scene.sections().size(); ++section_index) {
@@ -1231,7 +1226,7 @@ void renderEmdObject(
     for (auto polygon_index = std::size_t{};
          polygon_index < section.polygons.size(); ++polygon_index) {
       const auto &polygon = section.polygons[polygon_index];
-      if (!polygon.renderable) {
+      if (!polygon.renderable || polygon.degenerate) {
         continue;
       }
       const auto texture_source_page = emdTextureSourcePage(scene, polygon);
@@ -1313,24 +1308,6 @@ void renderEmdObject(
         addPrim(&ordering_table[std::clamp(depth, 1, ordering_table_size - 1)],
                 &primitive);
         const std::array projected{xy0, xy1, xy2, xy3};
-#if defined(SF_ENABLE_SURFACE_PICKER)
-        if (picker_context != nullptr && picker_context->picker != nullptr &&
-            picker_context->textures != nullptr &&
-            picker_context->ordering_table != nullptr) {
-          if (picker_context->picker->observe(makeSurfacePickerSurface(
-                  SurfacePickerId{picker_context->kind, picker_context->owner,
-                                  static_cast<std::uint32_t>(section_index),
-                                  static_cast<std::uint32_t>(polygon_index)},
-                  picker_context->label, picker_context->room,
-                  picker_context->guest_frame, positions, projected, polygon.uv,
-                  depth, polygon.texture_page, primitive.tpage, polygon.clut,
-                  primitive.clut, texture_source_page, texture_bank,
-                  *picker_context->textures))) {
-            submitSurfacePickerHighlight(
-                projected, depth, *picker_context->ordering_table, primitives);
-          }
-        }
-#endif
         submitStats(stats, depth, projected);
       } else {
         const std::array positions{v0, v1, v2};
@@ -1378,25 +1355,6 @@ void renderEmdObject(
         addPrim(&ordering_table[std::clamp(depth, 1, ordering_table_size - 1)],
                 &primitive);
         const std::array projected{xy0, xy1, xy2};
-#if defined(SF_ENABLE_SURFACE_PICKER)
-        if (picker_context != nullptr && picker_context->picker != nullptr &&
-            picker_context->textures != nullptr &&
-            picker_context->ordering_table != nullptr) {
-          const std::array uv{polygon.uv[0], polygon.uv[1], polygon.uv[2]};
-          if (picker_context->picker->observe(makeSurfacePickerSurface(
-                  SurfacePickerId{picker_context->kind, picker_context->owner,
-                                  static_cast<std::uint32_t>(section_index),
-                                  static_cast<std::uint32_t>(polygon_index)},
-                  picker_context->label, picker_context->room,
-                  picker_context->guest_frame, positions, projected, uv, depth,
-                  polygon.texture_page, primitive.tpage, polygon.clut,
-                  primitive.clut, texture_source_page, texture_bank,
-                  *picker_context->textures))) {
-            submitSurfacePickerHighlight(
-                projected, depth, *picker_context->ordering_table, primitives);
-          }
-        }
-#endif
         submitStats(stats, depth, projected);
       }
     }
@@ -1524,7 +1482,7 @@ VertexColor localSceneBackColor(const game::GameplaySession &gameplay,
       for (std::size_t polygon_index = 0U;
            polygon_index < section.polygons.size(); ++polygon_index) {
         const auto &polygon = section.polygons[polygon_index];
-        if (!polygon.renderable) {
+        if (!polygon.renderable || polygon.degenerate) {
           continue;
         }
         consider(model_index, static_cast<std::uint16_t>(section_index),

@@ -20,7 +20,8 @@ public:
   static constexpr double smoothing_time_constant_seconds = 0.75;
   static constexpr double maximum_contiguous_sample_seconds = 0.5;
 
-  void advance(double elapsed_seconds) noexcept {
+  void advance(double elapsed_seconds,
+               std::uint32_t completed_simulation_frames = 0U) noexcept {
     if (!std::isfinite(elapsed_seconds) || elapsed_seconds <= 0.0) {
       return;
     }
@@ -31,18 +32,24 @@ public:
 
     window_seconds_ += elapsed_seconds;
     ++window_frames_;
+    window_simulation_frames_ += completed_simulation_frames;
     if (window_seconds_ + 1.0e-9 < reporting_interval_seconds) {
       return;
     }
 
     const auto measured = static_cast<double>(window_frames_) / window_seconds_;
+    const auto measured_simulation =
+        static_cast<double>(window_simulation_frames_) / window_seconds_;
     if (!ready_) {
       frames_per_second_ = measured;
+      simulation_frames_per_second_ = measured_simulation;
       ready_ = true;
     } else {
       const auto alpha =
           1.0 - std::exp(-window_seconds_ / smoothing_time_constant_seconds);
       frames_per_second_ += (measured - frames_per_second_) * alpha;
+      simulation_frames_per_second_ +=
+          (measured_simulation - simulation_frames_per_second_) * alpha;
     }
     rebuildText();
     resetWindow();
@@ -51,6 +58,7 @@ public:
   void reset() noexcept {
     resetWindow();
     frames_per_second_ = 0.0;
+    simulation_frames_per_second_ = 0.0;
     ready_ = false;
     text_size_ = 0U;
     text_[0] = '\0';
@@ -59,6 +67,9 @@ public:
   [[nodiscard]] bool ready() const noexcept { return ready_; }
   [[nodiscard]] double framesPerSecond() const noexcept {
     return frames_per_second_;
+  }
+  [[nodiscard]] double simulationFramesPerSecond() const noexcept {
+    return simulation_frames_per_second_;
   }
   [[nodiscard]] double frameMilliseconds() const noexcept {
     return ready_ && frames_per_second_ > 0.0 ? 1000.0 / frames_per_second_
@@ -72,6 +83,7 @@ private:
   void resetWindow() noexcept {
     window_seconds_ = 0.0;
     window_frames_ = 0U;
+    window_simulation_frames_ = 0U;
   }
 
   void rebuildText() noexcept {
@@ -92,10 +104,14 @@ private:
 
     const auto rounded_fps = static_cast<std::uint32_t>(
         std::clamp(std::lround(frames_per_second_), 0L, 9999L));
+    const auto rounded_simulation_fps = static_cast<std::uint32_t>(
+        std::clamp(std::lround(simulation_frames_per_second_), 0L, 9999L));
     const auto frame_tenths = static_cast<std::uint32_t>(
         std::clamp(std::lround(frameMilliseconds() * 10.0), 0L, 99999L));
     append("FPS ");
     append_unsigned(rounded_fps);
+    append("  LOGIC ");
+    append_unsigned(rounded_simulation_fps);
     append("  ");
     append_unsigned(frame_tenths / 10U);
     if (cursor < end) {
@@ -109,9 +125,11 @@ private:
 
   double window_seconds_{};
   std::uint32_t window_frames_{};
+  std::uint32_t window_simulation_frames_{};
   double frames_per_second_{};
+  double simulation_frames_per_second_{};
   bool ready_{};
-  std::array<char, 32U> text_{};
+  std::array<char, 48U> text_{};
   std::size_t text_size_{};
 };
 

@@ -26,9 +26,11 @@
 #include "sf/game/state_stack.hpp"
 #include "sf/game/system.hpp"
 #include "sf/game/title.hpp"
+#include "sf/game/virus_scanner_target.hpp"
 #include "sf/platform/actor_shadow_stability.hpp"
 #include "sf/platform/gameplay_message_reveal_policy.hpp"
 #include "sf/platform/gameplay_presentation_transition.hpp"
+#include "sf/platform/optic_history.hpp"
 #include "sf/platform/player_camera_fade.hpp"
 #include "sf/platform/presentation_frame_meter.hpp"
 #include "sf/platform/retail_depth_cue.hpp"
@@ -300,15 +302,15 @@ void testEmdScene() {
           "EMD ambiguous/missing texture-page source was accepted");
 
   constexpr std::size_t section_offset = 0xa0;
-  constexpr std::size_t vertex_offset = section_offset + 0x4c;
+  constexpr std::size_t vertex_offset = section_offset + 0x5c;
   std::vector<std::byte> bytes(vertex_offset + 4U * 8U);
   writeLe32(bytes, 0, 0x303U);
   writeLe32(bytes, 4, static_cast<std::uint32_t>(section_offset));
   writeLe32(bytes, 8, 0xffffffffU);
-  writeLe16(bytes, section_offset + 4, 2);
+  writeLe16(bytes, section_offset + 4, 3);
   writeLe16(bytes, section_offset + 6, 4);
   writeLe32(bytes, section_offset + 0x14, 2);
-  writeLe32(bytes, section_offset + 0x24, 0x4c);
+  writeLe32(bytes, section_offset + 0x24, 0x5c);
   writeLe32(bytes, section_offset + 0x2c, 0x85404060U);
   writeLe32(bytes, section_offset + 0x30, 0x03870000U);
   writeLe32(bytes, section_offset + 0x34, 0x06000009U);
@@ -317,14 +319,24 @@ void testEmdScene() {
   writeLe32(bytes, section_offset + 0x3c, 0x80000000U);
   writeLe32(bytes, section_offset + 0x40, 0x03cb0000U);
   writeLe32(bytes, section_offset + 0x44, 0x06000009U);
+  // This textured triangle repeats vertex zero. Retail NCLIP rejects the
+  // zero-area seam before PGXP can expand it into a visible surface.
+  writeLe32(bytes, section_offset + 0x4c, 0x05404060U);
+  writeLe32(bytes, section_offset + 0x50, 0x00870000U);
+  writeLe32(bytes, section_offset + 0x54, 0x03000000U);
   writeLe32(bytes, 0x88, 0x12345678U);
+  constexpr std::array<std::array<std::uint16_t, 3U>, 4U> coordinates{{
+      {0U, 0U, 0U},
+      {10U, 0U, 0U},
+      {0U, 20U, 0U},
+      {10U, 20U, 0U},
+  }};
   for (std::size_t index = 0; index < 4; ++index) {
-    writeLe16(bytes, vertex_offset + index * 8U,
-              static_cast<std::uint16_t>(index * 10U));
+    writeLe16(bytes, vertex_offset + index * 8U, coordinates[index][0]);
     writeLe16(bytes, vertex_offset + index * 8U + 2U,
-              static_cast<std::uint16_t>(index * 20U));
+              coordinates[index][1]);
     writeLe16(bytes, vertex_offset + index * 8U + 4U,
-              static_cast<std::uint16_t>(index * 30U));
+              coordinates[index][2]);
     writeLe16(bytes, vertex_offset + index * 8U + 6U, 0x4210U);
   }
 
@@ -333,7 +345,7 @@ void testEmdScene() {
   require(scene.textureBank() == 0 && scene.texturePageMask() == 0x12345678U,
           "EMD texture metadata mismatch");
   require(scene.sections().size() == 1 && scene.vertexCount() == 4 &&
-              scene.polygonCount() == 2,
+              scene.polygonCount() == 3,
           "EMD section counts mismatch");
   const auto &polygon = scene.sections().front().polygons.front();
   require(polygon.quad && polygon.vertex_indices ==
@@ -342,7 +354,10 @@ void testEmdScene() {
   require(polygon.texture_page == 0x87 && polygon.clut == 0x7d70,
           "EMD texture selectors mismatch");
   require(polygon.renderable && scene.sections().front().polygons[1].quad &&
-              !scene.sections().front().polygons[1].renderable,
+              !polygon.degenerate &&
+              !scene.sections().front().polygons[1].renderable &&
+              scene.sections().front().polygons[2].renderable &&
+              scene.sections().front().polygons[2].degenerate,
           "EMD collision-only quad was accepted for rendering");
   require(polygon.uv[0].u == 0x60 && polygon.uv[0].v == 0x40 &&
               polygon.uv[3].u == 0x7f && polygon.uv[3].v == 0x7f,
@@ -402,7 +417,9 @@ void testGmdModel() {
   writeLe32(bytes, 0x20, 0x9f010200U);
   writeLe32(bytes, 0x28, 0x00be001fU);
   writeLe32(bytes, 0x2c, 0x00001f1fU);
-  writeLe32(bytes, 0x30, 0x00020103U);
+  // The second textured triangle repeats vertex zero. Retail NCLIP rejects
+  // this zero-area seam even though its compact material byte is non-zero.
+  writeLe32(bytes, 0x30, 0x1f000100U);
   writeLe32(bytes, 0x38, 0x00000022U);
   writeLe32(bytes, 0x3c, 0x000003deU);
   writeLe32(bytes, 0x40, 0x000ef422U);
@@ -417,7 +434,9 @@ void testGmdModel() {
   require(triangle.vertex_indices == std::array<std::uint8_t, 3>{0, 2, 1},
           "GMD compact indices mismatch");
   require(triangle.texture_page == 0xbd && triangle.clut == 0x7ff0 &&
-              triangle.flags == 0x1f && triangle.semi_transparent,
+              triangle.flags == 0x1f && triangle.semi_transparent &&
+              !triangle.degenerate && model.triangles()[1].degenerate &&
+              model.triangles()[1].flags == 0x1f,
           "GMD material selectors mismatch");
   require(model.texturePageMask() == ((1U << 29U) | (1U << 30U)) &&
               model.renderableTexturePageMask() == (1U << 29U) &&
@@ -736,13 +755,43 @@ void testLegacyDynamicPresentationPolicy() {
                                                             true) &&
               sf::game::legacyRadioAudioPresentationActive(false, true, true,
                                                            false) &&
-              sf::game::legacyRadioAudioPresentationActive(true, false, true,
-                                                           false) &&
-              sf::game::legacyRadioAudioPresentationActive(true, false, false,
+              !sf::game::legacyRadioAudioPresentationActive(true, false, true,
+                                                            false) &&
+              sf::game::legacyRadioAudioPresentationActive(true, true, false,
                                                            true) &&
+              !sf::game::legacyRadioAudioPresentationActive(true, false, false,
+                                                            true) &&
               !sf::game::legacyRadioAudioPresentationActive(true, true, false,
                                                             false),
-          "Radio presentation did not follow the exact authored XA lifetime");
+          "Radio presentation ignored the authored viewport lifetime");
+  require(sf::game::legacyRadioPresentationClosed(true, false) &&
+              !sf::game::legacyRadioPresentationClosed(false, false) &&
+              !sf::game::legacyRadioPresentationClosed(false, true) &&
+              !sf::game::legacyRadioPresentationClosed(true, true),
+          "Radio presentation closing edge was not detected exactly once");
+  auto radio_suppression =
+      sf::game::advanceLegacyRadioSkipSuppression({}, true, false, true, true);
+  require(radio_suppression.active && radio_suppression.quiescent_updates == 0U,
+          "Radio closing edge did not latch skip suppression");
+  radio_suppression = sf::game::advanceLegacyRadioSkipSuppression(
+      radio_suppression, false, false, false, false);
+  require(radio_suppression.active && radio_suppression.quiescent_updates == 1U,
+          "Radio skip suppression ignored its quiet-period debounce");
+  radio_suppression = sf::game::advanceLegacyRadioSkipSuppression(
+      radio_suppression, false, true, true, true);
+  require(radio_suppression.active && radio_suppression.quiescent_updates == 0U,
+          "Radio viewport rebound did not restart the suppression debounce");
+  radio_suppression = sf::game::advanceLegacyRadioSkipSuppression(
+      radio_suppression, false, false, false, false);
+  radio_suppression = sf::game::advanceLegacyRadioSkipSuppression(
+      radio_suppression, false, false, false, false);
+  require(radio_suppression.active && radio_suppression.quiescent_updates == 2U,
+          "Radio skip suppression released before the call became stable");
+  radio_suppression = sf::game::advanceLegacyRadioSkipSuppression(
+      radio_suppression, false, false, false, false);
+  require(!radio_suppression.active &&
+              radio_suppression.quiescent_updates == 0U,
+          "Radio skip suppression did not release after stable quiescence");
   require(sf::game::legacyLetterboxPresentationActive(true, false) &&
               sf::game::legacyLetterboxPresentationActive(false, true) &&
               sf::game::legacyLetterboxPresentationActive(true, true) &&
@@ -784,18 +833,22 @@ void testLegacyDynamicPresentationPolicy() {
   require(transition.letterboxAmount() == 1.0 &&
               transition.hudVisibility() == 0.0,
           "Letterbox transition did not converge to hidden HUD state");
-  transition.advance(
-      false,
-      sf::platform::GameplayPresentationTransition::phase_duration_seconds);
+  transition.advance(false, sf::platform::GameplayPresentationTransition::
+                                exit_phase_duration_seconds);
   require(transition.letterboxAmount() == 0.0 &&
               transition.hudVisibility() == 0.0,
           "HUD appeared before the letterbox had disappeared");
-  transition.advance(
-      false,
-      sf::platform::GameplayPresentationTransition::phase_duration_seconds);
+  transition.advance(false, sf::platform::GameplayPresentationTransition::
+                                exit_phase_duration_seconds);
   require(transition.letterboxAmount() == 0.0 &&
               transition.hudVisibility() == 1.0,
           "HUD transition did not restore the complete gameplay overlay");
+  transition.advance(
+      true, sf::platform::GameplayPresentationTransition::duration_seconds);
+  transition.reset();
+  require(transition.letterboxAmount() == 0.0 &&
+              transition.hudVisibility() == 1.0,
+          "Skipped radio did not expose the HUD immediately");
   require(!sf::game::legacyFirstPersonAimReleaseRearmRequired(false, true,
                                                               false, false) &&
               sf::game::legacyFirstPersonAimReleaseRearmRequired(false, true,
@@ -2382,10 +2435,6 @@ void testLevelLayout() {
   require(layout.visibility(1).active_models ==
               std::vector<std::uint16_t>({0, 2}),
           "Level visibility list mismatch");
-  const auto lookahead = sf::game::nativeWorldLookaheadRing(
-      0U, std::array<std::uint16_t, 1U>{1U}, layout);
-  require(lookahead == std::vector<std::uint16_t>{2U},
-          "Native world streaming did not retain one complete portal ring");
 }
 
 void testMissionObjects() {
@@ -3869,22 +3918,26 @@ void testPlayerCameraFade() {
 void testPresentationFrameMeter() {
   sf::platform::PresentationFrameMeter sixty_hz;
   for (auto frame = 0; frame < 30; ++frame) {
-    sixty_hz.advance(1.0 / 60.0);
+    sixty_hz.advance(1.0 / 60.0, frame % 3 == 2 ? 1U : 0U);
   }
   require(sixty_hz.ready() &&
               std::abs(sixty_hz.framesPerSecond() - 60.0) < 0.0001 &&
+              std::abs(sixty_hz.simulationFramesPerSecond() - 20.0) <
+                  0.0001 &&
               std::abs(sixty_hz.frameMilliseconds() - 1000.0 / 60.0) < 0.0001 &&
-              sixty_hz.text() == "FPS 60  16.7 MS",
-          "Presentation FPS meter misreported a stable 60 Hz stream");
+              sixty_hz.text() == "FPS 60  LOGIC 20  16.7 MS",
+          "Dual FPS meter misreported a stable 60/20 Hz stream");
 
   sf::platform::PresentationFrameMeter high_refresh;
   for (auto frame = 0; frame < 120; ++frame) {
-    high_refresh.advance(1.0 / 240.0);
+    high_refresh.advance(1.0 / 240.0, frame % 12 == 11 ? 1U : 0U);
   }
   require(high_refresh.ready() &&
               std::abs(high_refresh.framesPerSecond() - 240.0) < 0.0001 &&
-              high_refresh.text() == "FPS 240  4.2 MS",
-          "Presentation FPS meter depends on the presentation refresh rate");
+              std::abs(high_refresh.simulationFramesPerSecond() - 20.0) <
+                  0.0001 &&
+              high_refresh.text() == "FPS 240  LOGIC 20  4.2 MS",
+          "Dual FPS meter depends on the presentation refresh rate");
 
   sf::platform::PresentationFrameMeter invalid;
   invalid.advance(0.0);
@@ -3896,8 +3949,132 @@ void testPresentationFrameMeter() {
   invalid.advance(0.5);
   require(invalid.ready(), "FPS meter did not recover after a blocked frame");
   invalid.reset();
-  require(!invalid.ready() && invalid.text().empty(),
+  require(!invalid.ready() && invalid.text().empty() &&
+              invalid.framesPerSecond() == 0.0 &&
+              invalid.simulationFramesPerSecond() == 0.0,
           "FPS meter retained stale telemetry after reset");
+}
+
+void testRetailOpticHistoryPolicy() {
+  sf::platform::RetailOpticHistory<int> history;
+  require(history.nextWriteSlot() == 0U,
+          "Retail optic history did not start at slot zero");
+  require(history.observe(10U, 10) && history.nextWriteSlot() == 1U,
+          "Retail optic history did not advance at 20 Hz");
+  require(!history.observe(10U, 99) && history.nextWriteSlot() == 1U,
+          "A native presentation frame advanced the retail optic ring");
+
+  require(history.observe(11U, 11) && history.observe(12U, 12) &&
+              history.observe(13U, 13) && history.observe(14U, 14),
+          "Retail optic history rejected distinct guest publications");
+  require(history.storedWeight([](int) noexcept { return 1U; }) == 5U,
+          "Retail optic history capacity accounting lost a resident slot");
+  require(history.nextWriteSlot() == 0U,
+          "Five-slot retail optic ring did not wrap exactly");
+  const auto first_cycle = history.retainedEchoes();
+  require(first_cycle[0] && first_cycle[0]->snapshot == 11 && first_cycle[1] &&
+              first_cycle[1]->snapshot == 12 && first_cycle[2] &&
+              first_cycle[2]->snapshot == 13,
+          "Retail optic compositor no longer selects next+1 through next+3");
+
+  require(history.observe(15U, 15),
+          "Retail optic history rejected a wrapped publication");
+  const auto wrapped = history.retainedEchoes();
+  require(wrapped[0] && wrapped[0]->snapshot == 12 && wrapped[1] &&
+              wrapped[1]->snapshot == 13 && wrapped[2] &&
+              wrapped[2]->snapshot == 14,
+          "Retail optic echo order changed after ring wrap");
+
+  require(sf::platform::retailOpticEchoDepth(100, 0U) == 92 &&
+              sf::platform::retailOpticEchoDepth(100, 1U) == 84 &&
+              sf::platform::retailOpticEchoDepth(100, 2U) == 76 &&
+              sf::platform::retailOpticEchoDepth(9, 0U) == 4,
+          "Retail optic echo depth bias or clamp changed");
+
+  history.reset();
+  const auto cleared = history.retainedEchoes();
+  require(history.nextWriteSlot() == 0U && !cleared[0] && !cleared[1] &&
+              !cleared[2],
+          "Optic reset retained stale thermal snapshots");
+}
+
+sf::game::VirusScannerTargetCandidate scannerCandidate(
+    std::uint16_t object, std::int32_t slot, std::uint32_t class_id,
+    std::int32_t x, std::int32_t y, std::int32_t z) {
+  return {object, slot, class_id, {x, y, z}};
+}
+
+void testVirusScannerTargetSelectionPolicy() {
+  constexpr auto target_class = sf::game::legacy_virus_scanner_target_class;
+  const auto select = [&](sf::game::VirusScannerTargetRequest request,
+                          const auto &candidates) {
+    return sf::game::selectVirusScannerTarget(
+        request, candidates.size(),
+        [&](std::size_t index) noexcept
+            -> std::optional<sf::game::VirusScannerTargetCandidate> {
+          return candidates[index];
+        },
+        target_class);
+  };
+  const std::array candidates{
+      scannerCandidate(4U, 9, target_class, 1000, -200, 300),
+      scannerCandidate(2U, 7, target_class, 10, -20, 30),
+      scannerCandidate(6U, 7, 0x58U, 0, 0, 0),
+  };
+  require(select({true, 9}, candidates) == 4U,
+          "Exact valid retail scanner slot did not take priority");
+  require(select({true, 7}, candidates) == 2U,
+          "Scanner rejected an exact class-0x59 slot");
+  require(!select({true, 123}, candidates),
+          "Stale scanner slot incorrectly selected a nearby corpse");
+  require(!select({true, -1}, candidates),
+          "Missing scanner slot incorrectly selected a nearby corpse");
+  require(!select({false, 9}, candidates),
+          "Invalid scanner request selected a stale target");
+
+  const auto select_marker = [&](sf::game::VirusScannerPoint target,
+                                 const auto &markers) {
+    return sf::game::selectVirusScannerMarker(
+        target, markers.size(),
+        [&](std::size_t index) noexcept
+            -> std::optional<sf::game::VirusScannerTargetCandidate> {
+          return markers[index];
+        });
+  };
+  const std::array marker_boundary{
+      scannerCandidate(2U, -1, 0U, 192, 0, 0)};
+  const std::array marker_outside{
+      scannerCandidate(2U, -1, 0U, 193, 0, 0)};
+  const std::array marker_outside_sphere{
+      scannerCandidate(2U, -1, 0U, 192, 192, 0)};
+  require(select_marker({0, 0, 0}, marker_boundary) == 2U &&
+              !select_marker({0, 0, 0}, marker_outside) &&
+              !select_marker({0, 0, 0}, marker_outside_sphere),
+          "Scanner marker pairing changed its bounded spherical radius");
+
+  const std::array mirrored_marker{
+      scannerCandidate(2U, -1, 0U, 0, -200, 0)};
+  require(!select_marker({0, 200, 0}, mirrored_marker),
+          "Scanner marker pairing incorrectly mirrored native Y");
+
+  const std::array tied_markers{
+      scannerCandidate(9U, -1, 0U, 20, 0, 0),
+      scannerCandidate(3U, -1, 0U, -20, 0, 0),
+  };
+  require(select_marker({0, 0, 0}, tied_markers) == 3U,
+          "Scanner marker tie-break is not deterministic");
+
+  const std::array extreme_marker{
+      scannerCandidate(1U, -1, 0U,
+                       std::numeric_limits<std::int32_t>::max(), 0, 0)};
+  require(!select_marker(
+              {std::numeric_limits<std::int32_t>::min(), 0, 0},
+              extreme_marker),
+          "Scanner marker distance overflow accepted an impossible pair");
+  require(!sf::game::virusScannerDirectDistanceSquared(
+              {0, 0, 0}, {0, 0, 0},
+              std::numeric_limits<std::int64_t>::max()),
+          "Scanner marker radius overflow was not rejected");
 }
 
 } // namespace
@@ -3917,6 +4094,8 @@ int main() {
     testLegacyDynamicPresentationPolicy();
     testEmissiveObjectLightingPolicy();
     testVirusScannerMarkerPolicy();
+    testRetailOpticHistoryPolicy();
+    testVirusScannerTargetSelectionPolicy();
     testGameplayCheckpointRestorePolicy();
     testPoliceLightbarFrames();
     testHmdModel();

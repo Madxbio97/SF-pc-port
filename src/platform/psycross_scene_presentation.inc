@@ -91,6 +91,10 @@ struct RenderPresentationSnapshot {
   game::LegacyScrimBridgeState scrim;
   bool retail_environment_active{};
   bool first_person_aim{};
+  // Exact FUN_8002f5d8 optic mode: 0 chase, 2 sniper, 3 SVD night sight,
+  // 4 viral scanner.  Keeping this separate from the selected weapon avoids
+  // applying a special material during the transition into/out of the scope.
+  std::uint8_t optic_mode{};
   bool retail_scope_overlay{};
   std::optional<game::LegacyGrenadeTrajectoryBridgeState> grenade_trajectory;
   bool flashlight_enabled{};
@@ -141,6 +145,16 @@ void captureRenderPresentation(const game::GameplaySession &gameplay,
   result.scrim = {};
   result.first_person_aim =
       gameplay.playerAim() == game::PlayerAimState::first_person;
+  result.optic_mode =
+      !result.first_person_aim
+          ? 0U
+          : gameplay.hud().inventory().current() ==
+                    game::WeaponId::nightvision_rifle
+                ? 3U
+                : gameplay.hud().inventory().current() ==
+                          game::WeaponId::virus_scanner
+                      ? 4U
+                      : 2U;
   result.retail_scope_overlay = false;
   result.grenade_trajectory.reset();
   result.flashlight_enabled = false;
@@ -195,6 +209,11 @@ void captureRenderPresentation(const game::GameplaySession &gameplay,
     if (frame->ui) {
       const auto &mission = frame->ui->mission;
       result.player_guest_slot = mission.player_slot;
+      if (result.first_person_aim && mission.first_person_aim_mode != 0U) {
+        result.optic_mode = mission.first_person_aim_mode;
+      } else if (!result.first_person_aim) {
+        result.optic_mode = 0U;
+      }
       result.retail_scope_overlay =
           result.first_person_aim && ((mission.interface_mode == 2U &&
                                        mission.first_person_aim_mode == 2U) ||
@@ -490,6 +509,7 @@ void interpolateRenderPresentation(const RenderPresentationSnapshot &previous,
   }
   result.retail_environment_active = current.retail_environment_active;
   result.first_person_aim = current.first_person_aim;
+  result.optic_mode = current.optic_mode;
   result.retail_scope_overlay = current.retail_scope_overlay;
   result.grenade_trajectory = current.grenade_trajectory;
   result.flashlight_enabled = current.flashlight_enabled;

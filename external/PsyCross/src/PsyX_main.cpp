@@ -106,6 +106,8 @@ static void PsyX_PaceCompletedFrame()
 
 int g_cfg_swapInterval = 0;
 int g_cfg_framebufferFeedback = 1;
+int g_cfg_renderWidth = 0;
+int g_cfg_renderHeight = 0;
 int g_cfg_vblankThread = 1;
 PsyXKeyboardMapping g_cfg_keyboardMapping;
 PsyXControllerMapping g_cfg_controllerMapping;
@@ -792,11 +794,17 @@ void PsyX_Sys_DoPollEvent()
 		case SDL_WINDOWEVENT:
 			switch (event.window.event)
 			{
+			case SDL_WINDOWEVENT_SIZE_CHANGED:
 			case SDL_WINDOWEVENT_RESIZED:
 				g_windowWidth = event.window.data1;
 				g_windowHeight = event.window.data2;
 				GR_ResetDevice();
 				break;
+#if SDL_VERSION_ATLEAST(2, 0, 18)
+			case SDL_WINDOWEVENT_DISPLAY_CHANGED:
+				GR_ResetDevice();
+				break;
+#endif
 			case SDL_WINDOWEVENT_CLOSE:
 				PsyX_Exit();
 				break;

@@ -138,6 +138,13 @@ sampleDynamicLighting(const DynamicLightFrame &frame,
 sampleDynamicLighting(const DynamicLightFrame &frame, DynamicLightPoint point,
                       DynamicLightPoint surface_normal) noexcept;
 
+// Renderer fast path for normals produced by its own surface-normal helper.
+// Keeping this explicit avoids normalizing the same triangle normal again for
+// every vertex while preserving validation of non-finite/degenerate input.
+[[nodiscard]] DynamicLightModulation sampleDynamicLightingNormalized(
+    const DynamicLightFrame &frame, DynamicLightPoint point,
+    DynamicLightPoint normalized_surface_normal) noexcept;
+
 struct DynamicLightVertexColor {
   std::uint8_t red{128U};
   std::uint8_t green{128U};
@@ -220,10 +227,12 @@ applyRetailVertexLighting(DynamicLightVertexColor base,
                           DynamicLightPoint world_point,
                           std::int32_t projection) noexcept;
 
-// PS1 textured primitives use 128 as neutral modulation. Dynamic illumination
-// adds up to the remaining headroom and never darkens the authored base color.
-// The retail luminance also acts as the exposure mask, preserving intentionally
-// black/dim level sections instead of letting native lights wash through them.
+// PS1 textured primitives use 128 as neutral modulation. A subtle native
+// gameplay transfer curve darkens midtones before dynamic illumination adds a
+// bounded amount of the remaining headroom. The retail luminance also acts as
+// the exposure mask, preserving intentionally black/dim level sections instead
+// of letting native lights wash through them. HUD and raw glow sprites bypass
+// this scene-lighting path.
 [[nodiscard]] DynamicLightVertexColor
 applyDynamicLighting(DynamicLightVertexColor base,
                      DynamicLightModulation modulation) noexcept;
