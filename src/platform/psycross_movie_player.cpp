@@ -311,13 +311,13 @@ private:
     int sample_rate_{};
     bool start_requested_{};
     bool input_finished_{};
-    platform::AudioOutputStartPolicy start_policy_{3U};
+    platform::AudioOutputStartPolicy start_policy_{2U};
 };
 
 class BufferedMovieStream final {
 public:
-    explicit BufferedMovieStream(std::vector<std::byte> sectors)
-        : decoder_(media::StrDecoder::open(std::move(sectors))) {}
+    explicit BufferedMovieStream(std::span<const std::byte> sectors)
+        : decoder_(media::StrDecoder::open(sectors)) {}
 
     [[nodiscard]] double framesPerSecond() const noexcept {
         return decoder_.framesPerSecond();
@@ -520,9 +520,31 @@ private:
     int slice_count_{};
 };
 
+constexpr double gameplay_movie_fade_seconds = 0.12;
+
+void drawMovieFade(std::uint8_t intensity) {
+    if (intensity == 0U) {
+        return;
+    }
+    GR_SetBlendMode(BM_SUBTRACT);
+    DR_TPAGE page{};
+    SetDrawTPage(&page, 1, 0, GetTPage(0, 2, 0, 0));
+    DrawPrim(&page);
+    TILE tile{};
+    setTile(&tile);
+    setSemiTrans(&tile, 1);
+    setRGB0(&tile, intensity, intensity, intensity);
+    setXY0(&tile, 0, 0);
+    setWH(&tile, static_cast<float>(movie_video_mode.width),
+          static_cast<float>(movie_video_mode.height));
+    DrawPrim(&tile);
+    GR_SetBlendMode(BM_NONE);
+}
+
 void presentMovieFrame(
     const MovieVideoTexture& video_texture,
-    const std::function<void()>& draw_overlay = {}) {
+    const std::function<void()>& draw_overlay = {},
+    std::uint8_t fade_intensity = 0U) {
     if (PsyX_BeginScene() == 0) {
         // Recover a stale implicit scene instead of silently dropping every
         // decoded video frame while its audio continues.
@@ -535,6 +557,7 @@ void presentMovieFrame(
     if (draw_overlay) {
         draw_overlay();
     }
+    drawMovieFade(fade_intensity);
     DrawSync(0);
     PsyX_EndScene();
 }
@@ -555,7 +578,9 @@ bool waitVideoFrame(
     PADRAW& pad,
     std::uint16_t& previous_buttons,
     MovieAudioPlayer& audio,
-    bool allow_skip) {
+    bool allow_skip,
+    std::uint8_t& fade_intensity,
+    bool fade_gameplay_movie) {
     video_texture.upload(frame);
     if (!clock.running) {
         clock.start();
@@ -564,7 +589,14 @@ bool waitVideoFrame(
     do {
         const auto pressed = updateInput(pad, previous_buttons);
         audio.update();
-        presentMovieFrame(video_texture);
+        const auto fade_progress = std::clamp(
+            clock.elapsedSeconds() / gameplay_movie_fade_seconds, 0.0, 1.0);
+        fade_intensity = static_cast<std::uint8_t>(
+            fade_gameplay_movie
+                ? std::clamp<long>(
+                      std::lround((1.0 - fade_progress) * 255.0), 0L, 255L)
+                : 0L);
+        presentMovieFrame(video_texture, {}, fade_intensity);
         if (allow_skip && (pressed & skip_buttons) != 0) {
             return false;
         }
@@ -605,14 +637,15 @@ bool holdVideoFrame(
     PADRAW& pad,
     std::uint16_t& previous_buttons,
     MovieAudioPlayer& audio,
-    bool allow_skip) {
+    bool allow_skip,
+    std::uint8_t fade_intensity = 0U) {
     video_texture.upload(frame);
     const auto frequency = SDL_GetPerformanceFrequency();
     const auto started = SDL_GetPerformanceCounter();
     do {
         const auto pressed = updateInput(pad, previous_buttons);
         audio.update();
-        presentMovieFrame(video_texture);
+        presentMovieFrame(video_texture, {}, fade_intensity);
         if (allow_skip && (pressed & skip_buttons) != 0) {
             return false;
         }
@@ -655,13 +688,29 @@ bool drainAudio(
     PADRAW& pad,
     std::uint16_t& previous_buttons,
     MovieAudioPlayer& audio,
-    bool allow_skip) {
+    bool allow_skip,
+    bool fade_gameplay_movie,
+    std::uint8_t initial_fade_intensity = 0U) {
     constexpr int maximum_drain_frames = 120;
     constexpr double drain_frame_seconds = 1.0 / 60.0;
-    for (int index = 0; index < maximum_drain_frames && !audio.empty(); ++index) {
+    constexpr int fade_frames = static_cast<int>(
+        gameplay_movie_fade_seconds / drain_frame_seconds + 0.5);
+    for (int index = 0;
+         index < maximum_drain_frames &&
+         (!audio.empty() || (fade_gameplay_movie && index < fade_frames));
+         ++index) {
+        const auto fade_delta =
+            255 - static_cast<int>(initial_fade_intensity);
+        const auto fade_step = std::min(
+            fade_delta,
+            ((index + 1) * fade_delta + fade_frames - 1) / fade_frames);
+        const auto fade_intensity = static_cast<std::uint8_t>(
+            fade_gameplay_movie
+                ? static_cast<int>(initial_fade_intensity) + fade_step
+                : 0);
         if (!holdVideoFrame(
                 frame, video_texture, drain_frame_seconds, pad,
-                previous_buttons, audio, allow_skip)) {
+                previous_buttons, audio, allow_skip, fade_intensity)) {
             return false;
         }
     }
@@ -670,10 +719,11 @@ bool drainAudio(
 
 bool playMovieData(
     std::string_view path,
-    std::vector<std::byte> sectors,
+    std::span<const std::byte> sectors,
     PADRAW& pad,
     std::uint16_t& previous_buttons,
-    bool allow_skip = true) {
+    bool allow_skip = true,
+    bool fade_gameplay_movie = false) {
     std::cout << "Playing " << path << '\n';
     // OpenAL source state is stream-local.  Reusing a stopped source across
     // consecutive STR files can retain an implementation-defined queue/
@@ -681,23 +731,28 @@ bool playMovieData(
     // shared device/context alive, but give every STR its own source and
     // buffer pool just like a fresh retail CD stream.
     MovieAudioPlayer audio;
-    BufferedMovieStream stream{std::move(sectors)};
+    BufferedMovieStream stream{sectors};
     platform::MovieFrameTimingPolicy timing{stream.framesPerSecond()};
     if (!timing.valid()) {
         throw core::Error{
             core::ErrorCode::invalid_format,
             "STR stream has an invalid video frame rate"};
     }
-    constexpr std::size_t decoded_ahead_video_frames = 5U;
+    // Scripted STR data is already resident in MissionPackage. Present its
+    // first decoded frame immediately; title playback retains the wider
+    // safety queue used by the looping frontend stream.
+    const std::size_t decoded_ahead_video_frames =
+        fade_gameplay_movie ? 1U : 5U;
     stream.fill(decoded_ahead_video_frames, audio);
     media::MovieVideoFrame last_frame;
     MovieVideoTexture video_texture;
     MoviePlaybackClock clock;
     bool has_frame = false;
+    std::uint8_t gameplay_fade_intensity =
+        fade_gameplay_movie ? 255U : 0U;
 
     while (stream.hasVideoFrame()) {
         last_frame = stream.takeVideoFrame();
-        stream.fill(decoded_ahead_video_frames, audio);
         has_frame = true;
         if (!waitVideoFrame(
                 last_frame,
@@ -709,15 +764,26 @@ bool playMovieData(
                 pad,
                 previous_buttons,
                 audio,
-                allow_skip)) {
+                allow_skip,
+                gameplay_fade_intensity,
+                fade_gameplay_movie)) {
             audio.reset();
+            // A skipped gameplay STR still closes through the same brief
+            // authored blackout instead of exposing the resumed world on
+            // the input edge.
+            if (fade_gameplay_movie) {
+                static_cast<void>(drainAudio(
+                    last_frame, video_texture, pad, previous_buttons, audio,
+                    false, true, gameplay_fade_intensity));
+            }
             return false;
         }
+        stream.fill(decoded_ahead_video_frames, audio);
     }
     if (has_frame) {
         if (!drainAudio(
                 last_frame, video_texture, pad, previous_buttons, audio,
-                allow_skip)) {
+                allow_skip, fade_gameplay_movie, gameplay_fade_intensity)) {
             audio.reset();
             return false;
         }
@@ -730,19 +796,20 @@ bool playMovie(
     game::DiscMovie& movie,
     PADRAW& pad,
     std::uint16_t& previous_buttons,
-    bool allow_skip = true) {
+    bool allow_skip = true, bool fade_gameplay_movie = false) {
     return playMovieData(
-        movie.path, std::move(movie.sectors.bytes), pad, previous_buttons,
-        allow_skip);
+        movie.path, movie.sectors.bytes, pad, previous_buttons, allow_skip,
+        fade_gameplay_movie);
 }
 
 bool playMovie(
     const game::DiscMovie& movie,
     PADRAW& pad,
     std::uint16_t& previous_buttons,
-    bool allow_skip = true) {
+    bool allow_skip = true, bool fade_gameplay_movie = false) {
     return playMovieData(
-        movie.path, movie.sectors.bytes, pad, previous_buttons, allow_skip);
+        movie.path, movie.sectors.bytes, pad, previous_buttons, allow_skip,
+        fade_gameplay_movie);
 }
 
 bool drainOverlayAudio(
@@ -834,7 +901,7 @@ std::uint16_t PsyCrossMoviePlayer::playStandalone(
     PsyCrossAudioContext session;
     const auto completed = playMovie(
         movie, pad, previous_buttons,
-        skip_policy == StandaloneMovieSkipPolicy::allow);
+        skip_policy == StandaloneMovieSkipPolicy::allow, true);
     PsyX_Log_Info(
         "Standalone movie %s: %s\n",
         completed ? "finished" : "skipped",

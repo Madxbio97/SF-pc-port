@@ -53,7 +53,6 @@ struct PrimitiveBuffer {
   StableFrameVector<LINE_G2> effects{"Effect lines"};
   StableFrameVector<LINE_F2> combat_effect_lines{"Combat effect lines"};
   StableFrameVector<POLY_F3> combat_effect_triangles{"Combat effect triangles"};
-  StableFrameVector<POLY_G4> flashlight_cone_quads{"Flashlight cone quads"};
   StableFrameVector<POLY_GT4> effect_sprite_quads{"Effect sprite quads"};
   StableFrameVector<POLY_FT4> park2_flamethrower_ribbons{
       "PARK2 flamethrower ribbons"};
@@ -110,7 +109,6 @@ struct PrimitiveBuffer {
     effects.reset();
     combat_effect_lines.reset();
     combat_effect_triangles.reset();
-    flashlight_cone_quads.reset();
     effect_sprite_quads.reset();
     park2_flamethrower_ribbons.reset();
     pickup_sprites.reset();
@@ -141,7 +139,6 @@ struct PrimitiveBuffer {
     effects.lockStorage();
     combat_effect_lines.lockStorage();
     combat_effect_triangles.lockStorage();
-    flashlight_cone_quads.lockStorage();
     effect_sprite_quads.lockStorage();
     park2_flamethrower_ribbons.lockStorage();
     pickup_sprites.lockStorage();
@@ -165,7 +162,6 @@ struct PrimitiveBuffer {
            optic_subjects.storageStable() && optic_trails.storageStable() &&
            effects.storageStable() && combat_effect_lines.storageStable() &&
            combat_effect_triangles.storageStable() &&
-           flashlight_cone_quads.storageStable() &&
            effect_sprite_quads.storageStable() &&
            park2_flamethrower_ribbons.storageStable() &&
            pickup_sprites.storageStable() &&
@@ -264,13 +260,16 @@ struct WorldPolygonLightingCacheEntry {
 
 class WorldPolygonLightingCache final {
 public:
-  void beginFrame(std::uint64_t guest_frame, std::uint16_t room) {
+  void beginFrame(std::uint64_t guest_frame, std::uint16_t room,
+                  std::uint64_t light_signature) {
     cursor_ = 0U;
-    if (valid_ && guest_frame_ == guest_frame && room_ == room) {
+    if (valid_ && guest_frame_ == guest_frame && room_ == room &&
+        light_signature_ == light_signature) {
       return;
     }
     guest_frame_ = guest_frame;
     room_ = room;
+    light_signature_ = light_signature;
     valid_ = true;
     ++generation_;
     if (generation_ == 0U) {
@@ -312,6 +311,7 @@ public:
     cursor_ = 0U;
     guest_frame_ = std::numeric_limits<std::uint64_t>::max();
     room_ = std::numeric_limits<std::uint16_t>::max();
+    light_signature_ = 0U;
     valid_ = false;
   }
 
@@ -321,6 +321,7 @@ private:
   std::uint64_t guest_frame_{std::numeric_limits<std::uint64_t>::max()};
   std::uint64_t generation_{1U};
   std::uint16_t room_{std::numeric_limits<std::uint16_t>::max()};
+  std::uint64_t light_signature_{};
   bool valid_{};
 };
 
@@ -403,32 +404,10 @@ struct TexturedMaterial {
 
 game::DynamicLightVertexColor
 applyRetailNightvision(game::DynamicLightVertexColor color) noexcept {
-  if (!active_retail_nightvision) {
-    return color;
-  }
-  // FUN_800d0058 loads BK=(0,3000,0) for the night-vision camera target and
-  // FUN_800cf0e4 feeds NCDT an exact 0x00ff00 source when red BK is zero.
-  // Preserve that exact Q12 floor while retaining brighter geometry/lights
-  // on the same green-only scene basis.
-  constexpr auto green_floor = std::uint8_t{188U};
-  const auto intensity =
-      std::max({color.red, color.green, color.blue, green_floor});
-  return {0U, intensity, 0U};
-}
-
-game::DynamicLightVertexColor
-applyRetailBlackoutBase(game::DynamicLightVertexColor color) noexcept {
-  if (!active_retail_blackout) {
-    return color;
-  }
-  // CAVE2 first establishes an almost-black ambient base, then lets its live
-  // vertex lights reveal geometry. Apply the veil before both the exact guest
-  // flashlight record and native transient flashes so local light survives.
-  const auto veil = [](std::uint8_t channel) {
-    return static_cast<std::uint8_t>((static_cast<unsigned int>(channel) + 4U) /
-                                     8U);
-  };
-  return {veil(color.red), veil(color.green), veil(color.blue)};
+  // Night vision is a post-composition TILE grade. Preserve the lit source
+  // RGB here so the normal far colour and per-vertex depth cue remain visible
+  // beneath that filter instead of being flattened by a second green pass.
+  return color;
 }
 
 VertexColor decodeColor(std::uint16_t color) {
@@ -446,7 +425,6 @@ makeTexturedVertex(const SVECTOR &position, assets::EmdUv uv, VertexColor color,
                    const game::DynamicLightFrame *dynamic_lights = nullptr) {
   auto lit = game::DynamicLightVertexColor{color.red, color.green, color.blue};
   if (apply_lighting) {
-    lit = applyRetailBlackoutBase(lit);
     const auto retail_lit = game::applyRetailVertexLighting(
         lit, active_retail_vertex_lights,
         {static_cast<double>(position.vx), static_cast<double>(position.vy),
@@ -476,10 +454,8 @@ makeTexturedVertex(const SVECTOR &position, assets::EmdUv uv, VertexColor color,
 
 VertexColor dynamicallyLit(VertexColor base, double x, double y,
                            double z) noexcept {
-  const auto dark_base =
-      applyRetailBlackoutBase({base.red, base.green, base.blue});
   const auto retail_lit = game::applyRetailVertexLighting(
-      dark_base, active_retail_vertex_lights, {x, y, z},
+      {base.red, base.green, base.blue}, active_retail_vertex_lights, {x, y, z},
       active_retail_light_projection);
   const auto lit = applyRetailNightvision(game::applyDynamicLighting(
       retail_lit,
@@ -491,10 +467,8 @@ VertexColor
 dynamicallyLit(VertexColor base, double x, double y, double z,
                game::DynamicLightPoint normal,
                const game::DynamicLightFrame &light_frame) noexcept {
-  const auto dark_base =
-      applyRetailBlackoutBase({base.red, base.green, base.blue});
   const auto retail_lit = game::applyRetailVertexLighting(
-      dark_base, active_retail_vertex_lights, {x, y, z},
+      {base.red, base.green, base.blue}, active_retail_vertex_lights, {x, y, z},
       active_retail_light_projection);
   const auto lit = applyRetailNightvision(game::applyDynamicLighting(
       retail_lit,

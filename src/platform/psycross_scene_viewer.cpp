@@ -22,13 +22,14 @@
 #include "sf/game/retail_cheats.hpp"
 #include "sf/platform/actor_shadow_stability.hpp"
 #include "sf/platform/gameplay_message_reveal_policy.hpp"
-#include "sf/platform/gameplay_presentation_transition.hpp"
 #include "sf/platform/optic_history.hpp"
 #include "sf/platform/player_camera_fade.hpp"
 #include "sf/platform/player_input.hpp"
 #include "sf/platform/presentation_frame_meter.hpp"
 #include "sf/platform/retail_depth_cue.hpp"
 #include "sf/platform/retail_scope_text_policy.hpp"
+#include "sf/platform/retail_ui_presentation.hpp"
+#include "sf/platform/retail_vertex_light_presentation.hpp"
 #include "sf/platform/stable_frame_vector.hpp"
 #include "sf/platform/world_chunk_appearance.hpp"
 
@@ -72,6 +73,7 @@ constexpr double guest_draw_offset_y = static_cast<double>(screen_height) * 0.5;
 constexpr int ordering_table_size = 4096;
 // USA v1.1 DAT_8012f9b8: exact source record inserted into DAT_80116464 by
 // the retail flashlight toggle path.
+constexpr std::uint32_t retail_flashlight_source = 0x8012f9b8U;
 // The EMD/HMD paths clip complete polygons, so a close gameplay plane no
 // longer drops whole wall or actor rectangles near the camera.
 constexpr int near_plane = 32;
@@ -80,7 +82,6 @@ constexpr double near_clip_depth = static_cast<double>(near_plane) + 2.0;
 // using one depth here also avoids tiny GTE depths and projected overflow.
 constexpr double first_person_near_clip_depth = near_clip_depth;
 double active_near_clip_depth = near_clip_depth;
-constexpr std::uint32_t retail_flashlight_source = 0x8012f9b8U;
 constexpr std::uint16_t mission_clut_source_x = 768U;
 constexpr std::uint16_t mission_clut_source_y = 480U;
 // Mission residency starts with physical pages 6..31 and spills into the

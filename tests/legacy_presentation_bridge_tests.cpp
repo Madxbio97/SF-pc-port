@@ -987,6 +987,45 @@ void testNativeFirstPersonOwnsEveryGuestScreenPrimitive() {
                   false, false),
           "First-person guest camera ownership is not provenance-only");
 
+  constexpr auto vertical_scope_sprites = 0x80130000U;
+  constexpr auto horizontal_scope_sprites = 0x80130100U;
+  require(sf::game::legacyGuestSpriteIsRetailScopeOverlayAddress(
+              vertical_scope_sprites + 4U * 0x2cU, vertical_scope_sprites,
+              horizontal_scope_sprites) &&
+              sf::game::legacyGuestSpriteIsRetailScopeOverlayAddress(
+                  horizontal_scope_sprites + 7U * 0x2cU,
+                  vertical_scope_sprites, horizontal_scope_sprites) &&
+              !sf::game::legacyGuestSpriteIsRetailScopeOverlayAddress(
+                  horizontal_scope_sprites + 8U * 0x2cU,
+                  vertical_scope_sprites, horizontal_scope_sprites),
+          "Retail SCP sprite arrays lost their exact 5/8 by 0x2c bounds");
+
+  const auto packet_at = [](std::uint32_t source) {
+    return sf::game::LegacyGuestRawPacketBridgeState{
+        .source_address = source,
+    };
+  };
+  require(sf::game::legacyGuestRawPacketIsRetailScopeOverlay(
+              packet_at(0x8011c5b8U)) &&
+              sf::game::legacyGuestRawPacketIsRetailScopeOverlay(
+                  packet_at(0x8011c66cU)) &&
+              !sf::game::legacyGuestRawPacketIsRetailScopeOverlay(
+                  packet_at(0x8011c678U)) &&
+              sf::game::legacyGuestRawPacketNeedsDrawMode(0x2aU),
+          "Sniper's six authored average-blended dim quads lost provenance");
+  require(sf::game::legacyGuestRawPacketIsVirusScannerOverlay(
+              packet_at(0x8011c138U + 27U * 0x18U)) &&
+              !sf::game::legacyGuestRawPacketIsRetailScopeOverlay(
+                  packet_at(0x8011c138U + 27U * 0x18U)) &&
+              sf::game::legacyGuestRawPacketIsVirusScannerOverlay(
+                  packet_at(0x80135df8U)) &&
+              sf::game::legacyGuestRawPacketIsRetailOpticOverlay(
+                  packet_at(0x80135df8U)) &&
+              !sf::game::legacyGuestRawPacketIsRetailOpticOverlay(
+                  packet_at(0x80135e1cU)),
+          "Viral detector's 28-line sight or pulsing target dot lost its "
+          "fixed-packet ownership");
+
   sf::game::LegacyGuestSpriteBridgeState particle_sprite;
   particle_sprite.effect_particle = 4;
   particle_sprite.effect_family = 1U;

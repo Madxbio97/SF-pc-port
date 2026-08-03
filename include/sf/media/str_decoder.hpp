@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <variant>
 #include <vector>
 
@@ -27,6 +28,8 @@ using MovieEvent = std::variant<MovieVideoFrame, MovieAudioChunk>;
 class StrDecoder final {
 public:
     [[nodiscard]] static StrDecoder open(std::vector<std::byte> raw_sectors);
+    [[nodiscard]] static StrDecoder
+    open(std::span<const std::byte> raw_sectors);
 
     ~StrDecoder();
     StrDecoder(StrDecoder&&) noexcept;

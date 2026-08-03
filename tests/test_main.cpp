@@ -29,12 +29,13 @@
 #include "sf/game/virus_scanner_target.hpp"
 #include "sf/platform/actor_shadow_stability.hpp"
 #include "sf/platform/gameplay_message_reveal_policy.hpp"
-#include "sf/platform/gameplay_presentation_transition.hpp"
 #include "sf/platform/optic_history.hpp"
 #include "sf/platform/player_camera_fade.hpp"
 #include "sf/platform/presentation_frame_meter.hpp"
 #include "sf/platform/retail_depth_cue.hpp"
 #include "sf/platform/retail_scope_text_policy.hpp"
+#include "sf/platform/retail_ui_presentation.hpp"
+#include "sf/platform/retail_vertex_light_presentation.hpp"
 #include "sf/platform/world_chunk_appearance.hpp"
 #include "sf/psx/executable.hpp"
 #include "sf/psx/function_map.hpp"
@@ -512,6 +513,63 @@ void testLegacyEffectSpriteLayouts() {
       "Guest effect sprite frame validation mismatch");
 }
 
+void testRetailVertexLightPresentation() {
+  auto rotating = sf::game::LegacyVertexLightBridgeState{};
+  rotating.source = 0x80190aa4U;
+  rotating.flags = 0U;
+  rotating.shape = 150;
+  rotating.screen_shift = 12U;
+  rotating.depth_shift = 6U;
+  rotating.channel_mask = 0x00ffffffU;
+  rotating.matrix.rotation = {0, 0, 4096, 0, 4096, 0, -4096, 0, 0};
+  rotating.matrix.translation = {1534, -748, -3068};
+  auto fixed = rotating;
+  fixed.source = 0x80190eacU;
+  fixed.matrix.rotation = {4096, 0, 0, 0, 4096, 0, 0, 0, 4096};
+  fixed.matrix.translation = {2, -748, -1018};
+  auto moved = rotating;
+  moved.shape = 151;
+  moved.matrix.rotation = {4096, 0, 0, 0, 4096, 0, 0, 0, 4096};
+  moved.matrix.translation.z = -2044;
+  auto newly_linked = fixed;
+  newly_linked.source = 0x80190f00U;
+  const std::array previous{rotating, fixed};
+  const std::array current{fixed, moved, newly_linked};
+  std::vector<sf::game::LegacyVertexLightBridgeState> result;
+  sf::platform::interpolateRetailVertexLights(previous, current, 0.5, result);
+  const auto midpoint_signature =
+      sf::platform::retailVertexLightPresentationSignature(result, 320);
+  require(result.size() == current.size() && result[0].source == fixed.source &&
+              result[1].source == rotating.source &&
+              result[1].matrix.rotation[0] == 2048 &&
+              result[1].matrix.rotation[2] == 2048 &&
+              result[1].matrix.rotation[6] == -2048 &&
+              result[1].matrix.rotation[8] == 2048 &&
+              result[1].matrix.translation.z == -2556 &&
+              result[1].shape == moved.shape &&
+              result[2].source == newly_linked.source &&
+              result[2].matrix.rotation == newly_linked.matrix.rotation,
+          "Detached BASEEXT spotlights lost source-matched display interpolation");
+  auto attached = moved;
+  attached.flags = 1U;
+  const std::array attached_current{attached};
+  sf::platform::interpolateRetailVertexLights(previous, attached_current, 0.5,
+                                               result);
+  require(result[0].source == attached.source &&
+              result[0].flags == attached.flags &&
+              result[0].matrix.rotation == attached.matrix.rotation &&
+              result[0].matrix.translation.z == attached.matrix.translation.z,
+          "Retail light interpolated across an attached-axis semantic cut");
+  const auto current_signature =
+      sf::platform::retailVertexLightPresentationSignature(current, 320);
+  require(midpoint_signature != current_signature &&
+              current_signature !=
+                  sf::platform::retailVertexLightPresentationSignature(current,
+                                                                        321) &&
+              sf::platform::retailVertexLightPresentationSignature({}, 320) ==
+                  sf::platform::retailVertexLightPresentationSignature({}, 640),
+          "Retail light cache signature ignored matrix/projection changes");
+}
 void testLegacyDynamicPresentationPolicy() {
   using sf::game::LegacyPresentationResourceKind;
   const auto resource = sf::game::legacyPresentationResourceKind;
@@ -755,15 +813,17 @@ void testLegacyDynamicPresentationPolicy() {
                                                             true) &&
               sf::game::legacyRadioAudioPresentationActive(false, true, true,
                                                            false) &&
-              !sf::game::legacyRadioAudioPresentationActive(true, false, true,
-                                                            false) &&
+              sf::game::legacyRadioAudioPresentationActive(true, false, true,
+                                                           false) &&
               sf::game::legacyRadioAudioPresentationActive(true, true, false,
                                                            true) &&
+              sf::game::legacyRadioAudioPresentationActive(true, false, false,
+                                                           true) &&
+              sf::game::legacyRadioAudioPresentationActive(true, true, false,
+                                                           false) &&
               !sf::game::legacyRadioAudioPresentationActive(true, false, false,
-                                                            true) &&
-              !sf::game::legacyRadioAudioPresentationActive(true, true, false,
                                                             false),
-          "Radio presentation ignored the authored viewport lifetime");
+          "Radio presentation closed before viewport/XA acknowledgement");
   require(sf::game::legacyRadioPresentationClosed(true, false) &&
               !sf::game::legacyRadioPresentationClosed(false, false) &&
               !sf::game::legacyRadioPresentationClosed(false, true) &&
@@ -801,54 +861,53 @@ void testLegacyDynamicPresentationPolicy() {
               !sf::game::legacyGameplayHudPresentationActive(false, true) &&
               !sf::game::legacyGameplayHudPresentationActive(true, false),
           "Gameplay HUD did not follow cinematic/radio presentation state");
-  sf::platform::GameplayPresentationTransition transition;
-  require(transition.letterboxAmount() == 0.0 &&
-              transition.hudVisibility() == 1.0,
-          "Letterbox transition did not start with the gameplay HUD visible");
-  transition.advance(
-      true,
-      sf::platform::GameplayPresentationTransition::phase_duration_seconds *
-          0.5);
-  require(transition.letterboxAmount() == 0.0 &&
-              transition.hudVisibility() > 0.0 &&
-              transition.hudVisibility() < 1.0,
-          "Letterbox appeared before the gameplay HUD had disappeared");
-  transition.advance(
-      true,
-      sf::platform::GameplayPresentationTransition::phase_duration_seconds *
-          0.5);
-  require(transition.letterboxAmount() == 0.0 &&
-              transition.hudVisibility() == 0.0,
-          "HUD did not disappear before the letterbox transition");
-  transition.advance(
-      true,
-      sf::platform::GameplayPresentationTransition::phase_duration_seconds *
-          0.5);
-  require(transition.letterboxAmount() > 0.0 &&
-              transition.letterboxAmount() < 1.0 &&
-              transition.hudVisibility() == 0.0,
-          "HUD reappeared while the letterbox was entering");
-  transition.advance(
-      true, sf::platform::GameplayPresentationTransition::duration_seconds);
-  require(transition.letterboxAmount() == 1.0 &&
-              transition.hudVisibility() == 0.0,
-          "Letterbox transition did not converge to hidden HUD state");
-  transition.advance(false, sf::platform::GameplayPresentationTransition::
-                                exit_phase_duration_seconds);
-  require(transition.letterboxAmount() == 0.0 &&
-              transition.hudVisibility() == 0.0,
-          "HUD appeared before the letterbox had disappeared");
-  transition.advance(false, sf::platform::GameplayPresentationTransition::
-                                exit_phase_duration_seconds);
-  require(transition.letterboxAmount() == 0.0 &&
-              transition.hudVisibility() == 1.0,
-          "HUD transition did not restore the complete gameplay overlay");
-  transition.advance(
-      true, sf::platform::GameplayPresentationTransition::duration_seconds);
-  transition.reset();
-  require(transition.letterboxAmount() == 0.0 &&
-              transition.hudVisibility() == 1.0,
-          "Skipped radio did not expose the HUD immediately");
+  const auto entering_bars = sf::game::legacyRetailViewportBars(2.0, 236.0);
+  const auto closed_bars = sf::game::legacyRetailViewportBars(40.0, 160.0);
+  const auto open_bars = sf::game::legacyRetailViewportBars(0.0, 240.0);
+  const auto second_page_bars =
+      sf::game::legacyRetailViewportBars(280.0, 160.0);
+  require(entering_bars.top == 2.0 && entering_bars.bottom == 2.0 &&
+              closed_bars.top == 40.0 && closed_bars.bottom == 40.0 &&
+              open_bars.top == 0.0 && open_bars.bottom == 0.0 &&
+              second_page_bars.top == 40.0 && second_page_bars.bottom == 40.0,
+          "Retail viewport RECT or framebuffer-page normalization changed");
+  const auto interpolated_ui = sf::platform::interpolateRetailUiPresentation(
+      sf::platform::RetailUiPresentationSample{
+          .viewport_y = 0.0,
+          .viewport_height = 240.0,
+          .normal_hud_phase = 12.0,
+          .interface_mode = 1U,
+          .available = true,
+      },
+      sf::platform::RetailUiPresentationSample{
+          .viewport_y = 2.0,
+          .viewport_height = 236.0,
+          .normal_hud_phase = 11.0,
+          .interface_mode = 0U,
+          .available = true,
+      },
+      0.5);
+  const auto interpolated_bars = sf::game::legacyRetailViewportBars(
+      interpolated_ui.viewport_y, interpolated_ui.viewport_height);
+  require(std::abs(interpolated_ui.viewport_y - 1.15) < 0.0001 &&
+              std::abs(interpolated_ui.viewport_height - 237.7) < 0.0001 &&
+              std::abs(interpolated_ui.normal_hud_phase - 11.425) < 0.0001 &&
+              interpolated_ui.interface_mode == 0U &&
+              interpolated_ui.available &&
+              std::abs(interpolated_bars.top - 1.15) < 0.0001 &&
+              std::abs(interpolated_bars.bottom - 1.15) < 0.0001 &&
+              sf::platform::retailHudInterpolatedExtent(1.0, 271) == 22.0 &&
+              sf::platform::retailHudInterpolatedExtent(1.5, 271) == 33.5 &&
+              sf::platform::retailHudInterpolatedExtent(12.0, 271) == 271.0,
+          "Retail UI state no longer interpolates exact 20 Hz geometry at "
+          "display rate");
+  require(sf::game::legacyNormalGameplayHudVisibility(-1.0) == 0.0 &&
+              sf::game::legacyNormalGameplayHudVisibility(0.0) == 0.0 &&
+              sf::game::legacyNormalGameplayHudVisibility(6.0) == 0.5 &&
+              sf::game::legacyNormalGameplayHudVisibility(12.0) == 1.0 &&
+              sf::game::legacyNormalGameplayHudVisibility(13.0) == 1.0 &&
+              sf::game::legacyNormalGameplayHudVisibility(30.0) == 1.0,
+          "Normal HUD ignored the retail -1..13 interface phase");
   require(!sf::game::legacyFirstPersonAimReleaseRearmRequired(false, true,
                                                               false, false) &&
               sf::game::legacyFirstPersonAimReleaseRearmRequired(false, true,
@@ -3016,11 +3075,16 @@ void testGameplayHud() {
           "Retail English optic-text routing no longer includes the virus "
           "scanner exclusively");
 
-  const auto scanner_xray = sf::platform::virusScannerXrayActive;
-  require(scanner_xray(true, sf::game::WeaponId::virus_scanner) &&
-              !scanner_xray(false, sf::game::WeaponId::virus_scanner) &&
-              !scanner_xray(true, sf::game::WeaponId::sniper_rifle),
-          "Virus-scanner X-ray activation leaked into another optic mode");
+  const auto rifle_scope = sf::platform::retailRifleScopeOverlayActive;
+  const auto virus_scope = sf::platform::retailVirusScannerOverlayActive;
+  require(rifle_scope(true, 2U, 2U) && rifle_scope(true, 3U, 3U) &&
+              !rifle_scope(true, 5U, 4U) && !rifle_scope(false, 2U, 2U),
+          "Retail rifle scope ownership no longer follows exact 2/2 and "
+          "3/3 states");
+  require(virus_scope(true, 5U, 4U) && !virus_scope(true, 4U, 4U) &&
+              !virus_scope(true, 5U, 5U) && !virus_scope(false, 5U, 4U),
+          "Viral detector ownership lost its distinct interface-5/aim-4 "
+          "state");
 
   const auto retail_scope_message = sf::platform::isRetailScopeMessage;
   require(
@@ -3162,6 +3226,13 @@ void testGameplayHud() {
               sf::game::originalRadarGeometry(255U) ==
                   sf::game::OriginalRadarGeometry{12U, 24, 20, 18, 15, 9, 8},
           "Original radar reveal geometry mismatch");
+  const auto interpolated_radar =
+      sf::game::originalRadarPresentationGeometry(6.5);
+  require(interpolated_radar.outer_half_width == 13 &&
+              interpolated_radar.outer_half_height == 11 &&
+              interpolated_radar.inner_half_width == 5 &&
+              interpolated_radar.inner_half_height == 4,
+          "Radar presentation did not blend adjacent exact retail frames");
 
   sf::game::GameplayHud hud;
   require(hud.primaryStatus() == sf::game::PrimaryStatus::armor &&
@@ -3985,11 +4056,11 @@ void testRetailOpticHistoryPolicy() {
               wrapped[2]->snapshot == 14,
           "Retail optic echo order changed after ring wrap");
 
-  require(sf::platform::retailOpticEchoDepth(100, 0U) == 92 &&
-              sf::platform::retailOpticEchoDepth(100, 1U) == 84 &&
-              sf::platform::retailOpticEchoDepth(100, 2U) == 76 &&
-              sf::platform::retailOpticEchoDepth(9, 0U) == 4,
-          "Retail optic echo depth bias or clamp changed");
+  require(sf::platform::retailOpticEchoDepth(100, 0U) == 98 &&
+              sf::platform::retailOpticEchoDepth(100, 1U) == 96 &&
+              sf::platform::retailOpticEchoDepth(100, 2U) == 94 &&
+              sf::platform::retailOpticEchoDepth(2, 0U) == 1,
+          "Retail byte-depth conversion, echo bias or clamp changed");
 
   history.reset();
   const auto cleared = history.retainedEchoes();
@@ -4042,27 +4113,27 @@ void testVirusScannerTargetSelectionPolicy() {
         });
   };
   const std::array marker_boundary{
-      scannerCandidate(2U, -1, 0U, 192, 0, 0)};
+      scannerCandidate(2U, -1, 0U, 127, 0, 0)};
   const std::array marker_outside{
-      scannerCandidate(2U, -1, 0U, 193, 0, 0)};
+      scannerCandidate(2U, -1, 0U, 128, 0, 0)};
   const std::array marker_outside_sphere{
-      scannerCandidate(2U, -1, 0U, 192, 192, 0)};
+      scannerCandidate(2U, -1, 0U, 100, 80, 0)};
   require(select_marker({0, 0, 0}, marker_boundary) == 2U &&
               !select_marker({0, 0, 0}, marker_outside) &&
               !select_marker({0, 0, 0}, marker_outside_sphere),
-          "Scanner marker pairing changed its bounded spherical radius");
+          "Scanner marker pairing changed its strict retail distance <128");
 
   const std::array mirrored_marker{
       scannerCandidate(2U, -1, 0U, 0, -200, 0)};
   require(!select_marker({0, 200, 0}, mirrored_marker),
           "Scanner marker pairing incorrectly mirrored native Y");
 
-  const std::array tied_markers{
+  const std::array ordered_markers{
       scannerCandidate(9U, -1, 0U, 20, 0, 0),
-      scannerCandidate(3U, -1, 0U, -20, 0, 0),
+      scannerCandidate(3U, -1, 0U, 1, 0, 0),
   };
-  require(select_marker({0, 0, 0}, tied_markers) == 3U,
-          "Scanner marker tie-break is not deterministic");
+  require(select_marker({0, 0, 0}, ordered_markers) == 9U,
+          "Scanner marker no longer returns the first retail object match");
 
   const std::array extreme_marker{
       scannerCandidate(1U, -1, 0U,
@@ -4092,6 +4163,7 @@ int main() {
     testCfireSpawnPoint();
     testLegacyEffectSpriteLayouts();
     testLegacyDynamicPresentationPolicy();
+    testRetailVertexLightPresentation();
     testEmissiveObjectLightingPolicy();
     testVirusScannerMarkerPolicy();
     testRetailOpticHistoryPolicy();

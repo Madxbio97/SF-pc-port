@@ -81,10 +81,8 @@ SceneViewerResult PsyCrossSceneViewer::run(
   DynamicLightFrameScratch dynamic_light_scratch;
   WorldPolygonLightingCache world_lighting_cache;
   LocalSceneLightingCache local_scene_lighting_cache;
-  FlashlightSurfaceCache flashlight_surface_cache;
+
   WorldChunkAppearance world_chunk_appearance;
-  GameplayPresentationTransition gameplay_presentation_transition;
-  bool previous_radio_presentation_active{};
   WeaponEffectsScratch weapon_effects_scratch;
   HmdPoseScratch hmd_pose_scratch;
   std::vector<WorldCalloutAnchor> world_callout_scratch;
@@ -224,10 +222,8 @@ SceneViewerResult PsyCrossSceneViewer::run(
     actor_shadow_cache.reset();
     dynamic_light_scratch.reset();
     world_lighting_cache.reset();
-    flashlight_surface_cache.reset();
+
     world_chunk_appearance.reset();
-    gameplay_presentation_transition.reset();
-    previous_radio_presentation_active = false;
     primitives.invalidateCapacityPlan();
     weapon_presentation_edges.observe(gameplay.legacyPresentationFrame());
     muzzle_flash_edges.observe(gameplay.effects());
@@ -339,8 +335,6 @@ SceneViewerResult PsyCrossSceneViewer::run(
           gameplay, current_render_presentation.scrim, textures);
     }
   };
-  const auto retail_blackout_mission =
-      mission.definition().resource_name == "CAVE2";
   const auto draw_gameplay_frame = [&](unsigned int effect_updates) {
     glass_shatter.observe(gameplay, current_render_presentation);
     // Resource selectors are published atomically by the 20 Hz guest. Do not
@@ -365,8 +359,20 @@ SceneViewerResult PsyCrossSceneViewer::run(
       // The guest publishes aim/environment at 20 Hz. Host release must clear
       // SVD/virus optics on this presentation frame, not one retail tick later.
       presentation.optic_mode = 0U;
+      presentation.retail_scope_overlay = false;
+      presentation.retail_virus_scanner_overlay = false;
+      const auto retiring_nightvision =
+          presentation.environment.nightvision_enabled;
       presentation.environment.nightvision_enabled = false;
+      if (retiring_nightvision) {
+        presentation.environment.screen_filter_enabled = false;
+        presentation.environment.nightvision_clear_override_enabled = false;
+      }
     }
+    // Keep the authoritative optic camera until the guest publishes its chase
+    // cut, but retire all scope HUD immediately on the native release edge.
+    const auto presented_first_person_aim =
+        presentation.first_person_aim && native_aim_held;
     static_cast<void>(retail_scrim_animation.prepareFrame(
         gameplay, presentation.scrim, scrim_copy_edges.phases(),
         presentation.guest_frame, textures));
@@ -380,8 +386,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
                                  : near_clip_depth;
     const auto &camera = presentation.camera;
     applyRetailEnvironment(presentation.environment, camera.projection,
-                           presentation.retail_environment_active,
-                           retail_blackout_mission);
+                           presentation.retail_environment_active);
     SetGeomScreen(camera.projection);
     worldCalloutAnchors(gameplay, actor_animations, actor_tick,
                         presentation.objects, hmd_pose_scratch,
@@ -405,7 +410,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
     // Retail pickups and flying grenade billboards use interface art but are
     // inserted into the world OT. Their TIMs must already be resident when
     // that OT executes; a late HUD upload would lose scene depth ordering.
-    hud_textures.restoreGameplay(gameplay.hud(), presentation.first_person_aim,
+    hud_textures.restoreGameplay(gameplay.hud(), presented_first_person_aim,
                                  presentation.dropped_items,
                                  presentation.projectiles);
     world_chunk_appearance.advance(gameplay.presentationModels(),
@@ -421,17 +426,13 @@ SceneViewerResult PsyCrossSceneViewer::run(
         weapon_presentation_edges.rawPackets(), glass_shatter.shards(),
         interpolation_amount, previous_render_presentation,
         current_render_presentation, presentation, view, ordering_table,
-        optic_trail_ordering_table,
-        optic_subject_ordering_table,
+        optic_trail_ordering_table, optic_subject_ordering_table,
         shadow_ordering_table, scrim_ordering_table,
-        scanner_xray_ordering_table,
-        guest_overlay_ordering_table, fire_ordering_table,
-        optic_history,
-        actor_shadow_cache, dynamic_light_scratch, world_lighting_cache,
-        local_scene_lighting_cache, flashlight_surface_cache,
-        world_chunk_appearance,
-        weapon_effects_scratch, hmd_pose_scratch, primitives, log_next_frame
-    );
+        scanner_xray_ordering_table, guest_overlay_ordering_table,
+        fire_ordering_table, optic_history, actor_shadow_cache,
+        dynamic_light_scratch, world_lighting_cache, local_scene_lighting_cache,
+        world_chunk_appearance, weapon_effects_scratch, hmd_pose_scratch,
+        primitives, log_next_frame);
     if (effect_updates != 0U) {
       fire_animation.update();
       glass_shatter.advance(effect_updates);
@@ -452,11 +453,9 @@ SceneViewerResult PsyCrossSceneViewer::run(
     // then owns depth and cleanly covers the overlapping newest echo.
     GR_SetBlendMode(BM_NONE);
     GR_SetDepthState(1, 0);
-    DrawOTag(
-        reinterpret_cast<u_long *>(&optic_trail_ordering_table.back()));
+    DrawOTag(reinterpret_cast<u_long *>(&optic_trail_ordering_table.back()));
     GR_SetDepthState(1, 1);
-    DrawOTag(
-        reinterpret_cast<u_long *>(&optic_subject_ordering_table.back()));
+    DrawOTag(reinterpret_cast<u_long *>(&optic_subject_ordering_table.back()));
     GR_SetBlendMode(BM_NONE);
     // Posed silhouettes are projected onto exact gameplay receiver surfaces.
     // First union their model triangles into a dedicated stencil bit, then
@@ -492,25 +491,14 @@ SceneViewerResult PsyCrossSceneViewer::run(
     GR_SetBlendMode(BM_NONE);
     drawVirusScannerFilter(presentation.first_person_aim &&
                            presentation.optic_mode == 4U);
-    // The scanner changes the normal textured target packets to retail 0x36
-    // semitransparency. Submit them after the amber filter with depth disabled
-    // so the infected body is visible through authored walls and crates.
+    // Static EMD/GMD scanner material stays in the ordinary depth-sorted OT.
+    // This late depth-free table is reserved only for a script-hidden
+    // GRGLO/GDF fallback marker during a room/visibility handoff.
     GR_SetBlendMode(BM_AVERAGE);
     GR_EnableDepth(0);
     GR_SetDepthState(0, 0);
-    DrawOTag(
-        reinterpret_cast<u_long *>(&scanner_xray_ordering_table.back()));
+    DrawOTag(reinterpret_cast<u_long *>(&scanner_xray_ordering_table.back()));
     GR_SetBlendMode(BM_NONE);
-    // Remaining non-world raw packets and non-particle retail sprites are
-    // already projected presentation. Rain and other identified particles
-    // were reprojected into the world OT above; only true screen-space data
-    // reaches this painter-order pass.
-    GR_EnableDepth(0);
-    GR_SetDepthState(0, 0);
-    DrawOTag(reinterpret_cast<u_long *>(&guest_overlay_ordering_table.back()));
-    GR_SetBlendMode(BM_NONE);
-    GR_EnableDepth(1);
-    GR_SetDepthState(1, 1);
     static_cast<void>(retail_scrim_animation.commitFrame(
         gameplay, presentation.scrim, scrim_copy_edges.phases(),
         presentation.guest_frame, textures));
@@ -521,32 +509,77 @@ SceneViewerResult PsyCrossSceneViewer::run(
         camera.target_x - camera.x, camera.target_z - camera.z);
     // Reserved framebuffer pages are transient. Restore the font, current
     // weapon and complete weapon-specific optic immediately before sampling.
-    hud_textures.restoreGameplay(gameplay.hud(), presentation.first_person_aim,
+    hud_textures.restoreGameplay(gameplay.hud(), presented_first_person_aim,
                                  presentation.dropped_items,
                                  presentation.projectiles);
-    drawRetailScreenFilter(presentation.environment,
-                           presentation.retail_environment_active);
-    drawGameBrightness(pause_settings.brightness);
-    const auto radio_presentation_active = gameplay.radioConversationActive();
-    const auto letterbox_requested = gameplay.letterboxActive();
-    const auto radio_presentation_closed =
-        game::legacyRadioPresentationClosed(previous_radio_presentation_active,
-                                            radio_presentation_active) &&
-        !letterbox_requested;
-    previous_radio_presentation_active = radio_presentation_active;
-    if (radio_presentation_closed) {
-      gameplay_presentation_transition.reset();
-    } else {
-      gameplay_presentation_transition.advance(letterbox_requested,
-                                               presentation_delta_seconds);
+    // Remaining non-world packets are already projected presentation. Draw
+    // them only after restoring HUD VRAM so the retail SCP-bearing sprites
+    // sample their authored TIMs, then let the native HUD add the optic rings.
+    GR_EnableDepth(0);
+    GR_SetDepthState(0, 0);
+    DrawOTag(reinterpret_cast<u_long *>(&guest_overlay_ordering_table.back()));
+    GR_SetBlendMode(BM_NONE);
+    GR_EnableDepth(1);
+    GR_SetDepthState(1, 1);
+    const auto defer_retail_screen_filter =
+        presentation.environment.nightvision_enabled &&
+        presentation.environment.screen_filter_enabled &&
+        presentation.environment.screen_filter_material < 4U;
+    if (!defer_retail_screen_filter) {
+      drawRetailScreenFilter(presentation.environment,
+                             presentation.retail_environment_active);
     }
-    const auto letterbox_amount =
-        gameplay_presentation_transition.letterboxAmount();
-    const auto hud_visibility =
-        gameplay_presentation_transition.hudVisibility();
-    const auto bar_height =
-        static_cast<int>(std::lround(letterbox_amount * 18.0));
-    if (bar_height > 0) {
+    drawGameBrightness(pause_settings.brightness);
+    // Retail owns two independent transitions on the same script edge. Bars
+    // follow the live 240 <-> 160 viewport RECT; the normal HUD follows its
+    // own -1..13 FUN_800410d0 phase. XA is audio only and never gates either.
+    const auto retail_ui_available = presentation.retail_ui_available;
+    const auto hud_visibility = retail_ui_available
+                                    ? game::legacyNormalGameplayHudVisibility(
+                                          presentation.normal_hud_phase)
+                                    : (gameplay.letterboxActive() ? 0.0 : 1.0);
+    const auto normal_hud_phase =
+        retail_ui_available ? presentation.normal_hud_phase
+                            : static_cast<double>(gameplay.hud().revealFrame());
+    const auto retail_bars = game::legacyRetailViewportBars(
+        presentation.presentation_viewport_y,
+        presentation.presentation_viewport_height);
+    constexpr double retail_screen_height = 240.0;
+    const auto top_bar_height =
+        retail_ui_available
+            ? static_cast<int>(std::lround(retail_bars.top * screen_height /
+                                           retail_screen_height))
+            : (gameplay.letterboxActive() ? 40 : 0);
+    const auto bottom_bar_height =
+        retail_ui_available
+            ? static_cast<int>(std::lround(retail_bars.bottom * screen_height /
+                                           retail_screen_height))
+            : top_bar_height;
+    constexpr double hidden_hud_threshold = 0.001;
+    const auto hud_fully_hidden = hud_visibility <= hidden_hud_threshold;
+    const auto gameplay_hud_active = game::legacyGameplayHudPresentationActive(
+        gameplay.missionComplete(), hud_fully_hidden);
+    if (gameplay_hud_active ||
+        (!gameplay.missionComplete() && presented_first_person_aim)) {
+      drawGameplayHud(
+          hud_textures, gameplay, camera, target_anchor, world_callout_scratch,
+          input_, presented_first_person_aim, aim_heading,
+          presented_weapon_switch_frames, presentation_delta_seconds,
+          pause_settings.screen_center_x, pause_settings.screen_center_y,
+          hud_visibility, normal_hud_phase, gameplay_hud_scratch);
+      if (hud_visibility > 0.5) {
+        drawRetailGrenadeTrajectory(presentation,
+                                    pause_settings.screen_center_x,
+                                    pause_settings.screen_center_y);
+      }
+    }
+    if (defer_retail_screen_filter) {
+      drawRetailScreenFilter(presentation.environment,
+                             presentation.retail_environment_active);
+    }
+    // Letterbox is presentation framing, not scene/HUD content. Submit it
+    // after the night-vision grade so its authored black remains neutral.
+    if (top_bar_height > 0 || bottom_bar_height > 0) {
       GR_SetBlendMode(BM_NONE);
       GR_EnableDepth(0);
       GR_SetDepthState(0, 0);
@@ -566,28 +599,16 @@ SceneViewerResult PsyCrossSceneViewer::run(
       const auto bar_right = static_cast<int>(
           std::ceil((static_cast<double>(screen_width) + visible_width) * 0.5));
       const auto bar_width = std::max(bar_right - bar_left, screen_width);
-      drawSolidRect(bar_left, 0, bar_width, bar_height, 0U, 0U, 0U);
-      drawSolidRect(bar_left, screen_height - bar_height, bar_width, bar_height,
-                    0U, 0U, 0U);
+      if (top_bar_height > 0) {
+        drawSolidRect(bar_left, 0, bar_width, top_bar_height, 0U, 0U, 0U);
+      }
+      if (bottom_bar_height > 0) {
+        drawSolidRect(bar_left, screen_height - bottom_bar_height, bar_width,
+                      bottom_bar_height, 0U, 0U, 0U);
+      }
       DrawSync(0);
       GR_EnableDepth(1);
       GR_SetDepthState(1, 1);
-    }
-    constexpr double hidden_hud_threshold = 0.001;
-    const auto hud_fully_hidden = hud_visibility <= hidden_hud_threshold;
-    if (game::legacyGameplayHudPresentationActive(gameplay.missionComplete(),
-                                                  hud_fully_hidden)) {
-      drawGameplayHud(
-          hud_textures, gameplay, camera, target_anchor, world_callout_scratch,
-          input_, presentation.first_person_aim, aim_heading,
-          presented_weapon_switch_frames, presentation_delta_seconds,
-          pause_settings.screen_center_x, pause_settings.screen_center_y,
-          hud_visibility, gameplay_hud_scratch);
-      if (hud_visibility > 0.5) {
-        drawRetailGrenadeTrajectory(presentation,
-                                    pause_settings.screen_center_x,
-                                    pause_settings.screen_center_y);
-      }
     }
     // Failure presentation belongs to retail FONT/TEXT and fade state.  The
     // guest publishes the same type-on glyph packets for player death and
@@ -658,12 +679,16 @@ SceneViewerResult PsyCrossSceneViewer::run(
   };
 
   PresentationFrameMeter presentation_frame_meter;
+  auto presentation_frame_meter_visible = false;
+  auto presentation_frame_meter_toggle_was_down = false;
   auto meter_elapsed_seconds = 0.0;
   auto meter_simulation_updates = 0U;
   const auto end_presented_frame = [&] {
     presentation_frame_meter.advance(meter_elapsed_seconds,
                                      meter_simulation_updates);
-    drawPresentationFrameMeter(hud_textures, presentation_frame_meter.text());
+    if (presentation_frame_meter_visible) {
+      drawPresentationFrameMeter(hud_textures, presentation_frame_meter.text());
+    }
     PsyX_EndScene();
   };
   const auto performance_frequency = SDL_GetPerformanceFrequency();
@@ -775,6 +800,15 @@ SceneViewerResult PsyCrossSceneViewer::run(
             ? std::span<const std::uint8_t>{keyboard, static_cast<std::size_t>(
                                                           keyboard_count)}
             : std::span<const std::uint8_t>{};
+    const auto presentation_frame_meter_toggle_down =
+        keyboard != nullptr && keyboard_count > SDL_SCANCODE_F6 &&
+        keyboard[SDL_SCANCODE_F6] != 0U;
+    if (presentation_frame_meter_toggle_down &&
+        !presentation_frame_meter_toggle_was_down) {
+      presentation_frame_meter_visible = !presentation_frame_meter_visible;
+    }
+    presentation_frame_meter_toggle_was_down =
+        presentation_frame_meter_toggle_down;
     const auto bound_actions = sampleKeyboardMouseActions(
         input_, KeyboardMouseDeviceState{
                     .keyboard = keyboard_state,
@@ -878,9 +912,6 @@ SceneViewerResult PsyCrossSceneViewer::run(
     if (!paused && dismiss_radio_pressed &&
         gameplay.radioConversationActive()) {
       gameplay.dismissRadioConversationPresentation();
-      // A deliberate skip must expose the objective update on the next
-      // presented frame, rather than replaying the normal two-phase exit.
-      gameplay_presentation_transition.reset();
     }
     raw_player_input.controller.run =
         raw_player_input.controller.left_y >= controller_run_threshold;

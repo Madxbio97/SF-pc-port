@@ -279,13 +279,9 @@ transformCylindricalBillboardVertex(const assets::GmdModel &model,
       (horizontal_uses_x ? static_cast<double>(vertex.x) - center_x
                          : static_cast<double>(vertex.z) - center_z) *
       axis_scale;
-  const auto to_camera_x = camera.x - center.x;
-  const auto to_camera_z = camera.z - center.z;
-  const auto camera_distance = std::hypot(to_camera_x, to_camera_z);
-  const auto camera_right = camera_distance > 0.0001
-                                ? Vector3{-to_camera_z / camera_distance, 0.0,
-                                          to_camera_x / camera_distance}
-                                : viewBasis(camera)[0];
+  // Native aim rotates the presented target without moving the eye. Use the
+  // live view axis so GLIT/YLIT rotate with that camera.
+  const auto camera_right = viewBasis(camera)[0];
   return makeVertex(center.x + camera_right.x * horizontal, authored.y,
                     center.z + camera_right.z * horizontal);
 }
@@ -732,10 +728,11 @@ opticSubjectColor(OpticSubjectStyle style) noexcept;
 void submitStats(RenderStats &stats, int depth,
                  std::span<const long> projected);
 
-void renderProjectedOpticFrame(
-    const OpticProjectedFrame &frame, OpticSubjectStyle style,
-    std::size_t echo_index, std::vector<OT_TAG> &ordering_table,
-    PrimitiveBuffer &primitives, RenderStats &stats) {
+void renderProjectedOpticFrame(const OpticProjectedFrame &frame,
+                               OpticSubjectStyle style, std::size_t echo_index,
+                               std::vector<OT_TAG> &ordering_table,
+                               PrimitiveBuffer &primitives,
+                               RenderStats &stats) {
   const auto color = opticSubjectColor(style);
   for (const auto &triangle : frame) {
     auto &primitive = primitives.optic_trails.emplace_back();
@@ -776,6 +773,7 @@ void renderProjectedOpticFrame(
 
 enum class OpticSubjectStyle : std::uint8_t {
   nightvision,
+  virus_scanner,
   nightvision_trail_oldest,
   nightvision_trail_middle,
   nightvision_trail_recent,
@@ -783,7 +781,9 @@ enum class OpticSubjectStyle : std::uint8_t {
 
 [[nodiscard]] constexpr bool
 isNightvisionTrail(OpticSubjectStyle style) noexcept {
-  return style != OpticSubjectStyle::nightvision;
+  return style == OpticSubjectStyle::nightvision_trail_oldest ||
+         style == OpticSubjectStyle::nightvision_trail_middle ||
+         style == OpticSubjectStyle::nightvision_trail_recent;
 }
 
 [[nodiscard]] constexpr VertexColor
@@ -792,6 +792,9 @@ opticSubjectColor(OpticSubjectStyle style) noexcept {
   case OpticSubjectStyle::nightvision:
     // Retail live SVD silhouette (opaque POLY_F3 word 0x2000ff48).
     return {72U, 255U, 0U};
+  case OpticSubjectStyle::virus_scanner:
+    // Virus-scanner actors use the same opaque silhouette path in orange.
+    return {249U, 135U, 0U};
   case OpticSubjectStyle::nightvision_trail_oldest:
     return {5U, 26U, 98U};
   case OpticSubjectStyle::nightvision_trail_middle:
@@ -804,8 +807,8 @@ opticSubjectColor(OpticSubjectStyle style) noexcept {
 
 void captureOpticTriangle(OpticProjectedFrame &capture, long xy0, long xy1,
                           long xy2, int depth, ushort cache_end) {
-  auto triangle = OpticProjectedTriangle{
-      .packed_xy = {xy0, xy1, xy2}, .ordering_depth = depth};
+  auto triangle = OpticProjectedTriangle{.packed_xy = {xy0, xy1, xy2},
+                                         .ordering_depth = depth};
   if (cache_end != 0xffffU && cache_end >= 3U) {
     for (auto corner = std::size_t{}; corner < 3U; ++corner) {
       triangle.precise_valid[corner] =
@@ -821,9 +824,8 @@ void renderOpticHmdObject(
     const assets::HmdModel &model, std::span<const Vector3> world_vertices,
     OpticSubjectStyle style, const MATRIX &view,
     std::vector<OT_TAG> &ordering_table, PrimitiveBuffer &primitives,
-    RenderStats &stats, std::size_t triangle_stride = 1U,
-    int ordering_bias = 0, OpticProjectedFrame *capture = nullptr,
-    bool emit_primitive = true) {
+    RenderStats &stats, std::size_t triangle_stride = 1U, int ordering_bias = 0,
+    OpticProjectedFrame *capture = nullptr, bool emit_primitive = true) {
   if (world_vertices.size() != model.vertices().size() ||
       triangle_stride == 0U) {
     return;
@@ -850,11 +852,10 @@ void renderOpticHmdObject(
     long flags{};
     const auto depth =
         RotTransPers3(&v0, &v1, &v2, &xy0, &xy1, &xy2, &depth_cue, &flags);
-    const auto capture_cache_end =
-        capture != nullptr
-            ? PGXP_GetIndex(emit_primitive ? 0 : 1)
-            : static_cast<ushort>(0xffffU);
-    if (depth <= 0 ||
+    const auto capture_cache_end = capture != nullptr
+                                       ? PGXP_GetIndex(emit_primitive ? 0 : 1)
+                                       : static_cast<ushort>(0xffffU);
+    if (depth <= 0 || !frontFacing(xy0, xy1, xy2, 3U) ||
         triviallyOutsideViewport(std::array<long, 3U>{xy0, xy1, xy2})) {
       if (emit_primitive) {
         ++stats.rejected;
@@ -862,8 +863,7 @@ void renderOpticHmdObject(
       continue;
     }
     if (capture != nullptr) {
-      captureOpticTriangle(*capture, xy0, xy1, xy2, depth,
-                           capture_cache_end);
+      captureOpticTriangle(*capture, xy0, xy1, xy2, depth, capture_cache_end);
     }
     if (!emit_primitive) {
       continue;
@@ -877,23 +877,25 @@ void renderOpticHmdObject(
     setProjected(&primitive.x0, xy0);
     setProjected(&primitive.x1, xy1);
     setProjected(&primitive.x2, xy2);
-    addPrim(&ordering_table[std::clamp(
-                depth + ordering_bias, 1, ordering_table_size - 1)],
+    addPrim(&ordering_table[std::clamp(depth + ordering_bias, 1,
+                                       ordering_table_size - 1)],
             &primitive);
     const std::array projected{xy0, xy1, xy2};
     submitStats(stats, depth, projected);
   }
 }
 
-void renderOpticGmdObject(
-    const assets::GmdModel &model, const assets::MissionTransform &transform,
-    OpticSubjectStyle style, const MATRIX &view,
-    std::vector<OT_TAG> &ordering_table, PrimitiveBuffer &primitives,
-    RenderStats &stats, OpticProjectedFrame *capture = nullptr,
-    bool emit_primitive = true) {
+void renderOpticGmdObject(const assets::GmdModel &model,
+                          const assets::MissionTransform &transform,
+                          OpticSubjectStyle style, const MATRIX &view,
+                          std::vector<OT_TAG> &ordering_table,
+                          PrimitiveBuffer &primitives, RenderStats &stats,
+                          OpticProjectedFrame *capture = nullptr,
+                          bool emit_primitive = true) {
   if (model.vertices().empty()) {
     return;
   }
+  const auto reverse_winding = reversesWinding(transform);
   for (const auto &triangle : model.triangles()) {
     if (triangle.flags == 0U || triangle.degenerate) {
       continue;
@@ -925,11 +927,11 @@ void renderOpticGmdObject(
     long flags{};
     const auto depth =
         RotTransPers3(&v0, &v1, &v2, &xy0, &xy1, &xy2, &depth_cue, &flags);
-    const auto capture_cache_end =
-        capture != nullptr
-            ? PGXP_GetIndex(emit_primitive ? 0 : 1)
-            : static_cast<ushort>(0xffffU);
-    if (depth <= 0 ||
+    const auto capture_cache_end = capture != nullptr
+                                       ? PGXP_GetIndex(emit_primitive ? 0 : 1)
+                                       : static_cast<ushort>(0xffffU);
+    const auto visible_face = frontFacing(xy0, xy1, xy2, 3U) != reverse_winding;
+    if (depth <= 0 || !visible_face ||
         triviallyOutsideViewport(std::array<long, 3U>{xy0, xy1, xy2})) {
       if (emit_primitive) {
         ++stats.rejected;
@@ -937,8 +939,7 @@ void renderOpticGmdObject(
       continue;
     }
     if (capture != nullptr) {
-      captureOpticTriangle(*capture, xy0, xy1, xy2, depth,
-                           capture_cache_end);
+      captureOpticTriangle(*capture, xy0, xy1, xy2, depth, capture_cache_end);
     }
     if (!emit_primitive) {
       continue;
@@ -1407,15 +1408,15 @@ void renderGlassShards(std::span<const GlassShardPresentationState> shards,
   }
 }
 
-
-void renderGmdObject(
-    const assets::GmdModel &model, const game::SceneObject &object,
-    game::ObjectVisualEffect visual_effect, unsigned int texture_bank,
-    const game::CameraState &camera, const MATRIX &view,
-    std::vector<OT_TAG> &ordering_table, PrimitiveBuffer &primitives,
-    RenderStats &stats, VertexColor back_color = {128U, 128U, 128U},
-    bool force_two_sided = false, bool force_semi_transparent = false
-) {
+void renderGmdObject(const assets::GmdModel &model,
+                     const game::SceneObject &object,
+                     game::ObjectVisualEffect visual_effect,
+                     unsigned int texture_bank, const game::CameraState &camera,
+                     const MATRIX &view, std::vector<OT_TAG> &ordering_table,
+                     PrimitiveBuffer &primitives, RenderStats &stats,
+                     VertexColor back_color = {128U, 128U, 128U},
+                     bool force_two_sided = false,
+                     bool force_semi_transparent = false) {
   const auto reverse_winding = reversesWinding(object.transform);
   for (auto triangle_index = std::size_t{};
        triangle_index < model.triangles().size(); ++triangle_index) {
@@ -1650,8 +1651,7 @@ void renderHmdObject(
     RenderStats &stats,
     std::optional<VertexColor> back_color_override = std::nullopt,
     std::span<const Vector3> prepared_world_vertices = {},
-    bool force_semi_transparent = false,
-    bool apply_scene_lighting = true) {
+    bool force_semi_transparent = false, bool apply_scene_lighting = true) {
   if (prepared_world_vertices.empty()) {
     prepareHmdWorldVertices(model, object, animation_pose, pose_scratch,
                             primitives.actor_scratch.hmd_world_vertices);

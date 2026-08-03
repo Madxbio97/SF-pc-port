@@ -3274,6 +3274,7 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
   std::uint8_t renderer_sprite_fast_path_value{};
   std::uint8_t screen_filter_enabled_value{};
   std::uint32_t screen_filter_descriptor{};
+  std::uint32_t nightvision_clear_reference{};
   std::uint32_t nightvision_clear_color{};
   if (!read_rgb(camera_object, profile.renderer_clear_rgb_offset,
                 state.environment.clear_color) ||
@@ -3297,6 +3298,8 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
                       screen_filter_enabled_value) ||
       !runtime_.read32(profile.screen_filter_descriptor,
                        screen_filter_descriptor) ||
+      !runtime_.read32(profile.nightvision_clear_reference,
+                       nightvision_clear_reference) ||
       !runtime_.read32(profile.nightvision_clear_color,
                        nightvision_clear_color) ||
       renderer_sprite_fast_path_value > 1U ||
@@ -3313,6 +3316,9 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
       renderer_sprite_fast_path_value == 0U &&
       (renderer_display_flags_value & 1U) != 0U;
   state.environment.nightvision_enabled = (renderer_flags_value & 0x10U) != 0U;
+  state.environment.nightvision_clear_override_enabled =
+      state.environment.nightvision_enabled &&
+      nightvision_clear_color == nightvision_clear_reference;
   state.environment.nightvision_clear_color = LegacyRgbBridgeState{
       static_cast<std::uint8_t>(nightvision_clear_color),
       static_cast<std::uint8_t>(nightvision_clear_color >> 8U),
@@ -3327,8 +3333,9 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
                   state.environment.screen_filter_color)) {
       return std::nullopt;
     }
-    // Material four is the secondary backdrop-only pass. Every other selector
-    // is the exact PS1 ABR used by the primary full-screen TILE.
+    // FUN_800c9140 emits the scene-covering TILE only for materials 0..3.
+    // Selector four is a draw-mode/object-only secondary path and returns
+    // before constructing the TILE.
     state.environment.screen_filter_enabled =
         state.environment.screen_filter_material != 4U;
     if (state.environment.nightvision_enabled) {
@@ -3472,7 +3479,11 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
   std::uint32_t line_head{};
   std::uint32_t raw_head{};
   std::uint32_t interface_renderer{};
+  std::uint32_t interface_sprite_head{};
   std::uint32_t interface_raw_head{};
+  std::uint32_t retail_scope_vertical_sprites{};
+  std::uint32_t retail_scope_horizontal_sprites{};
+  std::uint8_t interface_sprite_fast_path{};
   if (!sprite_head_address || !line_head_address || !raw_head_address ||
       profile.maximum_guest_sprites == 0U ||
       profile.maximum_guest_lines == 0U ||
@@ -3481,7 +3492,11 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
       !runtime_.read32(*line_head_address, line_head) ||
       !runtime_.read32(*raw_head_address, raw_head) ||
       !runtime_.read32(profile.interface_renderer_pointer,
-                       interface_renderer)) {
+                       interface_renderer) ||
+      !runtime_.read32(profile.retail_scope_vertical_sprites_pointer,
+                       retail_scope_vertical_sprites) ||
+      !runtime_.read32(profile.retail_scope_horizontal_sprites_pointer,
+                       retail_scope_horizontal_sprites)) {
     return std::nullopt;
   }
   if (interface_renderer != 0U) {
@@ -3491,10 +3506,29 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
         !runtime_.read32(*interface_raw_head_address, interface_raw_head)) {
       return std::nullopt;
     }
+    // The interface context's sprite fields are not initialized during the
+    // mission bootstrap. They become authoritative only once retail enables
+    // the SVD camera pass; raw optic packets remain valid independently.
+    if (state.environment.nightvision_enabled) {
+      const auto interface_sprite_head_address =
+          address(interface_renderer, profile.renderer_sprite_list_offset);
+      const auto interface_fast_path_address = address(
+          interface_renderer, profile.renderer_sprite_fast_path_offset);
+      if (!interface_sprite_head_address || !interface_fast_path_address ||
+          !runtime_.read32(*interface_sprite_head_address,
+                           interface_sprite_head) ||
+          !runtime_.read8(*interface_fast_path_address,
+                          interface_sprite_fast_path)) {
+        return std::nullopt;
+      }
+    }
   }
 
-  state.guest_sprites.reserve(profile.maximum_guest_sprites);
-  const auto read_sprite = [&](std::uint32_t item) {
+  state.guest_sprites.reserve(profile.maximum_guest_sprites +
+                              legacy_retail_scope_vertical_sprite_count +
+                              legacy_retail_scope_horizontal_sprite_count);
+  const auto read_sprite = [&](std::uint32_t item, bool renderer_fast_path,
+                               bool retail_scope_overlay) {
     constexpr std::uint32_t sprite_size = 0x24U;
     constexpr std::uint32_t effect_particle_stride = 0x68U;
     constexpr std::uint32_t effect_particle_sprite_offset = 0x28U;
@@ -3538,6 +3572,8 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
     sprite.scale_x = std::bit_cast<std::int16_t>(scale_x);
     sprite.scale_y = std::bit_cast<std::int16_t>(scale_y);
     sprite.rotation = std::bit_cast<std::int32_t>(rotation);
+    sprite.renderer_fast_path = renderer_fast_path;
+    sprite.retail_scope_overlay = retail_scope_overlay;
     const auto first_particle_sprite =
         address(profile.effect_particle_pool, effect_particle_sprite_offset);
     if (first_particle_sprite && item >= *first_particle_sprite) {
@@ -3556,9 +3592,21 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
     }
     return true;
   };
-  if (!read_list(sprite_head, profile.maximum_guest_sprites, read_sprite)) {
+  const auto read_camera_sprite = [&](std::uint32_t item) {
+    return read_sprite(item, renderer_sprite_fast_path_value != 0U, false);
+  };
+  if (!read_list(sprite_head, profile.maximum_guest_sprites,
+                 read_camera_sprite)) {
     return std::nullopt;
   }
+  const auto read_interface_scope_sprite = [&](std::uint32_t item) {
+    if (!legacyGuestSpriteIsRetailScopeOverlayAddress(
+            item, retail_scope_vertical_sprites,
+            retail_scope_horizontal_sprites)) {
+      return true;
+    }
+    return read_sprite(item, interface_sprite_fast_path == 1U, true);
+  };
   state.guest_lines.reserve(profile.maximum_guest_lines);
   const auto read_line = [&](std::uint32_t item) {
     if (!readable_ram_pointer(item, 0x14U)) {
@@ -3657,18 +3705,54 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
     const auto candidate = LegacyGuestRawPacketBridgeState{
         .source_address = item,
     };
-    return !legacyGuestRawPacketIsRetailScopeOverlay(candidate) ||
+    return !legacyGuestRawPacketIsRetailOpticOverlay(candidate) ||
            read_raw_packet(item);
   };
   // The interface context is normally distinct from the world camera. Avoid
   // reading the same intrusive list twice on exceptional/loading frames where
   // both globals temporarily identify the same object. Only the fixed optic
-  // arrays cross this boundary; the rest of retail UI is already represented
-  // by the dedicated immutable UI bridge and would otherwise be drawn twice.
+  // sprite/raw arrays cross this boundary; the rest of retail UI is already
+  // represented by the dedicated immutable UI bridge and would otherwise be
+  // drawn twice.
   if (interface_renderer != 0U && interface_renderer != camera_object &&
-      !read_list(interface_raw_head, profile.maximum_guest_raw_packets,
-                 read_interface_scope_packet)) {
+      ((state.environment.nightvision_enabled &&
+        !read_list(interface_sprite_head, profile.maximum_guest_sprites,
+                   read_interface_scope_sprite)) ||
+       !read_list(interface_raw_head, profile.maximum_guest_raw_packets,
+                  read_interface_scope_packet))) {
     return std::nullopt;
+  }
+  // Fixed optic packets are intrusive nodes. A transient or partially
+  // reconstructed interface list must not drop authored scope geometry: scan
+  // the known arrays as a fallback, accept only linked entries, and dedupe the
+  // normal list traversal. This is also what preserves the six semitransparent
+  // mode-2 POLY_F4 dim quads at 0x8011c5b8..0x8011c66c.
+  if (interface_renderer != 0U) {
+    const auto read_active_fixed_optic_range = [&](const auto &range) {
+      for (std::uint32_t index = 0U; index < range.count; ++index) {
+        const auto item = range.begin + index * range.stride;
+        std::uint32_t link{};
+        if (!runtime_.read32(item, link)) {
+          return false;
+        }
+        if (link == 0U ||
+            std::ranges::any_of(state.guest_raw_packets,
+                                [item](const auto &packet) {
+                                  return packet.source_address == item;
+                                })) {
+          continue;
+        }
+        if (!read_raw_packet(item)) {
+          return false;
+        }
+      }
+      return true;
+    };
+    if (!std::ranges::all_of(
+            legacy_fixed_retail_optic_packet_ranges,
+            read_active_fixed_optic_range)) {
+      return std::nullopt;
+    }
   }
   state.guest_camera_lists_captured = true;
   const auto camera_projection =
@@ -3719,6 +3803,19 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
                      state.camera.presentation_viewport_height) ||
       state.camera.presentation_viewport_height <= 0 ||
       state.camera.presentation_viewport_height > 240) {
+    return std::nullopt;
+  }
+  // The display swap retargets this RECT between framebuffer pages by adding
+  // or subtracting 240 from y. Publish logical screen-space y; treating the
+  // physical page offset as a bar height blacks out every other guest frame.
+  constexpr auto retail_framebuffer_height = std::int16_t{240};
+  if (state.camera.presentation_viewport_y >= retail_framebuffer_height) {
+    state.camera.presentation_viewport_y -= retail_framebuffer_height;
+  } else if (state.camera.presentation_viewport_y < 0) {
+    state.camera.presentation_viewport_y += retail_framebuffer_height;
+  }
+  if (state.camera.presentation_viewport_y < 0 ||
+      state.camera.presentation_viewport_y > 40) {
     return std::nullopt;
   }
   state.camera.retail_letterbox_active =
@@ -5826,6 +5923,7 @@ LegacyGameplayVm::readMissionBridgeState(
   std::uint32_t current_weapon{};
   std::uint32_t weapon_menu_state{};
   std::uint8_t weapon_menu_dirty{};
+  std::uint32_t normal_hud_phase_bits{};
   std::uint32_t weapon_menu_controller_ready{};
   std::uint32_t first_person_aim_mode{};
   std::uint32_t scope_camera_controller{};
@@ -5870,6 +5968,7 @@ LegacyGameplayVm::readMissionBridgeState(
       !runtime_.read32(profile.inventory_current_weapon, current_weapon) ||
       !runtime_.read32(profile.weapon_menu_state, weapon_menu_state) ||
       !runtime_.read8(profile.weapon_menu_dirty, weapon_menu_dirty) ||
+      !runtime_.read32(profile.normal_hud_phase, normal_hud_phase_bits) ||
       !runtime_.read32(profile.weapon_menu_controller_ready,
                        weapon_menu_controller_ready) ||
       !runtime_.read32(profile.first_person_aim_mode, first_person_aim_mode) ||
@@ -5892,6 +5991,11 @@ LegacyGameplayVm::readMissionBridgeState(
   state.inventory.current_weapon = static_cast<std::uint8_t>(current_weapon);
   state.weapon_menu_state = std::bit_cast<std::int32_t>(weapon_menu_state);
   state.weapon_menu_dirty = weapon_menu_dirty != 0U;
+  state.normal_hud_phase =
+      std::bit_cast<std::int32_t>(normal_hud_phase_bits);
+  if (state.normal_hud_phase < -1 || state.normal_hud_phase > 13) {
+    return std::nullopt;
+  }
   state.interface_mode =
       static_cast<std::uint8_t>(weapon_menu_controller_ready);
   state.first_person_aim_mode =
@@ -6372,6 +6476,22 @@ bool LegacyGameplayVm::advanceAudioFrameClock(
 bool LegacyGameplayVm::advanceAudioSliceClock(
     const LegacyRetailAudioProfile &profile) noexcept {
   return advanceAudioClockCallbacks(profile, 1U);
+}
+
+bool LegacyGameplayVm::stopRetailXa(const LegacyRetailAudioProfile &profile,
+                                    std::uint64_t execution_budget) noexcept {
+  if (profile.stop_xa_entry == 0U || execution_budget == 0U) {
+    return false;
+  }
+  try {
+    // FUN_800c6058 is the resident retail stop path: clear the XA state,
+    // issue CdlPause, mute CD input and discard the queued stream. CdRom/SPU
+    // state remains the acknowledgement authority for presentation.
+    return invokeFrameCall(profile.stop_xa_entry, {}, execution_budget)
+        .completed();
+  } catch (...) {
+    return false;
+  }
 }
 
 bool LegacyGameplayVm::setRetailAudioVolumes(

@@ -2433,6 +2433,7 @@ void testLegacyGameplayVmBoundary() {
   bridge_profile.renderer_display_flags = 0x800320f8U;
   bridge_profile.screen_filter_enabled = 0x8004a400U;
   bridge_profile.screen_filter_descriptor = 0x8004a404U;
+  bridge_profile.nightvision_clear_reference = 0x8004a40cU;
   bridge_profile.nightvision_clear_color = 0x8004a408U;
   bridge_profile.fade_step = 0x80032004U;
   bridge_profile.fade_current = 0x80032006U;
@@ -2660,6 +2661,8 @@ void testLegacyGameplayVmBoundary() {
           vm.runtime().write8(screen_filter_descriptor + 0x1aU, 77U) &&
           vm.runtime().write32(bridge_profile.nightvision_clear_color,
                                0xff00ff00U) &&
+          vm.runtime().write32(bridge_profile.nightvision_clear_reference,
+                               0x360087f9U) &&
           vm.runtime().write16(
               camera_object + bridge_profile.renderer_flags_offset, 5U) &&
           vm.runtime().write8(
@@ -3380,6 +3383,7 @@ void testLegacyGameplayVmBoundary() {
           bridge->environment.screen_filter_color ==
               sf::game::LegacyRgbBridgeState{47U, 112U, 77U} &&
           !bridge->environment.nightvision_enabled &&
+          !bridge->environment.nightvision_clear_override_enabled &&
           bridge->environment.nightvision_clear_color ==
               sf::game::LegacyRgbBridgeState{0U, 255U, 0U} &&
           bridge->renderer_sprite_fast_path && bridge->thrown_projectile &&
@@ -3541,12 +3545,28 @@ void testLegacyGameplayVmBoundary() {
   require(
       vm.runtime().write16(presentation_viewport +
                                bridge_profile.presentation_viewport_y_offset,
+                           242U) &&
+          vm.runtime().write16(
+              presentation_viewport +
+                  bridge_profile.presentation_viewport_height_offset,
+              236U),
+      "Could not seed the entering second-page retail radio viewport");
+  const auto entering_radio_viewport = vm.readBridgeState(bridge_profile);
+  require(entering_radio_viewport &&
+              entering_radio_viewport->camera.presentation_viewport_y == 2 &&
+              entering_radio_viewport->camera.presentation_viewport_height ==
+                  236 &&
+              entering_radio_viewport->camera.retail_letterbox_active,
+          "The second framebuffer page leaked into logical letterbox y");
+  require(
+      vm.runtime().write16(presentation_viewport +
+                               bridge_profile.presentation_viewport_y_offset,
                            40U) &&
           vm.runtime().write16(
               presentation_viewport +
                   bridge_profile.presentation_viewport_height_offset,
               160U),
-      "Could not seed the retail radio viewport");
+      "Could not seed the closed retail radio viewport");
   const auto radio_viewport_bridge = vm.readBridgeState(bridge_profile);
   require(radio_viewport_bridge &&
               radio_viewport_bridge->camera.presentation_viewport_y == 40 &&
@@ -4064,6 +4084,8 @@ void testLegacyGameplayVmBoundary() {
   const auto nightvision_environment = vm.readBridgeState(bridge_profile);
   require(nightvision_environment &&
               nightvision_environment->environment.nightvision_enabled &&
+              !nightvision_environment->environment
+                   .nightvision_clear_override_enabled &&
               nightvision_environment->environment.screen_filter_color ==
                   sf::game::LegacyRgbBridgeState{0U, 112U, 0U} &&
               vm.runtime().write16(renderer_flags_address, 5U),
@@ -5609,6 +5631,7 @@ void testLegacyGameplayVmBoundary() {
   mission_bridge_profile.mission_completed_flag = 0x801f1008U;
   mission_bridge_profile.weapon_menu_state = 0x801f1010U;
   mission_bridge_profile.weapon_menu_dirty = 0x801f1014U;
+  mission_bridge_profile.normal_hud_phase = 0x801f1028U;
   mission_bridge_profile.weapon_menu_controller_ready = 0x801f1018U;
   mission_bridge_profile.weapon_menu_input_ready = 0x801f101cU;
   mission_bridge_profile.first_person_aim_mode = 0x801f1020U;
@@ -5719,6 +5742,8 @@ void testLegacyGameplayVmBoundary() {
                               0U) &&
           vm.runtime().write32(mission_bridge_profile.weapon_menu_state, 0U) &&
           vm.runtime().write8(mission_bridge_profile.weapon_menu_dirty, 1U) &&
+          vm.runtime().write32(mission_bridge_profile.normal_hud_phase,
+                               6U) &&
           vm.runtime().write32(
               mission_bridge_profile.weapon_menu_controller_ready, 1U) &&
           vm.runtime().write32(mission_bridge_profile.weapon_menu_input_ready,
@@ -5887,6 +5912,7 @@ void testLegacyGameplayVmBoundary() {
           failed_before_transition->failed_parameters == 0x01U &&
           failed_before_transition->weapon_menu_state == 0 &&
           failed_before_transition->weapon_menu_dirty &&
+          failed_before_transition->normal_hud_phase == 6 &&
           failed_before_transition->weapon_menu_controller_ready &&
           failed_before_transition->weapon_menu_input_ready &&
           failed_before_transition->messages.size() == 1U &&
@@ -5932,6 +5958,11 @@ void testLegacyGameplayVmBoundary() {
   require(succeeded && succeeded->success && succeeded->terminal &&
               !succeeded->failure && !succeeded->failure_transition,
           "Retail mission success/failure latches are reversed");
+  require(
+      vm.runtime().write32(mission_bridge_profile.normal_hud_phase, 14U) &&
+          !vm.readMissionBridgeState(mission_bridge_profile) &&
+          vm.runtime().write32(mission_bridge_profile.normal_hud_phase, 6U),
+      "Mission bridge accepted a HUD phase outside retail -1..13");
   require(
       vm.runtime().write32(mission_progress, 33U) &&
           !vm.readMissionBridgeState(mission_bridge_profile),

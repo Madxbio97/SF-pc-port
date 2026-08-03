@@ -2377,9 +2377,9 @@ public:
         }
       } else {
         upload("SCOPED.TIM");
-        for (const auto bearing : scope_bearings) {
-          upload(bearing);
-        }
+      }
+      for (const auto bearing : scope_bearings) {
+        upload(bearing);
       }
     }
     if (!gameplay_palette_resident_) {

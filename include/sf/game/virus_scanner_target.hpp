@@ -38,28 +38,28 @@ scannerAxisDistance(std::int32_t lhs, std::int32_t rhs) noexcept {
 [[nodiscard]] constexpr std::optional<std::int64_t>
 virusScannerDirectDistanceSquared(VirusScannerPoint candidate,
                                   VirusScannerPoint target,
-                                  std::int64_t maximum_distance = 192) noexcept {
+                                  std::int64_t maximum_distance = 128) noexcept {
   constexpr auto kMaximumSafeDistance = std::int64_t{3037000499};
-  if (maximum_distance < 0 || maximum_distance > kMaximumSafeDistance) {
+  if (maximum_distance <= 0 || maximum_distance > kMaximumSafeDistance) {
     return std::nullopt;
   }
   const auto dx = scannerAxisDistance(candidate.x, target.x);
   const auto dy = scannerAxisDistance(candidate.y, target.y);
   const auto dz = scannerAxisDistance(candidate.z, target.z);
-  if (dx > maximum_distance || dy > maximum_distance ||
-      dz > maximum_distance) {
+  if (dx >= maximum_distance || dy >= maximum_distance ||
+      dz >= maximum_distance) {
     return std::nullopt;
   }
   const auto limit = maximum_distance * maximum_distance;
-  auto remaining = limit;
+  auto total = std::int64_t{};
   for (const auto distance : {dx, dy, dz}) {
     const auto square = distance * distance;
-    if (square > remaining) {
+    if (square >= limit - total) {
       return std::nullopt;
     }
-    remaining -= square;
+    total += square;
   }
-  return limit - remaining;
+  return total;
 }
 
 // CandidateAt returns optional<VirusScannerTargetCandidate>. Keeping the
@@ -85,33 +85,24 @@ template <typename CandidateAt>
   return std::nullopt;
 }
 
-// CandidateAt returns an optional marker candidate after the mission-specific
-// class/model identity check. Keeping spatial pairing here makes production
-// and tests share the same bounded, deterministic nearest-neighbour policy.
+// FUN_8002bf74 accepts the first matching class-0x6f object whose retail
+// distance is strictly below 0x80. Candidate order therefore remains
+// authoritative; this is not a nearest-neighbour query.
 template <typename CandidateAt>
 [[nodiscard]] std::optional<std::uint16_t> selectVirusScannerMarker(
     VirusScannerPoint target, std::size_t candidate_count,
-    CandidateAt &&candidate_at, std::int64_t maximum_distance = 192) noexcept {
-  auto nearest = std::optional<std::uint16_t>{};
-  auto nearest_distance = std::optional<std::int64_t>{};
+    CandidateAt &&candidate_at, std::int64_t maximum_distance = 128) noexcept {
   for (auto index = std::size_t{}; index < candidate_count; ++index) {
     const auto candidate = candidate_at(index);
     if (!candidate) {
       continue;
     }
-    const auto distance = virusScannerDirectDistanceSquared(
-        candidate->position, target, maximum_distance);
-    if (!distance) {
-      continue;
-    }
-    if (!nearest_distance || *distance < *nearest_distance ||
-        (*distance == *nearest_distance &&
-         (!nearest || candidate->scene_object < *nearest))) {
-      nearest = candidate->scene_object;
-      nearest_distance = distance;
+    if (virusScannerDirectDistanceSquared(candidate->position, target,
+                                          maximum_distance)) {
+      return candidate->scene_object;
     }
   }
-  return nearest;
+  return std::nullopt;
 }
 
 } // namespace sf::game

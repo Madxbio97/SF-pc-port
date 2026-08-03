@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "0.1.0-public-test.16",
+    [string]$Version = "0.1.0-public-test.22",
     [string]$Configuration = "Release"
 )
 
@@ -193,6 +193,21 @@ This is an unofficial work-in-progress compatibility runtime. It is not
 affiliated with or endorsed by Sony Interactive Entertainment.
 "@
 
+# Windows PowerShell 5 reads UTF-8 scripts without a BOM through the active
+# ANSI code page. Recover the original UTF-8 literals when that happens while
+# leaving PowerShell 7 and UTF-8 system locales untouched.
+$utf8LiteralProbe = -join @(
+    [char]0x0412,
+    [char]0x0410,
+    [char]0x0416,
+    [char]0x041D,
+    [char]0x041E
+)
+$repairScriptLiterals = -not $readme.Contains($utf8LiteralProbe)
+if ($repairScriptLiterals) {
+    $readme = [Text.Encoding]::UTF8.GetString([Text.Encoding]::Default.GetBytes($readme))
+}
+
 $notes = @"
 PUBLIC TEST $Version
 =====================
@@ -221,6 +236,10 @@ PUBLIC TEST $Version
 
 Архив не содержит образ игры, сохранения, настройки или syphon_filter_cheats.
 "@
+
+if ($repairScriptLiterals) {
+    $notes = [Text.Encoding]::UTF8.GetString([Text.Encoding]::Default.GetBytes($notes))
+}
 
 $releaseNotesPath = Join-Path $repoRoot "docs\releases\$Version.md"
 if (Test-Path -LiteralPath $releaseNotesPath -PathType Leaf) {
@@ -260,6 +279,10 @@ Visual Studio license terms.
 
 See the licenses directory for the supplied license texts.
 "@
+
+if ($repairScriptLiterals) {
+    $notices = [Text.Encoding]::UTF8.GetString([Text.Encoding]::Default.GetBytes($notices))
+}
 
 $utf8 = New-Object System.Text.UTF8Encoding($true)
 [IO.File]::WriteAllText((Join-Path $packageDir "README_FIRST.txt"), $readme, $utf8)

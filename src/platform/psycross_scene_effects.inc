@@ -1217,8 +1217,8 @@ void renderEmdObject(
     const assets::EmdScene &scene, const game::SceneObject &object,
     unsigned int texture_bank, const MATRIX &view,
     std::vector<OT_TAG> &ordering_table, PrimitiveBuffer &primitives,
-    RenderStats &stats, bool retail_scrim = false
-) {
+    RenderStats &stats, bool retail_scrim = false,
+    bool force_semi_transparent = false) {
   const auto reverse_winding = reversesWinding(object.transform);
   for (auto section_index = std::size_t{};
        section_index < scene.sections().size(); ++section_index) {
@@ -1267,7 +1267,7 @@ void renderEmdObject(
           const TexturedMaterial material{
               polygon.texture_page,
               polygon.clut,
-              false,
+              force_semi_transparent,
               false,
               static_cast<std::uint8_t>(texture_bank),
               texture_source_page,
@@ -1291,6 +1291,9 @@ void renderEmdObject(
         auto &primitive = primitives.object_quads.emplace_back();
         configurePrimitive(primitive, section, polygon, texture_bank,
                            texture_source_page);
+        if (force_semi_transparent) {
+          setSemiTrans(&primitive, 1);
+        }
         if (!retail_scrim) {
           dynamicallyLight(primitive, positions);
         }
@@ -1324,7 +1327,8 @@ void renderEmdObject(
           };
           submitClippedTriangle(
               textured,
-              TexturedMaterial{polygon.texture_page, polygon.clut, false, false,
+              TexturedMaterial{polygon.texture_page, polygon.clut,
+                               force_semi_transparent, false,
                                static_cast<std::uint8_t>(texture_bank),
                                texture_source_page},
               false, reverse_winding, view, ordering_table, primitives.objects,
@@ -1340,6 +1344,9 @@ void renderEmdObject(
         auto &primitive = primitives.objects.emplace_back();
         configurePrimitive(primitive, section, polygon, texture_bank,
                            texture_source_page);
+        if (force_semi_transparent) {
+          setSemiTrans(&primitive, 1);
+        }
         if (!retail_scrim) {
           dynamicallyLight(primitive, positions);
         }

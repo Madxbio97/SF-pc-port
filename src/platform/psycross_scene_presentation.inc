@@ -87,6 +87,13 @@ struct RenderPresentationSnapshot {
   // Native manual aim replaces camera, so packet reprojection must retain
   // this immutable baseline separately.
   game::CameraState guest_packet_camera;
+  // Exact FUN_800cd824/FUN_800cd90c RECT and FUN_800410d0 mode-1 phase.
+  // They are independent retail animations triggered on the same script edge.
+  double presentation_viewport_y{};
+  double presentation_viewport_height{240.0};
+  std::uint8_t interface_mode{1U};
+  double normal_hud_phase{13.0};
+  bool retail_ui_available{};
   game::LegacyEnvironmentBridgeState environment;
   game::LegacyScrimBridgeState scrim;
   bool retail_environment_active{};
@@ -96,6 +103,7 @@ struct RenderPresentationSnapshot {
   // applying a special material during the transition into/out of the scope.
   std::uint8_t optic_mode{};
   bool retail_scope_overlay{};
+  bool retail_virus_scanner_overlay{};
   std::optional<game::LegacyGrenadeTrajectoryBridgeState> grenade_trajectory;
   bool flashlight_enabled{};
   std::vector<game::LegacyVertexLightBridgeState> vertex_lights;
@@ -132,7 +140,6 @@ game::DynamicLightPoint active_dynamic_light_observer;
 std::vector<game::RetailVertexLightState> active_retail_vertex_lights;
 std::int32_t active_retail_light_projection{320};
 bool active_retail_nightvision{};
-bool active_retail_blackout{};
 
 void captureRenderPresentation(const game::GameplaySession &gameplay,
                                RenderPresentationSnapshot &result) {
@@ -142,20 +149,20 @@ void captureRenderPresentation(const game::GameplaySession &gameplay,
   result.guest_packet_camera = result.camera;
   // Keep the last complete retail environment across a transient renderer
   // snapshot gap. A fresh run starts with the value-initialized state below.
+  result.retail_ui_available = false;
   result.scrim = {};
   result.first_person_aim =
       gameplay.playerAim() == game::PlayerAimState::first_person;
   result.optic_mode =
-      !result.first_person_aim
-          ? 0U
-          : gameplay.hud().inventory().current() ==
-                    game::WeaponId::nightvision_rifle
-                ? 3U
-                : gameplay.hud().inventory().current() ==
-                          game::WeaponId::virus_scanner
-                      ? 4U
-                      : 2U;
+      !result.first_person_aim ? 0U
+      : gameplay.hud().inventory().current() ==
+              game::WeaponId::nightvision_rifle
+          ? 3U
+      : gameplay.hud().inventory().current() == game::WeaponId::virus_scanner
+          ? 4U
+          : 2U;
   result.retail_scope_overlay = false;
+  result.retail_virus_scanner_overlay = false;
   result.grenade_trajectory.reset();
   result.flashlight_enabled = false;
   result.vertex_lights.clear();
@@ -190,6 +197,9 @@ void captureRenderPresentation(const game::GameplaySession &gameplay,
         static_cast<double>(guest_camera.target.z),
         guest_camera.projectionForDisplayWidth(screen_width),
     };
+    result.presentation_viewport_y = guest_camera.presentation_viewport_y;
+    result.presentation_viewport_height =
+        guest_camera.presentation_viewport_height;
     result.environment = frame->renderer->state.environment;
     result.scrim = frame->renderer->state.scrim;
     result.flashlight_enabled = frame->renderer->state.flashlight_enabled;
@@ -208,25 +218,28 @@ void captureRenderPresentation(const game::GameplaySession &gameplay,
     result.retail_environment_active = true;
     if (frame->ui) {
       const auto &mission = frame->ui->mission;
+      result.retail_ui_available = true;
+      result.interface_mode = mission.interface_mode;
+      result.normal_hud_phase = mission.normal_hud_phase;
       result.player_guest_slot = mission.player_slot;
       if (result.first_person_aim && mission.first_person_aim_mode != 0U) {
         result.optic_mode = mission.first_person_aim_mode;
       } else if (!result.first_person_aim) {
         result.optic_mode = 0U;
       }
-      result.retail_scope_overlay =
-          result.first_person_aim && ((mission.interface_mode == 2U &&
-                                       mission.first_person_aim_mode == 2U) ||
-                                      (mission.interface_mode == 3U &&
-                                       mission.first_person_aim_mode == 3U));
+      result.retail_scope_overlay = retailRifleScopeOverlayActive(
+          result.first_person_aim, mission.interface_mode,
+          mission.first_person_aim_mode);
+      result.retail_virus_scanner_overlay = retailVirusScannerOverlayActive(
+          result.first_person_aim, mission.interface_mode,
+          mission.first_person_aim_mode);
     }
   }
 }
 
 void applyRetailEnvironment(
     const game::LegacyEnvironmentBridgeState &environment,
-    std::int32_t projection, bool retail_environment_active,
-    bool retail_blackout_mission) {
+    std::int32_t projection, bool retail_environment_active) {
   DRAWENV draw_environment{};
   if (GetDrawEnv(&draw_environment) == nullptr) {
     SetDefDrawEnv(&draw_environment, 0, 0, screen_width, screen_height);
@@ -241,7 +254,7 @@ void applyRetailEnvironment(
   draw_environment.dfe = 1;
   draw_environment.isbg = 1;
   if (retail_environment_active) {
-    const auto clear = environment.nightvision_enabled
+    const auto clear = environment.nightvision_clear_override_enabled
                            ? environment.nightvision_clear_color
                            : environment.clear_color;
     setRGB0(&draw_environment, clear.red, clear.green, clear.blue);
@@ -267,14 +280,6 @@ void applyRetailEnvironment(
   };
   active_retail_nightvision =
       retail_environment_active && environment.nightvision_enabled;
-  // The blackout is authored by the CAVE2 mission package, not by a stable
-  // camera flag. Retail rewrites the display/background flags while changing
-  // rooms and while entering aim mode, so using a momentary renderer snapshot
-  // as the level discriminator makes the ambient darkness disappear. Keep the
-  // immutable mission identity authoritative and use the live state only for
-  // the night-vision override.
-  active_retail_blackout =
-      retail_blackout_mission && !active_retail_nightvision;
 
   if (active_retail_depth_cue.gte_enabled) {
     SetDQA(environment.fog_dqa);
@@ -478,6 +483,30 @@ void interpolateRenderPresentation(const RenderPresentationSnapshot &previous,
   // Camera-list packets belong to the current guest tick and must never be
   // interpolated with the previous packet camera.
   result.guest_packet_camera = current.guest_packet_camera;
+  // Keep FUN_80040b50/FUN_800cd90c authoritative at 20 Hz, but present each
+  // adjacent geometry step at the configured display refresh. Sentinel edges
+  // have identical endpoint geometry, so this adds no extra transition phase.
+  const auto retail_ui = sf::platform::interpolateRetailUiPresentation(
+      sf::platform::RetailUiPresentationSample{
+          .viewport_y = previous.presentation_viewport_y,
+          .viewport_height = previous.presentation_viewport_height,
+          .normal_hud_phase = previous.normal_hud_phase,
+          .interface_mode = previous.interface_mode,
+          .available = previous.retail_ui_available,
+      },
+      sf::platform::RetailUiPresentationSample{
+          .viewport_y = current.presentation_viewport_y,
+          .viewport_height = current.presentation_viewport_height,
+          .normal_hud_phase = current.normal_hud_phase,
+          .interface_mode = current.interface_mode,
+          .available = current.retail_ui_available,
+      },
+      amount);
+  result.presentation_viewport_y = retail_ui.viewport_y;
+  result.presentation_viewport_height = retail_ui.viewport_height;
+  result.interface_mode = retail_ui.interface_mode;
+  result.normal_hud_phase = retail_ui.normal_hud_phase;
+  result.retail_ui_available = retail_ui.available;
   result.environment = current.environment;
   result.scrim = current.scrim;
   if (previous.scrim.visible && previous.scrim.transform_valid &&
@@ -511,6 +540,7 @@ void interpolateRenderPresentation(const RenderPresentationSnapshot &previous,
   result.first_person_aim = current.first_person_aim;
   result.optic_mode = current.optic_mode;
   result.retail_scope_overlay = current.retail_scope_overlay;
+  result.retail_virus_scanner_overlay = current.retail_virus_scanner_overlay;
   result.grenade_trajectory = current.grenade_trajectory;
   result.flashlight_enabled = current.flashlight_enabled;
   result.objects.assign(current.objects.begin(), current.objects.end());
@@ -519,8 +549,10 @@ void interpolateRenderPresentation(const RenderPresentationSnapshot &previous,
   result.player_model_heading = current.player_model_heading;
   result.projectiles.assign(current.projectiles.begin(),
                             current.projectiles.end());
+  sf::platform::interpolateRetailVertexLights(previous.vertex_lights,
+                                              current.vertex_lights, amount,
+                                              result.vertex_lights);
   if (guest_buffers_changed) {
-    result.vertex_lights = current.vertex_lights;
     result.world_vertex_colors = current.world_vertex_colors;
     result.dropped_items = current.dropped_items;
     // These lists are already projected by the retail frame builder and are

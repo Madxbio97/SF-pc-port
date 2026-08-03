@@ -120,6 +120,10 @@ dynamicLightResponseTable() noexcept {
     // inherit the global ambience-volume reduction. Compensate only for the
     // restrained native exposure so the usable beam retains its prior level.
     return {{1.0, 1.0, 1.0}, 2800.0, 0.62};
+  case DynamicLightKind::spotlight:
+    // Its exact vertex light brightens the rotating head. This bounded cone
+    // restores the moving gameplay illumination on the reached world surface.
+    return {{1.0, 1.0, 1.0}, 5200.0, 1.25};
   }
   return {};
 }
@@ -247,7 +251,8 @@ makeTransient(const TransientDynamicLightState &source) noexcept {
 
 [[nodiscard]] std::optional<DynamicLight>
 makeDirectional(const DirectionalDynamicLightState &source) noexcept {
-  if (source.kind != DynamicLightKind::flashlight ||
+  if ((source.kind != DynamicLightKind::flashlight &&
+       source.kind != DynamicLightKind::spotlight) ||
       !source.identity_confirmed || !source.enabled ||
       !finite(source.position) || !finite(source.direction)) {
     return std::nullopt;
@@ -259,6 +264,9 @@ makeDirectional(const DirectionalDynamicLightState &source) noexcept {
     return std::nullopt;
   }
   const auto light_profile = profile(source.kind);
+  const auto spotlight = source.kind == DynamicLightKind::spotlight;
+  const auto inner_cone_cosine = spotlight ? 0.9762960071 : 0.9612616959;
+  const auto outer_cone_cosine = spotlight ? 0.9063077870 : 0.8829475929;
   return DynamicLight{source.kind,
                       source.position,
                       light_profile.color,
@@ -266,8 +274,8 @@ makeDirectional(const DirectionalDynamicLightState &source) noexcept {
                       light_profile.intensity,
                       {source.direction.x / length, source.direction.y / length,
                        source.direction.z / length},
-                      0.9612616959,
-                      0.8829475929,
+                      inner_cone_cosine,
+                      outer_cone_cosine,
                       source.source_id,
                       false,
                       true};
@@ -722,23 +730,23 @@ sampleDynamicLightingImpl(const DynamicLightFrame &frame,
     return result;
   }
   auto normal = DynamicLightPoint{};
+  auto valid_surface_normal = !surface_normal.has_value();
   if (surface_normal) {
-    if (!finite(*surface_normal)) {
-      return result;
-    }
-    const auto length_squared = surface_normal->x * surface_normal->x +
-                                surface_normal->y * surface_normal->y +
-                                surface_normal->z * surface_normal->z;
-    if (!std::isfinite(length_squared) || length_squared <= 0.000000000001) {
-      return result;
-    }
-    if (surface_normal_is_normalized) {
-      normal = *surface_normal;
-    } else {
-      const auto inverse_length = 1.0 / std::sqrt(length_squared);
-      normal = {surface_normal->x * inverse_length,
-                surface_normal->y * inverse_length,
-                surface_normal->z * inverse_length};
+    if (finite(*surface_normal)) {
+      const auto length_squared = surface_normal->x * surface_normal->x +
+                                  surface_normal->y * surface_normal->y +
+                                  surface_normal->z * surface_normal->z;
+      if (std::isfinite(length_squared) && length_squared > 0.000000000001) {
+        valid_surface_normal = true;
+        if (surface_normal_is_normalized) {
+          normal = *surface_normal;
+        } else {
+          const auto inverse_length = 1.0 / std::sqrt(length_squared);
+          normal = {surface_normal->x * inverse_length,
+                    surface_normal->y * inverse_length,
+                    surface_normal->z * inverse_length};
+        }
+      }
     }
   }
   for (const auto &light : frame.active()) {
@@ -779,25 +787,39 @@ sampleDynamicLightingImpl(const DynamicLightFrame &frame,
                      0.0, 1.0);
       attenuation *= cone * cone;
     }
-    if (surface_normal && distance_squared > 0.000000000001) {
-      if (inverse_distance == 0.0) {
-        inverse_distance = 1.0 / std::sqrt(distance_squared);
+    const auto functional_projection =
+        light.directional && (light.kind == DynamicLightKind::flashlight ||
+                              light.kind == DynamicLightKind::spotlight);
+    if (surface_normal && !functional_projection) {
+      if (!valid_surface_normal) {
+        continue;
       }
-      const auto to_light = DynamicLightPoint{
-          (light.position.x - point.x) * inverse_distance,
-          (light.position.y - point.y) * inverse_distance,
-          (light.position.z - point.z) * inverse_distance,
-      };
-      const auto cosine =
-          normal.x * to_light.x + normal.y * to_light.y + normal.z * to_light.z;
-      // Wrapped Lambert lighting prevents low-poly characters from acquiring
-      // razor-sharp black facets, but fully rejects lights behind a surface.
-      const auto surface = std::clamp((cosine + 0.12) / 1.12, 0.0, 1.0);
-      attenuation *= surface * surface * (3.0 - 2.0 * surface);
+      if (distance_squared > 0.000000000001) {
+        if (inverse_distance == 0.0) {
+          inverse_distance = 1.0 / std::sqrt(distance_squared);
+        }
+        const auto to_light = DynamicLightPoint{
+            (light.position.x - point.x) * inverse_distance,
+            (light.position.y - point.y) * inverse_distance,
+            (light.position.z - point.z) * inverse_distance,
+        };
+        const auto cosine = normal.x * to_light.x + normal.y * to_light.y +
+                            normal.z * to_light.z;
+        // Wrapped Lambert lighting prevents low-poly characters from acquiring
+        // razor-sharp black facets, but fully rejects lights behind a surface.
+        const auto surface = std::clamp((cosine + 0.12) / 1.12, 0.0, 1.0);
+        attenuation *= surface * surface * (3.0 - 2.0 * surface);
+      }
     }
-    result.red += light.color.red * attenuation;
-    result.green += light.color.green * attenuation;
-    result.blue += light.color.blue * attenuation;
+    if (functional_projection) {
+      result.functional_red += light.color.red * attenuation;
+      result.functional_green += light.color.green * attenuation;
+      result.functional_blue += light.color.blue * attenuation;
+    } else {
+      result.red += light.color.red * attenuation;
+      result.green += light.color.green * attenuation;
+      result.blue += light.color.blue * attenuation;
+    }
   }
   // Keep irradiance linear here. A hard per-channel ceiling made every
   // sufficiently crowded light volume converge to the same flat value and
@@ -1151,7 +1173,12 @@ applyDynamicLighting(DynamicLightVertexColor base,
                      DynamicLightModulation modulation) noexcept {
   if (!std::isfinite(modulation.red) || !std::isfinite(modulation.green) ||
       !std::isfinite(modulation.blue) || modulation.red < 0.0 ||
-      modulation.green < 0.0 || modulation.blue < 0.0) {
+      modulation.green < 0.0 || modulation.blue < 0.0 ||
+      !std::isfinite(modulation.functional_red) ||
+      !std::isfinite(modulation.functional_green) ||
+      !std::isfinite(modulation.functional_blue) ||
+      modulation.functional_red < 0.0 || modulation.functional_green < 0.0 ||
+      modulation.functional_blue < 0.0) {
     return base;
   }
 
@@ -1180,19 +1207,27 @@ applyDynamicLighting(DynamicLightVertexColor base,
                                 256.0;
   const auto authored_exposure =
       std::clamp(retail_luminance / neutral_retail_luminance, 0.0, 1.0);
-  const auto apply = [authored_exposure](std::uint8_t value, double amount) {
+  const auto add = [](std::uint8_t value, double amount, double exposure) {
     if (amount <= 0.0 || value == 255U) {
       return value;
     }
     const auto response = dynamicLightResponse(amount);
     const auto headroom = 255.0 - static_cast<double>(value);
-    const auto delta = static_cast<unsigned>(
-        std::floor(headroom * response * authored_exposure));
+    const auto delta =
+        static_cast<unsigned>(std::floor(headroom * response * exposure));
     return static_cast<std::uint8_t>(static_cast<unsigned>(value) + delta);
   };
-  return DynamicLightVertexColor{apply(graded_base.red, modulation.red),
-                                 apply(graded_base.green, modulation.green),
-                                 apply(graded_base.blue, modulation.blue)};
+  const auto apply = [&](std::uint8_t value, double ambient,
+                         double functional) {
+    // Ambient/native scene sources retain the retail-authored darkness mask.
+    // Functional projector rays are then composed against the remaining
+    // headroom without that mask, so black walls and floors can be revealed.
+    return add(add(value, ambient, authored_exposure), functional, 1.0);
+  };
+  return DynamicLightVertexColor{
+      apply(graded_base.red, modulation.red, modulation.functional_red),
+      apply(graded_base.green, modulation.green, modulation.functional_green),
+      apply(graded_base.blue, modulation.blue, modulation.functional_blue)};
 }
 
 std::optional<RetailVertexLightRay>
@@ -1252,129 +1287,6 @@ applyRetailVertexLighting(DynamicLightVertexColor base,
   return DynamicLightVertexColor{static_cast<std::uint8_t>(lit),
                                  static_cast<std::uint8_t>(lit >> 8U),
                                  static_cast<std::uint8_t>(lit >> 16U)};
-}
-
-bool dynamicLightSegmentIntersectsBounds(
-    DynamicLightPoint origin, DynamicLightPoint direction,
-    double maximum_distance, const DynamicLightBounds &bounds) noexcept {
-  if (!finite(origin) || !finite(direction) || !finite(bounds.minimum) ||
-      !finite(bounds.maximum) || !std::isfinite(maximum_distance) ||
-      maximum_distance <= 0.0 || bounds.minimum.x > bounds.maximum.x ||
-      bounds.minimum.y > bounds.maximum.y ||
-      bounds.minimum.z > bounds.maximum.z) {
-    return false;
-  }
-  const auto direction_length =
-      std::sqrt(direction.x * direction.x + direction.y * direction.y +
-                direction.z * direction.z);
-  if (!std::isfinite(direction_length) || direction_length <= 0.000001) {
-    return false;
-  }
-  direction = {direction.x / direction_length, direction.y / direction_length,
-               direction.z / direction_length};
-  auto nearest = 0.0;
-  auto farthest = maximum_distance;
-  const auto intersect_axis = [&](double ray_origin, double ray_direction,
-                                  double minimum, double maximum) {
-    if (std::abs(ray_direction) <= 0.000001) {
-      return ray_origin >= minimum && ray_origin <= maximum;
-    }
-    auto first = (minimum - ray_origin) / ray_direction;
-    auto second = (maximum - ray_origin) / ray_direction;
-    if (first > second) {
-      std::swap(first, second);
-    }
-    nearest = std::max(nearest, first);
-    farthest = std::min(farthest, second);
-    return nearest <= farthest;
-  };
-  return intersect_axis(origin.x, direction.x, bounds.minimum.x,
-                        bounds.maximum.x) &&
-         intersect_axis(origin.y, direction.y, bounds.minimum.y,
-                        bounds.maximum.y) &&
-         intersect_axis(origin.z, direction.z, bounds.minimum.z,
-                        bounds.maximum.z);
-}
-
-std::optional<DynamicLightSurfaceHit>
-dynamicLightSurfaceHit(DynamicLightPoint origin, DynamicLightPoint direction,
-                       const DynamicLightSurfaceTriangle &triangle,
-                       double maximum_distance) noexcept {
-  if (!finite(origin) || !finite(direction) || !finite(triangle.first) ||
-      !finite(triangle.second) || !finite(triangle.third) ||
-      !std::isfinite(maximum_distance) || maximum_distance <= 0.0) {
-    return std::nullopt;
-  }
-  const auto direction_length =
-      std::sqrt(direction.x * direction.x + direction.y * direction.y +
-                direction.z * direction.z);
-  if (!std::isfinite(direction_length) || direction_length <= 0.000001) {
-    return std::nullopt;
-  }
-  direction = {direction.x / direction_length, direction.y / direction_length,
-               direction.z / direction_length};
-  const auto edge1 = DynamicLightPoint{
-      triangle.second.x - triangle.first.x,
-      triangle.second.y - triangle.first.y,
-      triangle.second.z - triangle.first.z,
-  };
-  const auto edge2 = DynamicLightPoint{
-      triangle.third.x - triangle.first.x,
-      triangle.third.y - triangle.first.y,
-      triangle.third.z - triangle.first.z,
-  };
-  const auto cross = [](DynamicLightPoint first, DynamicLightPoint second) {
-    return DynamicLightPoint{
-        first.y * second.z - first.z * second.y,
-        first.z * second.x - first.x * second.z,
-        first.x * second.y - first.y * second.x,
-    };
-  };
-  const auto dot = [](DynamicLightPoint first, DynamicLightPoint second) {
-    return first.x * second.x + first.y * second.y + first.z * second.z;
-  };
-  const auto perpendicular = cross(direction, edge2);
-  const auto determinant = dot(edge1, perpendicular);
-  if (!std::isfinite(determinant) || std::abs(determinant) <= 0.0000001) {
-    return std::nullopt;
-  }
-  const auto inverse_determinant = 1.0 / determinant;
-  const auto from_first = DynamicLightPoint{
-      origin.x - triangle.first.x,
-      origin.y - triangle.first.y,
-      origin.z - triangle.first.z,
-  };
-  const auto u = dot(from_first, perpendicular) * inverse_determinant;
-  if (u < 0.0 || u > 1.0) {
-    return std::nullopt;
-  }
-  const auto side = cross(from_first, edge1);
-  const auto v = dot(direction, side) * inverse_determinant;
-  if (v < 0.0 || u + v > 1.0) {
-    return std::nullopt;
-  }
-  const auto distance = dot(edge2, side) * inverse_determinant;
-  if (!std::isfinite(distance) || distance <= 0.5 ||
-      distance > maximum_distance) {
-    return std::nullopt;
-  }
-  auto normal = cross(edge1, edge2);
-  const auto normal_length = std::sqrt(
-      normal.x * normal.x + normal.y * normal.y + normal.z * normal.z);
-  if (!std::isfinite(normal_length) || normal_length <= 0.000001) {
-    return std::nullopt;
-  }
-  normal = {normal.x / normal_length, normal.y / normal_length,
-            normal.z / normal_length};
-  if (dot(normal, direction) > 0.0) {
-    normal = {-normal.x, -normal.y, -normal.z};
-  }
-  return DynamicLightSurfaceHit{
-      {origin.x + direction.x * distance, origin.y + direction.y * distance,
-       origin.z + direction.z * distance},
-      normal,
-      distance,
-  };
 }
 
 } // namespace sf::game

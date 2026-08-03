@@ -325,6 +325,12 @@ struct LegacyGuestSpriteBridgeState {
   std::int16_t scale_y{};
   std::int32_t rotation{};
   std::uint32_t ordering_depth{};
+  // Sprites can come from either the world-camera renderer or the independent
+  // interface renderer. Preserve the exact renderer-wide GsSortSprite mode.
+  bool renderer_fast_path{};
+  // FUN_80040ba8 owns thirteen SCP-bearing sprites in the interface list.
+  // This provenance lets only that authored scope UI survive native aim.
+  bool retail_scope_overlay{};
   // FUN_800540dc embeds this GsSPRITE at particle+0x28. Provenance is
   // populated only when that exact pool identity and controller chain are
   // coherent; non-particle sprites remain -1/0/0.
@@ -394,6 +400,27 @@ legacyGuestSpriteSortTransform(const LegacyGuestSpriteBridgeState &sprite,
   };
 }
 
+inline constexpr std::uint32_t legacy_retail_scope_sprite_stride = 0x2cU;
+inline constexpr std::uint32_t legacy_retail_scope_vertical_sprite_count = 5U;
+inline constexpr std::uint32_t legacy_retail_scope_horizontal_sprite_count =
+    8U;
+
+[[nodiscard]] constexpr bool legacyGuestSpriteIsRetailScopeOverlayAddress(
+    std::uint32_t source, std::uint32_t vertical_begin,
+    std::uint32_t horizontal_begin) noexcept {
+  const auto in_array = [source](std::uint32_t begin, std::uint32_t count) {
+    if (begin == 0U || source < begin) {
+      return false;
+    }
+    const auto delta = source - begin;
+    return delta % legacy_retail_scope_sprite_stride == 0U &&
+           delta / legacy_retail_scope_sprite_stride < count;
+  };
+  return in_array(vertical_begin, legacy_retail_scope_vertical_sprite_count) ||
+         in_array(horizontal_begin,
+                  legacy_retail_scope_horizontal_sprite_count);
+}
+
 struct LegacyGuestLineBridgeState {
   std::uint32_t attribute{};
   LegacyProjectedPointBridgeState first;
@@ -434,18 +461,58 @@ struct LegacyGuestRawPacketBridgeState {
   LegacyNativePoint effect_position;
 };
 
+struct LegacyGuestRawPacketAddressRange {
+  std::uint32_t begin{};
+  std::uint32_t stride{};
+  std::uint32_t count{};
+
+  [[nodiscard]] constexpr bool contains(std::uint32_t source) const noexcept {
+    return stride != 0U && source >= begin &&
+           source < begin + stride * count &&
+           (source - begin) % stride == 0U;
+  }
+};
+
+// Fixed INTERFACE raw arrays used by FUN_80041830/FUN_800426a0 and the
+// viral-detector controller. Only linked entries are active in a frame.
+inline constexpr LegacyGuestRawPacketAddressRange
+    legacy_retail_scope_line_packets{0x8011c138U, 0x18U, 26U};
+inline constexpr LegacyGuestRawPacketAddressRange
+    legacy_retail_scope_quad_packets{0x8011c498U, 0x24U, 16U};
+inline constexpr LegacyGuestRawPacketAddressRange
+    legacy_retail_scope_triangle_packets{0x8011c840U, 0x1cU, 2U};
+inline constexpr LegacyGuestRawPacketAddressRange
+    legacy_virus_scanner_line_packets{0x8011c138U, 0x18U, 28U};
+inline constexpr LegacyGuestRawPacketAddressRange
+    legacy_virus_scanner_target_dot_packets{0x80135df8U, 0x24U, 1U};
+inline constexpr std::array<LegacyGuestRawPacketAddressRange, 4U>
+    legacy_fixed_retail_optic_packet_ranges{
+        legacy_virus_scanner_line_packets,
+        legacy_retail_scope_quad_packets,
+        legacy_retail_scope_triangle_packets,
+        legacy_virus_scanner_target_dot_packets,
+    };
+
 [[nodiscard]] constexpr bool legacyGuestRawPacketIsRetailScopeOverlay(
     const LegacyGuestRawPacketBridgeState &packet) noexcept {
-  const auto in_array = [source = packet.source_address](std::uint32_t begin,
-                                                         std::uint32_t stride,
-                                                         std::uint32_t count) {
-    return source >= begin && source < begin + stride * count &&
-           (source - begin) % stride == 0U;
-  };
   // FUN_80041830/FUN_800426a0 share these fixed raw-packet arrays. Their
   // active counts differ by optic, but these are the complete retail bounds.
-  return in_array(0x8011c138U, 0x18U, 26U) ||
-         in_array(0x8011c498U, 0x24U, 16U) || in_array(0x8011c840U, 0x1cU, 2U);
+  return legacy_retail_scope_line_packets.contains(packet.source_address) ||
+         legacy_retail_scope_quad_packets.contains(packet.source_address) ||
+         legacy_retail_scope_triangle_packets.contains(packet.source_address);
+}
+
+[[nodiscard]] constexpr bool legacyGuestRawPacketIsVirusScannerOverlay(
+    const LegacyGuestRawPacketBridgeState &packet) noexcept {
+  return legacy_virus_scanner_line_packets.contains(packet.source_address) ||
+         legacy_virus_scanner_target_dot_packets.contains(
+             packet.source_address);
+}
+
+[[nodiscard]] constexpr bool legacyGuestRawPacketIsRetailOpticOverlay(
+    const LegacyGuestRawPacketBridgeState &packet) noexcept {
+  return legacyGuestRawPacketIsRetailScopeOverlay(packet) ||
+         legacyGuestRawPacketIsVirusScannerOverlay(packet);
 }
 
 [[nodiscard]] constexpr bool legacyGuestSpriteUsesWorldDepth(
@@ -691,6 +758,9 @@ struct LegacyEnvironmentBridgeState {
   bool renderer_darkness_enabled{};
   bool screen_filter_enabled{};
   bool nightvision_enabled{};
+  // Retail overrides ClearImage only for the alternate HMD colour. Green SVD
+  // keeps the camera's authored clear and receives its cast from the TILE.
+  bool nightvision_clear_override_enabled{};
   bool background_enabled{};
 
   static constexpr std::uint32_t renderer_darkness_depth_cue = 0x00040100U;
@@ -922,6 +992,9 @@ struct LegacyMissionBridgeState {
   std::int32_t weapon_menu_state{-5};
   bool weapon_menu_dirty{};
   std::uint8_t interface_mode{};
+  // FUN_800410d0 advances the normal gameplay HUD through this exact retail
+  // phase: -1 is detached, 0..12 are authored geometry, and 13 is settled.
+  std::int32_t normal_hud_phase{13};
   std::uint8_t first_person_aim_mode{};
   std::int32_t scope_zoom_raw{};
   bool weapon_menu_controller_ready{};

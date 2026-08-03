@@ -174,6 +174,9 @@ struct OriginalRadarGeometry {
 // that arithmetic outside the renderer so startup and reset use one path.
 [[nodiscard]] OriginalRadarGeometry
 originalRadarGeometry(std::uint8_t reveal_frame) noexcept;
+// Blends adjacent exact retail geometries for display-rate presentation.
+[[nodiscard]] OriginalRadarGeometry
+originalRadarPresentationGeometry(double reveal_phase) noexcept;
 
 [[nodiscard]] const WeaponDefinition *tryWeaponDefinition(WeaponId id) noexcept;
 [[nodiscard]] const WeaponDefinition &weaponDefinition(WeaponId id);

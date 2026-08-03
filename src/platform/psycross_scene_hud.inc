@@ -129,7 +129,9 @@ void drawMapFade(std::uint8_t intensity) {
 void drawHudSpriteAtResident(const assets::TimImage &image,
                              std::uint16_t resident_x, std::uint16_t resident_y,
                              int x, int y, std::uint8_t brightness = 128U,
-                             bool raw_texture = false) {
+                             bool raw_texture = false,
+                             bool semi_transparent = false,
+                             int blend_material = 0) {
   const auto page_x =
       static_cast<int>(resident_x & static_cast<std::uint16_t>(~63U));
   const auto page_y =
@@ -144,7 +146,8 @@ void drawHudSpriteAtResident(const assets::TimImage &image,
   const auto width = static_cast<int>(image.displayWidth());
   const auto height = static_cast<int>(image.displayHeight());
   const auto texture_page =
-      GetTPage(texturePageMode(image.mode()), 0, page_x, page_y);
+      GetTPage(texturePageMode(image.mode()),
+               semi_transparent ? blend_material : 0, page_x, page_y);
 
   DR_TPAGE page{};
   SetDrawTPage(&page, 1, 0, texture_page);
@@ -155,6 +158,7 @@ void drawHudSpriteAtResident(const assets::TimImage &image,
   POLY_FT4 polygon{};
   setPolyFT4(&polygon);
   polygon.tpage = texture_page;
+  setSemiTrans(&polygon, semi_transparent ? 1 : 0);
   polygon.clut = GetClut(hud_resident_clut_x, hud_resident_clut_y);
   setShadeTex(&polygon, raw_texture ? 1 : 0);
   setRGB0(&polygon, brightness, brightness, brightness);
@@ -173,9 +177,12 @@ void drawHudSpriteAtResident(const assets::TimImage &image,
 }
 
 void drawHudSprite(const assets::TimImage &image, int x, int y,
-                   std::uint8_t brightness = 128U, bool raw_texture = false) {
+                   std::uint8_t brightness = 128U, bool raw_texture = false,
+                   bool semi_transparent = false,
+                   int blend_material = 0) {
   drawHudSpriteAtResident(image, hudResidentX(image.pixels().x),
-                          image.pixels().y, x, y, brightness, raw_texture);
+                          image.pixels().y, x, y, brightness, raw_texture,
+                          semi_transparent, blend_material);
 }
 
 void drawHudSpriteScaled(const assets::TimImage &image, float x, float y,
@@ -1071,13 +1078,18 @@ void drawOriginalStatusBar(int y, std::uint8_t value, std::uint8_t reveal,
   }
 }
 
-void drawOriginalStatusScale(int offset_x, int offset_y) {
+void drawOriginalStatusScale(int offset_x, int offset_y, double reveal_phase) {
   constexpr auto red = std::uint8_t{107U};
   constexpr auto green = std::uint8_t{126U};
   constexpr auto blue = std::uint8_t{231U};
-  drawSolidRect(10 + offset_x, 26 + offset_y, 1, 31, red, green, blue);
+  const auto reveal_height = static_cast<int>(
+      std::lround(sf::platform::retailHudInterpolatedExtent(reveal_phase, 30)));
+  drawSolidRect(10 + offset_x, 26 + offset_y, 1, reveal_height + 1, red, green,
+                blue);
   for (const auto y : {26, 41, 56}) {
-    drawSolidRect(11 + offset_x, y + offset_y, 4, 1, red, green, blue);
+    if (y <= 26 + reveal_height) {
+      drawSolidRect(11 + offset_x, y + offset_y, 4, 1, red, green, blue);
+    }
   }
 }
 
@@ -1345,13 +1357,18 @@ void drawOriginalSniperScope(const HudTextureAtlas &textures,
   const auto center_y = screen_height / 2 + offset_y;
   const auto geometry = game::originalAimReticleGeometry(head_target);
 
-  // The target box/crosshair is already the exact FUN_80041830 raw packet
-  // stream. This native layer supplies only authored TIM assets which cannot
-  // yet be relocated losslessly from guest VRAM.
+  // Retail GsSPRITE 0x80119d94 uses attribute 0x51000000, tpage 0x000c and
+  // RGB 64. Bit 30 enables semitransparency, bit 28 selects ABR 1 and bit 24
+  // selects indexed-8. Every visible SCOPED.TIM palette entry carries STP,
+  // producing the authored soft material around the centre sight. Drawing it
+  // opaque loses that effect completely.
   const auto &scope = textures.image("SCOPED.TIM");
   drawHudSprite(scope, center_x - static_cast<int>(scope.displayWidth()) / 2,
-                center_y - static_cast<int>(scope.displayHeight()) / 2);
+                center_y - static_cast<int>(scope.displayHeight()) / 2, 64U,
+                false, true, 1);
 
+  // The target box/crosshair itself remains the exact FUN_80041830 packet
+  // stream; this native layer supplies only the authored TIM material.
   // FUN_80040ba8 creates a five-label vertical wrap beside the target box
   // and keeps all eight authored bearings on the horizontal compass tape.
   constexpr std::array<std::string_view, 5> vertical_bearings{
@@ -1716,23 +1733,23 @@ void drawGameplayHud(const HudTextureAtlas &textures,
                      bool first_person_aim, std::int32_t aim_heading,
                      double presented_weapon_switch_frames,
                      double presentation_delta_seconds, int offset_x,
-                     int offset_y, double visibility,
+                     int offset_y, double visibility, double normal_hud_phase,
                      GameplayHudScratch &scratch) {
   const auto &hud = gameplay.hud();
+  const auto &definition = hud.inventory().currentDefinition();
   const auto hud_visibility = std::clamp(visibility, 0.0, 1.0);
-  const auto hidden = 1.0 - hud_visibility;
-  const auto top_offset_y =
-      offset_y - static_cast<int>(std::lround(hidden * 72.0));
-  const auto radar_offset_x =
-      offset_x - static_cast<int>(std::lround(hidden * 96.0));
-  const auto radar_offset_y =
-      offset_y + static_cast<int>(std::lround(hidden * 56.0));
-  const auto weapon_offset_x =
-      offset_x + static_cast<int>(std::lround(hidden * 140.0));
-  const auto weapon_offset_y =
-      offset_y + static_cast<int>(std::lround(hidden * 56.0));
+  constexpr auto maximum_phase = 12.0;
+  const auto retail_hud_phase =
+      std::clamp(normal_hud_phase, 0.0, maximum_phase);
+  const auto top_offset_y = offset_y;
+  const auto radar_offset_x = offset_x;
+  const auto radar_offset_y = offset_y;
+  const auto weapon_offset_x = offset_x;
+  const auto weapon_offset_y = offset_y;
   const auto message_offset_y =
-      offset_y + static_cast<int>(std::lround(hidden * screen_height));
+      offset_y + static_cast<int>(std::lround(
+                     80.0 - sf::platform::retailHudInterpolatedExtent(
+                                retail_hud_phase, 80)));
   const auto target_locked = gameplay.targetLocked();
   const auto project_anchor =
       [&camera, offset_x,
@@ -1775,111 +1792,113 @@ void drawGameplayHud(const HudTextureAtlas &textures,
   GR_SetBlendMode(BM_NONE);
   GR_EnableDepth(0);
 
-  // Retail uses its FONTA/B/C text layer here. ARMOR.TIM is a green legacy
-  // image and is not the white in-game label seen above the lavender bar.
-  const auto primary_status = game::localizeTextCopy(
-      game::originalPrimaryStatusLabel(hud.primaryStatus()));
-  drawOriginalHudTextSolid(textures, primary_status, 20 + offset_x,
-                           18 + top_offset_y);
-  const auto health_color = hud.healthBarColor();
-  drawOriginalStatusBar(26, hud.displayedPrimaryTrail(), hud.primaryReveal(),
-                        health_color.red, health_color.green, health_color.blue,
-                        offset_x, top_offset_y);
-  drawOriginalStatusBar(26, hud.displayedPrimaryBar(), hud.primaryReveal(),
-                        150U, 150U, 255U, offset_x, top_offset_y);
+  if (hud_visibility > 0.0) {
+    // Retail uses its FONTA/B/C text layer here. ARMOR.TIM is a green legacy
+    // image and is not the white in-game label seen above the lavender bar.
+    const auto primary_status = game::localizeTextCopy(
+        game::originalPrimaryStatusLabel(hud.primaryStatus()));
+    drawOriginalHudTextSolid(textures, primary_status, 20 + offset_x,
+                             18 + top_offset_y);
+    const auto health_color = hud.healthBarColor();
+    drawOriginalStatusBar(26, hud.displayedPrimaryTrail(), hud.primaryReveal(),
+                          health_color.red, health_color.green,
+                          health_color.blue, offset_x, top_offset_y);
+    drawOriginalStatusBar(26, hud.displayedPrimaryBar(), hud.primaryReveal(),
+                          150U, 150U, 255U, offset_x, top_offset_y);
 
-  if (hud.dangerReveal() != 0U) {
-    const auto danger = game::localizeTextCopy("DANGER");
-    drawOriginalHudTextSolid(textures, danger, 20 + offset_x,
-                             33 + top_offset_y);
-    auto red = std::uint8_t{255U};
-    auto green = std::uint8_t{100U};
-    auto blue = std::uint8_t{100U};
-    if (hud.dangerCritical()) {
-      const auto phase = static_cast<double>(hud.tick() & 15U) *
-                         (2.0 * std::numbers::pi / 16.0);
-      red = static_cast<std::uint8_t>(
-          std::lround((std::cos(phase) + 1.0) * 127.5));
-      green = 0U;
-      blue = 0U;
-    }
-    drawOriginalStatusBar(41, hud.displayedDangerBar(), hud.dangerReveal(), red,
-                          green, blue, offset_x, top_offset_y);
-  }
-
-  if (hud.targetReveal() != 0U) {
-    const auto target = game::localizeTextCopy("TARGET");
-    drawOriginalHudTextSolid(textures, target, 20 + offset_x,
-                             48 + top_offset_y);
-    drawOriginalStatusBar(56, hud.displayedTargetBar(), hud.targetReveal(),
-                          100U, 255U, 100U, offset_x, top_offset_y);
-  }
-
-  drawOriginalStatusScale(offset_x, top_offset_y);
-
-  // Commit the status layer before the radar switches to average blending.
-  // This also makes the ARMOR/HEALTH label independent of radar visibility.
-  DrawSync(0);
-  drawOriginalRadar(gameplay, game::originalRadarGeometry(hud.revealFrame()),
-                    aim_heading, radar_offset_x, radar_offset_y);
-  drawOriginalWeaponMenu(textures, hud, weapon_offset_x, weapon_offset_y);
-
-  const auto &definition = hud.inventory().currentDefinition();
-  const auto reveal_remaining =
-      static_cast<int>(game::GameplayHud::reveal_duration) -
-      static_cast<int>(hud.revealFrame());
-  const auto reveal_slide =
-      reveal_remaining * 271 /
-      static_cast<int>(game::GameplayHud::reveal_duration);
-  // The authoritative countdown advances at the retail 20 Hz. Its native
-  // slide is presentation-only, so retain fractional frames and sub-pixel
-  // coordinates between guest updates instead of snapping by five pixels.
-  const auto switch_slide =
-      std::clamp(
-          presented_weapon_switch_frames, 0.0,
-          static_cast<double>(game::GameplayHud::weapon_switch_duration)) *
-      98.0 / static_cast<double>(game::GameplayHud::weapon_switch_duration);
-  const auto horizontal_slide =
-      static_cast<float>(static_cast<double>(reveal_slide) + switch_slide);
-  const auto icon_layers = definition.icon.layers();
-  if (!icon_layers.empty()) {
-    std::array<int, game::maximum_weapon_icon_layers> widths{};
-    std::array<int, game::maximum_weapon_icon_layers> heights{};
-    for (std::size_t index = 0; index < icon_layers.size(); ++index) {
-      const auto &image = textures.image(icon_layers[index]);
-      widths[index] = static_cast<int>(image.displayWidth());
-      heights[index] = static_cast<int>(image.displayHeight());
+    if (hud.dangerReveal() != 0U) {
+      const auto danger = game::localizeTextCopy("DANGER");
+      drawOriginalHudTextSolid(textures, danger, 20 + offset_x,
+                               33 + top_offset_y);
+      auto red = std::uint8_t{255U};
+      auto green = std::uint8_t{100U};
+      auto blue = std::uint8_t{100U};
+      if (hud.dangerCritical()) {
+        const auto phase = static_cast<double>(hud.tick() & 15U) *
+                           (2.0 * std::numbers::pi / 16.0);
+        red = static_cast<std::uint8_t>(
+            std::lround((std::cos(phase) + 1.0) * 127.5));
+        green = 0U;
+        blue = 0U;
+      }
+      drawOriginalStatusBar(41, hud.displayedDangerBar(), hud.dangerReveal(),
+                            red, green, blue, offset_x, top_offset_y);
     }
 
-    // Native SPRT x/y values are layer centres, not top-left corners.
-    // Converting the centre anchor here lifts the silhouette above the
-    // ammunition line and restores the intended negative space around it.
-    const auto icon_offsets = game::originalWeaponIconOffsets(
-        std::span<const int>{widths.data(), icon_layers.size()});
-    constexpr float icon_origin_x = static_cast<float>(screen_width / 2 + 133);
-    constexpr float icon_origin_y = static_cast<float>(screen_height / 2 + 91);
-    for (std::size_t index = 0; index < icon_layers.size(); ++index) {
-      const auto &image = textures.image(icon_layers[index]);
-      drawHudSpriteScaled(image,
-                          icon_origin_x + static_cast<float>(weapon_offset_x) +
-                              horizontal_slide +
-                              static_cast<float>(icon_offsets[index]),
-                          icon_origin_y + static_cast<float>(weapon_offset_y) -
-                              static_cast<float>(heights[index]) * 0.5F,
-                          static_cast<float>(widths[index]),
-                          static_cast<float>(heights[index]), 128U, true);
+    if (hud.targetReveal() != 0U) {
+      const auto target = game::localizeTextCopy("TARGET");
+      drawOriginalHudTextSolid(textures, target, 20 + offset_x,
+                               48 + top_offset_y);
+      drawOriginalStatusBar(56, hud.displayedTargetBar(), hud.targetReveal(),
+                            100U, 255U, 100U, offset_x, top_offset_y);
     }
-  }
-  if (definition.shows_ammo) {
-    const auto &weapon = hud.inventory().currentState();
-    const auto ammo = game::originalAmmoText(definition, weapon);
-    // FUN_800410d0 supplies a left text origin, not a centre point.
-    constexpr float ammo_x = static_cast<float>(screen_width / 2 + 118);
-    constexpr float ammo_y = static_cast<float>(screen_height / 2 + 94);
-    drawOriginalHudTextSubpixel(textures, ammo,
-                                ammo_x + static_cast<float>(weapon_offset_x) +
-                                    horizontal_slide,
-                                ammo_y + static_cast<float>(weapon_offset_y));
+
+    drawOriginalStatusScale(offset_x, top_offset_y, retail_hud_phase);
+
+    // Commit the status layer before the radar switches to average blending.
+    // This also makes the ARMOR/HEALTH label independent of radar visibility.
+    DrawSync(0);
+    drawOriginalRadar(gameplay,
+                      game::originalRadarPresentationGeometry(retail_hud_phase),
+                      aim_heading, radar_offset_x, radar_offset_y);
+    drawOriginalWeaponMenu(textures, hud, weapon_offset_x, weapon_offset_y);
+
+    // FUN_800410d0 moves all 23 weapon sprites from x=404 to x=133 and the
+    // ammunition TEXT from x=389 to x=118 using this exact integer division.
+    const auto reveal_slide = 271.0 - sf::platform::retailHudInterpolatedExtent(
+                                          retail_hud_phase, 271);
+    // The authoritative countdown advances at the retail 20 Hz. Its native
+    // slide is presentation-only, so retain fractional frames and sub-pixel
+    // coordinates between guest updates instead of snapping by five pixels.
+    const auto switch_slide =
+        std::clamp(
+            presented_weapon_switch_frames, 0.0,
+            static_cast<double>(game::GameplayHud::weapon_switch_duration)) *
+        98.0 / static_cast<double>(game::GameplayHud::weapon_switch_duration);
+    const auto horizontal_slide =
+        static_cast<float>(static_cast<double>(reveal_slide) + switch_slide);
+    const auto icon_layers = definition.icon.layers();
+    if (!icon_layers.empty()) {
+      std::array<int, game::maximum_weapon_icon_layers> widths{};
+      std::array<int, game::maximum_weapon_icon_layers> heights{};
+      for (std::size_t index = 0; index < icon_layers.size(); ++index) {
+        const auto &image = textures.image(icon_layers[index]);
+        widths[index] = static_cast<int>(image.displayWidth());
+        heights[index] = static_cast<int>(image.displayHeight());
+      }
+
+      // Native SPRT x/y values are layer centres, not top-left corners.
+      // Converting the centre anchor here lifts the silhouette above the
+      // ammunition line and restores the intended negative space around it.
+      const auto icon_offsets = game::originalWeaponIconOffsets(
+          std::span<const int>{widths.data(), icon_layers.size()});
+      constexpr float icon_origin_x =
+          static_cast<float>(screen_width / 2 + 133);
+      constexpr float icon_origin_y =
+          static_cast<float>(screen_height / 2 + 91);
+      for (std::size_t index = 0; index < icon_layers.size(); ++index) {
+        const auto &image = textures.image(icon_layers[index]);
+        drawHudSpriteScaled(
+            image,
+            icon_origin_x + static_cast<float>(weapon_offset_x) +
+                horizontal_slide + static_cast<float>(icon_offsets[index]),
+            icon_origin_y + static_cast<float>(weapon_offset_y) -
+                static_cast<float>(heights[index]) * 0.5F,
+            static_cast<float>(widths[index]),
+            static_cast<float>(heights[index]), 128U, true);
+      }
+    }
+    if (definition.shows_ammo) {
+      const auto &weapon = hud.inventory().currentState();
+      const auto ammo = game::originalAmmoText(definition, weapon);
+      // FUN_800410d0 supplies a left text origin, not a centre point.
+      constexpr float ammo_x = static_cast<float>(screen_width / 2 + 118);
+      constexpr float ammo_y = static_cast<float>(screen_height / 2 + 94);
+      drawOriginalHudTextSubpixel(textures, ammo,
+                                  ammo_x + static_cast<float>(weapon_offset_x) +
+                                      horizontal_slide,
+                                  ammo_y + static_cast<float>(weapon_offset_y));
+    }
   }
   const auto weapon = hud.inventory().current();
   const auto thrown = weapon == game::WeaponId::fragmentation_grenade ||
@@ -1887,10 +1906,13 @@ void drawGameplayHud(const HudTextureAtlas &textures,
   const auto scoped =
       first_person_aim && (weapon == game::WeaponId::nightvision_rifle ||
                            weapon == game::WeaponId::sniper_rifle);
+  const auto scanner_optic =
+      first_person_aim && weapon == game::WeaponId::virus_scanner;
+  const auto authored_optic = scoped || scanner_optic;
   const auto retail_optic_text =
       first_person_aim && usesRetailEnglishOpticText(weapon);
   const auto reticle_requested =
-      (first_person_aim || target_locked) && !thrown && !scoped;
+      (first_person_aim || target_locked) && !thrown && !authored_optic;
   if (reticle_requested != scratch.reticle_was_visible) {
     scratch.reticle_was_visible = reticle_requested;
     scratch.reticle_reveal = reticle_requested ? 0.0 : 1.0;
@@ -1914,7 +1936,7 @@ void drawGameplayHud(const HudTextureAtlas &textures,
     DrawSync(0);
     GR_SetBlendMode(BM_NONE);
     GR_EnableDepth(0);
-    if (!scoped) {
+    if (!authored_optic) {
       auto center_x = screen_width / 2 + offset_x;
       auto center_y = screen_height / 2 + offset_y;
       auto reticle_visible = first_person_aim;
@@ -2084,7 +2106,7 @@ void drawGameplayHud(const HudTextureAtlas &textures,
       // Scope labels are completed retail FONT/TEXT packets. Draw their exact
       // original UVs through the untouched SCUS font atlas instead of the ViT
       // Cyrillic replacement, preserving wording, reveal animation and layout.
-      drawRetailUiGlyphs(textures, message.glyphs, offset_x, message_offset_y,
+      drawRetailUiGlyphs(textures, message.glyphs, offset_x, offset_y,
                          textures.retailEnglishFont());
     } else if (message_layouts[index]) {
       drawGameplayMessage(textures, message, *message_layouts[index]);

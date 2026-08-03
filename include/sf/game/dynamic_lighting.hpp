@@ -39,6 +39,7 @@ enum class DynamicLightKind : std::uint8_t {
   muzzle_flash,
   explosion,
   flashlight,
+  spotlight,
 };
 
 // Persistent sources are created only after the renderer has positively
@@ -121,6 +122,13 @@ struct DynamicLightModulation {
   double red{};
   double green{};
   double blue{};
+  // Retail-derived equipment/projector rays are functional illumination, not
+  // ambient scene fill. Keep them separate so final composition can reveal an
+  // authored-black receiver without weakening the darkness mask for lamps,
+  // fire and combat effects.
+  double functional_red{};
+  double functional_green{};
+  double functional_blue{};
 };
 
 // Returns additive normalized modulation. Shadow projection is a separate
@@ -133,7 +141,9 @@ sampleDynamicLighting(const DynamicLightFrame &frame,
 // Surface-aware variant used by scene geometry. The supplied normal is
 // expected to face the visible side of the polygon. It keeps point sources
 // from illuminating the back of walls while retaining a small wrapped edge
-// response on the deliberately low-poly retail meshes.
+// response on the deliberately low-poly retail meshes. Retail-derived
+// flashlight/spotlight projections are deliberately two-sided and do not use
+// this normal, matching the original vertex-light operation.
 [[nodiscard]] DynamicLightModulation
 sampleDynamicLighting(const DynamicLightFrame &frame, DynamicLightPoint point,
                       DynamicLightPoint surface_normal) noexcept;
@@ -291,35 +301,5 @@ projectDynamicShadowPoint(DynamicLightPoint vertex,
                           DynamicLightPoint ground_point,
                           DynamicLightPoint ground_normal,
                           const DynamicShadowProjection &projection) noexcept;
-
-struct DynamicLightSurfaceTriangle {
-  DynamicLightPoint first;
-  DynamicLightPoint second;
-  DynamicLightPoint third;
-};
-
-struct DynamicLightSurfaceHit {
-  DynamicLightPoint point;
-  DynamicLightPoint normal;
-  double distance{};
-};
-
-struct DynamicLightBounds {
-  DynamicLightPoint minimum;
-  DynamicLightPoint maximum;
-};
-
-// Cheap slab broadphase for the bounded flashlight segment. Invalid bounds or
-// direction fail closed before the renderer visits any world polygons.
-[[nodiscard]] bool dynamicLightSegmentIntersectsBounds(
-    DynamicLightPoint origin, DynamicLightPoint direction,
-    double maximum_distance, const DynamicLightBounds &bounds) noexcept;
-
-// Two-sided nearest-hit primitive used by the flashlight presentation. It is
-// pure and bounded so malformed/degenerate world polygons fail closed.
-[[nodiscard]] std::optional<DynamicLightSurfaceHit>
-dynamicLightSurfaceHit(DynamicLightPoint origin, DynamicLightPoint direction,
-                       const DynamicLightSurfaceTriangle &triangle,
-                       double maximum_distance) noexcept;
 
 } // namespace sf::game

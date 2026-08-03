@@ -128,13 +128,17 @@ void testFlashlightConeIsDirectionalAndAuthoritative() {
       frame, sf::game::DynamicLightPoint{0.0, 0.0, -600.0});
   require(frame.count == 1U && frame.active().front().directional &&
               frame.active().front().radius == 2800.0 &&
-              frame.active().front().intensity > 0.60 && forward.blue > 0.0 &&
-              outside.blue == 0.0 && behind.blue == 0.0,
+              frame.active().front().intensity > 0.60 &&
+              forward.functional_blue > 0.0 && outside.functional_blue == 0.0 &&
+              behind.functional_blue == 0.0,
           "Flashlight escaped its normalized forward cone");
-  require(forward.red == forward.green && forward.green == forward.blue &&
-              feathered_edge.red > 0.0 && feathered_edge.red < forward.red &&
-              feathered_edge.red == feathered_edge.green &&
-              feathered_edge.green == feathered_edge.blue,
+  require(forward.functional_red == forward.functional_green &&
+              forward.functional_green == forward.functional_blue &&
+              feathered_edge.functional_red > 0.0 &&
+              feathered_edge.functional_red < forward.functional_red &&
+              feathered_edge.functional_red ==
+                  feathered_edge.functional_green &&
+              feathered_edge.functional_green == feathered_edge.functional_blue,
           "Flashlight lost its neutral soft-edged illumination");
 
   source.enabled = false;
@@ -143,6 +147,48 @@ void testFlashlightConeIsDirectionalAndAuthoritative() {
               {}, {}, sf::game::DynamicLightPoint{}, disabled)
                   .count == 0U,
           "Disabled retail flashlight still emitted light");
+}
+
+void testFunctionalDirectionalLightRevealsBlackTwoSidedReceivers() {
+  for (const auto kind : {sf::game::DynamicLightKind::flashlight,
+                          sf::game::DynamicLightKind::spotlight}) {
+    const std::array directional{sf::game::DirectionalDynamicLightState{
+        kind,
+        {0.0, 0.0, 0.0},
+        {0.0, 0.0, 1.0},
+        static_cast<std::uint32_t>(kind),
+        true,
+        true,
+    }};
+    const auto frame = sf::game::buildDynamicLightFrame(
+        {}, {}, sf::game::DynamicLightPoint{}, directional);
+    const auto front = sf::game::sampleDynamicLighting(frame, {0.0, 0.0, 600.0},
+                                                       {0.0, 0.0, -1.0});
+    const auto reversed = sf::game::sampleDynamicLighting(
+        frame, {0.0, 0.0, 600.0}, {0.0, 0.0, 1.0});
+    require(front.red == 0.0 && front.green == 0.0 && front.blue == 0.0 &&
+                front.functional_red > 0.0 &&
+                front.functional_red == reversed.functional_red &&
+                front.functional_green == reversed.functional_green &&
+                front.functional_blue == reversed.functional_blue,
+            "Functional directional light used normal-masked modulation");
+
+    const auto lit = sf::game::applyDynamicLighting({0U, 0U, 0U}, reversed);
+    require(lit.red > 0U && lit.green > 0U && lit.blue > 0U,
+            "Functional directional light could not reveal a black receiver");
+  }
+}
+
+void testAmbientLightStillPreservesAuthoredBlackness() {
+  const std::array sources{lamp(1U, 0.0)};
+  const auto frame = sf::game::buildDynamicLightFrame(
+      sources, {}, sf::game::DynamicLightPoint{});
+  const auto modulation = sf::game::sampleDynamicLighting(
+      frame, sf::game::DynamicLightPoint{0.0, -700.0, 0.0});
+  require(modulation.red > 0.0 && modulation.functional_red == 0.0 &&
+              sf::game::applyDynamicLighting({0U, 0U, 0U}, modulation) ==
+                  sf::game::DynamicLightVertexColor{0U, 0U, 0U},
+          "Ambient lamp bypassed the authored-darkness exposure mask");
 }
 
 void testRadialSamplingAndNeutralModulation() {
@@ -791,50 +837,6 @@ void testCaveFlashlightUsesRetailWorldYAxis() {
           "CAVE2 flashlight diverged from retail world Y coordinates");
 }
 
-void testFlashlightSurfaceRayIsTwoSidedAndBounded() {
-  const auto triangle = sf::game::DynamicLightSurfaceTriangle{
-      {-100.0, -100.0, 500.0},
-      {100.0, -100.0, 500.0},
-      {0.0, 100.0, 500.0},
-  };
-  const auto hit =
-      sf::game::dynamicLightSurfaceHit({}, {0.0, 0.0, 2.0}, triangle, 1000.0);
-  require(hit && std::abs(hit->distance - 500.0) < 0.000001 &&
-              hit->normal.z < 0.0,
-          "Flashlight ray did not hit the nearest front-facing surface");
-  const auto reverse = sf::game::dynamicLightSurfaceHit(
-      {0.0, 0.0, 1000.0}, {0.0, 0.0, -1.0}, triangle, 1000.0);
-  require(reverse && reverse->normal.z > 0.0,
-          "Flashlight surface hit incorrectly culled a back face");
-  require(
-      !sf::game::dynamicLightSurfaceHit({}, {0.0, 0.0, 1.0}, triangle, 400.0) &&
-          !sf::game::dynamicLightSurfaceHit({}, {1.0, 0.0, 0.0}, triangle,
-                                            1000.0),
-      "Flashlight ray escaped its range or accepted a parallel surface");
-}
-
-void testFlashlightSegmentBoundsBroadphaseIsBounded() {
-  const auto bounds = sf::game::DynamicLightBounds{
-      {-20.0, -10.0, 400.0},
-      {20.0, 10.0, 600.0},
-  };
-  require(sf::game::dynamicLightSegmentIntersectsBounds({}, {0.0, 0.0, 2.0},
-                                                        700.0, bounds) &&
-              !sf::game::dynamicLightSegmentIntersectsBounds(
-                  {}, {0.0, 0.0, 1.0}, 300.0, bounds) &&
-              !sf::game::dynamicLightSegmentIntersectsBounds(
-                  {}, {1.0, 0.0, 0.0}, 700.0, bounds),
-          "Flashlight segment broadphase accepted an unreachable model");
-  require(sf::game::dynamicLightSegmentIntersectsBounds(
-              {0.0, 0.0, 500.0}, {1.0, 0.0, 0.0}, 1.0, bounds),
-          "Flashlight broadphase rejected an origin inside its bounds");
-  auto malformed = bounds;
-  malformed.minimum.x = 30.0;
-  require(!sf::game::dynamicLightSegmentIntersectsBounds({}, {0.0, 0.0, 1.0},
-                                                         700.0, malformed),
-          "Flashlight broadphase accepted malformed bounds");
-}
-
 } // namespace
 
 int main() {
@@ -842,6 +844,8 @@ int main() {
     testGuestLampLifetimeIsAuthoritative();
     testTransientLightsAreExactAndFinite();
     testFlashlightConeIsDirectionalAndAuthoritative();
+    testFunctionalDirectionalLightRevealsBlackTwoSidedReceivers();
+    testAmbientLightStillPreservesAuthoredBlackness();
     testRadialSamplingAndNeutralModulation();
     testGameplayGammaDarkensOnlyValidSceneLighting();
     testDynamicLightSoftKneePreservesRetailHeadroom();
@@ -870,8 +874,6 @@ int main() {
     testRetailVertexLightRayUsesGuestMatrixAndAttachedAxis();
     testMissionFlashlightRecordLightsItsRetailForwardAxis();
     testCaveFlashlightUsesRetailWorldYAxis();
-    testFlashlightSurfaceRayIsTwoSidedAndBounded();
-    testFlashlightSegmentBoundsBroadphaseIsBounded();
     std::cout << "Dynamic lighting tests passed\n";
     return 0;
   } catch (const std::exception &error) {

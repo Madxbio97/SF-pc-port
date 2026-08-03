@@ -280,6 +280,7 @@ public:
   // after bootstrap so level music can play without advancing gameplay.
   [[nodiscard]] bool advanceAudioFrameClock() noexcept;
   [[nodiscard]] bool advanceAudioSliceClock() noexcept;
+  [[nodiscard]] bool stopRetailXa() noexcept;
   [[nodiscard]] std::size_t
   takePcm(std::span<psx::SpuPcmFrame> destination) noexcept;
   void clearPcm() noexcept;

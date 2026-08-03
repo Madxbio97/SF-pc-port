@@ -468,6 +468,37 @@ originalRadarGeometry(std::uint8_t reveal_frame) noexcept {
   };
 }
 
+OriginalRadarGeometry
+originalRadarPresentationGeometry(double reveal_phase) noexcept {
+  constexpr auto maximum_frame = 12;
+  const auto phase =
+      std::clamp(reveal_phase, 0.0, static_cast<double>(maximum_frame));
+  const auto lower = static_cast<int>(phase);
+  const auto upper = std::min(lower + 1, maximum_frame);
+  const auto amount = phase - static_cast<double>(lower);
+  const auto from = originalRadarGeometry(static_cast<std::uint8_t>(lower));
+  const auto to = originalRadarGeometry(static_cast<std::uint8_t>(upper));
+  const auto blend = [amount](int first, int second) {
+    return static_cast<int>(
+        std::lround(static_cast<double>(first) +
+                    static_cast<double>(second - first) * amount));
+  };
+  const auto presentation_frame =
+      phase <= 0.0 ? std::uint8_t{0U}
+      : phase >= static_cast<double>(maximum_frame)
+          ? static_cast<std::uint8_t>(maximum_frame)
+          : static_cast<std::uint8_t>(std::max(1, lower));
+  return OriginalRadarGeometry{
+      presentation_frame,
+      blend(from.outer_half_width, to.outer_half_width),
+      blend(from.outer_half_height, to.outer_half_height),
+      blend(from.inner_half_width, to.inner_half_width),
+      blend(from.inner_half_height, to.inner_half_height),
+      blend(from.reticle_half_width, to.reticle_half_width),
+      blend(from.reticle_half_height, to.reticle_half_height),
+  };
+}
+
 const WeaponDefinition *tryWeaponDefinition(WeaponId id) noexcept {
   if (!isValidWeaponId(id)) {
     return nullptr;

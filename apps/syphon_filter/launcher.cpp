@@ -1603,7 +1603,7 @@ void populateLanguages(LauncherState &state) {
       L"English",
       // Keep the source ASCII-only: MSVC installations using the system ANSI
       // code page otherwise reinterpret the UTF-8 literal as mojibake.
-      L"\u0420\u0443\u0441\u0441\u043a\u0438\u0439 (ViT Co.)",
+      L"\u0420\u0443\u0441\u0441\u043a\u0438\u0439",
   };
   for (const auto *label : labels) {
     SendMessageW(state.language_combo, CB_ADDSTRING, 0,

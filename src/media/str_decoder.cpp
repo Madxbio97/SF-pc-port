@@ -53,7 +53,10 @@ double timestampSeconds(const AVFrame& frame, const AVStream& stream) {
 } // namespace
 
 struct StrDecoder::Impl {
-    explicit Impl(std::vector<std::byte> source) : source(std::move(source)) {}
+    explicit Impl(std::vector<std::byte> source)
+        : owned_source(std::move(source)), source(owned_source) {}
+
+    explicit Impl(std::span<const std::byte> source) : source(source) {}
 
     ~Impl() {
         sws_freeContext(sws);
@@ -336,7 +339,8 @@ struct StrDecoder::Impl {
         return event;
     }
 
-    std::vector<std::byte> source;
+    std::vector<std::byte> owned_source;
+    std::span<const std::byte> source;
     std::size_t cursor{};
     AVIOContext* avio{};
     AVFormatContext* format{};
@@ -358,6 +362,12 @@ StrDecoder::StrDecoder(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
 
 StrDecoder StrDecoder::open(std::vector<std::byte> raw_sectors) {
     auto impl = std::make_unique<Impl>(std::move(raw_sectors));
+    impl->initialize();
+    return StrDecoder{std::move(impl)};
+}
+
+StrDecoder StrDecoder::open(std::span<const std::byte> raw_sectors) {
+    auto impl = std::make_unique<Impl>(raw_sectors);
     impl->initialize();
     return StrDecoder{std::move(impl)};
 }

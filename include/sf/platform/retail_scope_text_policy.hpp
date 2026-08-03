@@ -19,13 +19,22 @@ usesRetailEnglishOpticText(game::WeaponId weapon) noexcept {
          weapon == game::WeaponId::virus_scanner;
 }
 
-// Retail mode 4 keeps the ordinary first-person overlay, then adds a separate
-// presentation pass that reveals biological subjects through the scene.
-// Keeping the predicate independent from scope artwork prevents the depth
-// override from leaking into the sniper and night-vision rifles.
-[[nodiscard]] constexpr bool
-virusScannerXrayActive(bool first_person_aim, game::WeaponId weapon) noexcept {
-  return first_person_aim && weapon == game::WeaponId::virus_scanner;
+[[nodiscard]] constexpr bool retailRifleScopeOverlayActive(
+    bool first_person_aim, std::uint8_t interface_mode,
+    std::uint8_t first_person_aim_mode) noexcept {
+  return first_person_aim &&
+         ((interface_mode == 2U && first_person_aim_mode == 2U) ||
+          (interface_mode == 3U && first_person_aim_mode == 3U));
+}
+
+// The viral detector deliberately uses two different retail states: camera
+// aim mode 4 selects first person, while INTERFACE mode 5 owns its 28-line
+// sight and pulsing target dot.
+[[nodiscard]] constexpr bool retailVirusScannerOverlayActive(
+    bool first_person_aim, std::uint8_t interface_mode,
+    std::uint8_t first_person_aim_mode) noexcept {
+  return first_person_aim && interface_mode == 5U &&
+         first_person_aim_mode == 4U;
 }
 
 // Retail scope captions live in the centered TEXT slots and have no backdrop.

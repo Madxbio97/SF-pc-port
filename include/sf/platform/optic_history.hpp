@@ -82,9 +82,12 @@ private:
 };
 
 [[nodiscard]] constexpr int
-retailOpticEchoDepth(int stored_depth, std::size_t echo_index) noexcept {
-  const auto step = static_cast<int>(echo_index + 1U) * 8;
-  return stored_depth - step < 4 ? 4 : stored_depth - step;
+retailOpticEchoDepth(int stored_otz, std::size_t echo_index) noexcept {
+  // Retail stores four byte-offset units per OT slot, subtracts eight units
+  // per echo, clamps to four, then shifts right by two. RotTransPers3 already
+  // returns that final OTZ on the host, so the equivalent bias is two slots.
+  const auto step = static_cast<int>(echo_index + 1U) * 2;
+  return stored_otz - step < 1 ? 1 : stored_otz - step;
 }
 
 } // namespace sf::platform

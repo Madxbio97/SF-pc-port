@@ -686,13 +686,14 @@ void LegacyFirstMissionRuntime::advanceHostUpdate() noexcept {
 
     // H4 has no native-driven gameplay frame. The retail outer loop owns
     // input processing, gameplay, player, animation and mission state.
-    const auto frame = vm_->tickRetailOuterFrame();
+    auto frame = vm_->tickRetailOuterFrame();
     if (!frame.completed()) {
       recordExecutionFault(frame);
       markFault();
       return;
     }
     latched_pad_buttons_ = 0U;
+    auto guest_frames_advanced = 1U;
 
     if (legacyRetailStreamingState(frame.state_after)) {
       // State 7/9 can replace the room object/definition tables in
@@ -708,11 +709,31 @@ void LegacyFirstMissionRuntime::advanceHostUpdate() noexcept {
       }
       classifyTransitionRequest(frame.state_before, frame.state_after,
                                 *coherent_mission);
-      ++guest_frame_;
-      if (!republishPresentationFrame(coherent_frame)) {
-        markFault();
+
+      // MOVIE.OVL advances its resident-memory loader only once per 20 Hz
+      // outer frame. Waiting for those non-presentable state-9 frames made a
+      // mid-level STR appear seconds after its trigger. Drain only this known
+      // movie-loader transaction now; room state 7 keeps retail cadence.
+      constexpr auto maximum_movie_loader_catchup_frames = 64U;
+      for (auto catchup = 0U;
+           frame.state_after == 9U && movie_loader_pending_ &&
+           catchup < maximum_movie_loader_catchup_frames;
+           ++catchup) {
+        frame = vm_->tickRetailOuterFrame();
+        if (!frame.completed()) {
+          recordExecutionFault(frame);
+          markFault();
+          return;
+        }
+        ++guest_frames_advanced;
       }
-      return;
+      if (legacyRetailStreamingState(frame.state_after)) {
+        guest_frame_ += guest_frames_advanced;
+        if (!republishPresentationFrame(coherent_frame)) {
+          markFault();
+        }
+        return;
+      }
     }
 
     // Common mission success enters state 3/4 after the guest has already
@@ -730,7 +751,7 @@ void LegacyFirstMissionRuntime::advanceHostUpdate() noexcept {
       }
       classifyTransitionRequest(frame.state_before, frame.state_after,
                                 *coherent_mission);
-      ++guest_frame_;
+      guest_frame_ += guest_frames_advanced;
       if (!finished_ || !republishPresentationFrame(coherent_frame)) {
         markFault();
       }
@@ -755,7 +776,7 @@ void LegacyFirstMissionRuntime::advanceHostUpdate() noexcept {
       return;
     }
     classifyTransitionRequest(frame.state_before, frame.state_after, *mission);
-    ++guest_frame_;
+    guest_frame_ += guest_frames_advanced;
     if (!publishPresentationFrame()) {
       markFault();
       return;
@@ -839,6 +860,17 @@ bool LegacyFirstMissionRuntime::advanceAudioSliceClock() noexcept {
     return false;
   }
   return true;
+}
+
+bool LegacyFirstMissionRuntime::stopRetailXa() noexcept {
+  if (!ready_ || finished_ || faulted_ || !vm_) {
+    return false;
+  }
+  try {
+    return vm_->stopRetailXa();
+  } catch (...) {
+    return false;
+  }
 }
 
 bool LegacyFirstMissionRuntime::applyRetailAudioVolumes() noexcept {

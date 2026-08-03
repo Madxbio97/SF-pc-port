@@ -15,6 +15,7 @@
 #include "sf/game/player_controller.hpp"
 #include "sf/psx/spu.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -283,16 +284,12 @@ legacyTargetFollowCameraPresentationActive(bool previously_active,
     bool previously_active, bool retail_viewport_active, bool xa_stream_active,
     bool xa_samples_queued) noexcept {
   // Starting requires both the authored retail viewport and a live XA stream.
-  // Once identified, the authored viewport remains the visual authority. A
-  // skip closes it before buffered XA has drained; that tail must never retain
-  // the letterbox or suppress the HUD.
+  // Once identified, keep HUD and letterbox coupled until both the authored
+  // viewport and the XA transport have acknowledged the end of the call.
   if (!previously_active) {
     return retail_viewport_active && xa_stream_active;
   }
-  if (!retail_viewport_active) {
-    return false;
-  }
-  return xa_stream_active || xa_samples_queued;
+  return retail_viewport_active || xa_stream_active || xa_samples_queued;
 }
 
 [[nodiscard]] constexpr bool
@@ -349,6 +346,37 @@ legacyLetterboxPresentationActive(bool mission_intro_active,
 legacyGameplayHudPresentationActive(bool mission_complete,
                                     bool letterbox_active) noexcept {
   return !mission_complete && !letterbox_active;
+}
+
+struct LegacyRetailViewportBars {
+  double top{};
+  double bottom{};
+};
+
+[[nodiscard]] constexpr LegacyRetailViewportBars
+legacyRetailViewportBars(double y, double height) noexcept {
+  constexpr double retail_height = 240.0;
+  // Retail points the same RECT at alternating 240-line framebuffer pages.
+  // Its physical y is therefore logical_y or logical_y + 240 every swap.
+  const auto logical_y =
+      y >= retail_height ? y - retail_height
+                         : (y < 0.0 ? y + retail_height : y);
+  const auto top = std::clamp(logical_y, 0.0, retail_height);
+  const auto bottom_edge =
+      std::clamp(logical_y + height, top, retail_height);
+  return LegacyRetailViewportBars{
+      .top = top,
+      .bottom = retail_height - bottom_edge,
+  };
+}
+
+[[nodiscard]] constexpr double
+legacyNormalGameplayHudVisibility(double phase) noexcept {
+  // FUN_80016f90 requests mode 0/1 on the same guest edge that starts the
+  // viewport animation. FUN_800410d0 then uses 0..12 as the actual geometry;
+  // -1 and 13 are detached/settled sentinels. Other interface modes continue
+  // closing the normal HUD while their own callbacks render the scope/scanner.
+  return std::clamp(phase, 0.0, 12.0) / 12.0;
 }
 
 [[nodiscard]] constexpr bool legacyFirstPersonAimReleaseRearmRequired(
@@ -1040,15 +1068,12 @@ public:
            mission_cinematic_phase_ == MissionCinematicPhase::finale ||
            legacyCinematicPresentationActive();
   }
-  [[nodiscard]] bool letterboxActive() const noexcept {
-    return legacyLetterboxPresentationActive(mission_cinematic_phase_ ==
-                                                 MissionCinematicPhase::intro,
-                                             legacyRadioConversationActive());
-  }
+  [[nodiscard]] bool letterboxActive() const noexcept;
   [[nodiscard]] bool radioConversationActive() const noexcept {
     return legacyRadioConversationActive();
   }
-  // Native presentation-only acknowledgement of the authored skip input.
+  // Requests the resident retail XA stop. Presentation follows the confirmed
+  // CD/XA state instead of disappearing while buffered dialogue is still live.
   void dismissRadioConversationPresentation() noexcept;
   [[nodiscard]] std::uint8_t mapFade() const noexcept;
   [[nodiscard]] std::uint32_t missionObjectiveCount() const noexcept {

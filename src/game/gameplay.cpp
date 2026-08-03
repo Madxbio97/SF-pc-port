@@ -3730,10 +3730,9 @@ std::optional<std::uint16_t> GameplaySession::legacyVirusScannerMarkerObject(
   }
 
   const auto &target = objects_[target_object].transform;
-  // The largest authored BOMB/GRGLO offset in the two scanner missions is
-  // 122 world units. Leave room for integer transforms without ever pairing
-  // a marker from another corpse.
-  constexpr auto maximum_pair_distance = std::int64_t{192};
+  // FUN_8002bf74 returns the first class-0x6f candidate at retail distance
+  // strictly below 0x80; the largest authored offset is 122 world units.
+  constexpr auto maximum_pair_distance = std::int64_t{128};
   return selectVirusScannerMarker(
       {target.x, target.y, target.z}, objects_.size(),
       [&](std::size_t index) noexcept
@@ -3825,12 +3824,28 @@ bool GameplaySession::legacyWeaponMenuReady() const noexcept {
          mission->weapon_menu_input_ready;
 }
 
+bool GameplaySession::letterboxActive() const noexcept {
+  const auto frame = legacyPresentationFrame();
+  const auto retail_viewport_active =
+      frame && frame->renderer &&
+      frame->renderer->state.camera.retail_letterbox_active;
+  const auto awaiting_retail_frame = !frame || !frame->renderer;
+  return retail_viewport_active ||
+         (awaiting_retail_frame &&
+          mission_cinematic_phase_ == MissionCinematicPhase::intro);
+}
+
 void GameplaySession::dismissRadioConversationPresentation() noexcept {
-  if (!legacy_radio_conversation_active_) {
+  if (!legacy_radio_conversation_active_ ||
+      legacy_first_mission_ == nullptr) {
     return;
   }
-  legacy_radio_conversation_active_ = false;
-  legacy_radio_skip_suppression_ = {.active = true, .quiescent_updates = 0U};
+  // Do not hide the HUD/letterbox locally. The same input still reaches the
+  // guest script and its FUN_80016f90 edge closes HUD/viewport independently;
+  // this resident stop only removes the XA audio tail immediately.
+  if (legacy_first_mission_->stopRetailXa()) {
+    refreshLegacyRadioConversationState();
+  }
 }
 
 void GameplaySession::refreshLegacyRadioConversationState() noexcept {

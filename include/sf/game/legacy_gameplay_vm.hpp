@@ -437,6 +437,10 @@ struct LegacyGameplayBridgeProfile {
   // created by FUN_8003a31c. Scope modes link their POLY_F4/LINE packets here,
   // not into the world camera reached through camera_controller_pointer.
   std::uint32_t interface_renderer_pointer{0x80116998U};
+  // FUN_80040ba8 allocates the five vertical and eight horizontal SCP
+  // GsSPRITEs independently, then links them into the interface renderer.
+  std::uint32_t retail_scope_vertical_sprites_pointer{0x80115f48U};
+  std::uint32_t retail_scope_horizontal_sprites_pointer{0x80115f4cU};
   // FUN_800c973c seeds the active value from terrain_depth_cue before each
   // camera and FUN_800d3100 can replace it while drawing one dark-frame
   // object. The active copy is diagnostic only: it is not camera atmosphere.
@@ -447,8 +451,10 @@ struct LegacyGameplayBridgeProfile {
   // mission data; +0x14 selects its material and +0x18..+0x1a its TILE RGB.
   std::uint32_t screen_filter_enabled{0x8011646eU};
   std::uint32_t screen_filter_descriptor{0x80116a78U};
-  // FUN_800cfc9c selects this clear colour while camera flag 0x10 owns the
-  // night-vision multi-pass presentation.
+  // FUN_800cfc9c selects one of two HMD colours. Retail ClearImage uses it
+  // only when the selected word equals this immutable sentinel; green SVD
+  // keeps the authored camera clear and gains its cast from FUN_800c9140.
+  std::uint32_t nightvision_clear_reference{0x80116540U};
   std::uint32_t nightvision_clear_color{0x80116b28U};
   std::uint32_t processed_pad0{0x80122478U};
   std::uint32_t player_pointer{0x80116b9cU};
@@ -778,6 +784,9 @@ struct LegacyNativeMissionBridgeProfile {
   std::uint32_t inventory_current_weapon{0x80115fb8U};
   std::uint32_t weapon_menu_state{0x80115f50U};
   std::uint32_t weapon_menu_dirty{0x80115f74U};
+  // FUN_800410d0's mode-1 phase, advanced by FUN_80040b50 from -1 through
+  // 13. This is the original HUD transition clock; it is not XA-owned.
+  std::uint32_t normal_hud_phase{0x8010c368U};
   std::uint32_t weapon_menu_controller_ready{0x80115f3cU};
   // Exact FUN_8002f5d8 presentation mode: 0 chase, 2 normal sniper,
   // 3 nightvision rifle, 4 viral detector.
@@ -822,6 +831,7 @@ struct LegacyRetailAudioProfile {
   std::uint32_t reset_callback_entry{0x800e4184U};
   std::uint32_t interrupt_callback_entry{0x800e41b4U};
   std::uint32_t expected_tick_callback{0x800f6574U};
+  std::uint32_t stop_xa_entry{0x800c6058U};
   std::uint32_t set_group_volume_entry{0x8006b824U};
   std::uint32_t group_volume_address{0x80116020U};
   std::uint32_t callback_hz{120U};
@@ -1021,6 +1031,10 @@ public:
   [[nodiscard]] bool
   advanceAudioSliceClock(const LegacyRetailAudioProfile &profile =
                              syphonFilterUsaV11RetailAudioProfile()) noexcept;
+  [[nodiscard]] bool
+  stopRetailXa(const LegacyRetailAudioProfile &profile =
+                   syphonFilterUsaV11RetailAudioProfile(),
+               std::uint64_t execution_budget = 5'000'000U) noexcept;
   [[nodiscard]] bool
   setRetailAudioVolumes(const LegacyRetailAudioVolumes &volumes,
                         const LegacyRetailAudioProfile &profile =

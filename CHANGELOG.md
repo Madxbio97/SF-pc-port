@@ -3,6 +3,77 @@
 All notable public-test changes are documented here. The project currently uses
 pre-release tags rather than a stable semantic-versioning promise.
 
+## 0.1.0-public-test.22 - 2026-08-03
+
+### Lighting
+
+- Restored retail-matrix flashlight and searchlight illumination on dark floors,
+  walls and ceilings without surface-normal rejection.
+- Updated moving `SPOTLT` illumination at the display rate while preserving
+  the original 20 Hz game logic.
+- Kept the original vertex-light presentation without fake cone geometry.
+
+## 0.1.0-public-test.21 - 2026-08-03
+
+### Lighting
+
+- Restored the flashlight's intended brightness by removing the duplicate CAVE2
+  `/8` pre-light attenuation.
+- Restored moving surface light spots for `SPOTLT` mission sources.
+
+## 0.1.0-public-test.20 - 2026-08-03
+
+### Lighting and presentation
+
+- Restored PS1 list-driven vertex lighting for the player flashlight and moving
+  `SPOTLT` sources, including gameplay-critical surface light spots.
+- Interpolated light transforms at the display refresh rate while preserving
+  authoritative 20 Hz game logic.
+- Removed the non-retail volumetric flashlight cone and duplicated native
+  directional fill.
+- Reset viral-detector presentation immediately after aiming ends, preventing
+  scanner tint from masking normal lighting.
+
+## 0.1.0-public-test.19 - 2026-08-03
+
+### Presentation
+
+- Viral-detector actors and their attached weapons now use an opaque
+  flat-orange silhouette in normal world depth, while level geometry, boxes
+  and GMD retain the orange semitransparent scanner material.
+
+## 0.1.0-public-test.18 - 2026-08-02
+
+### Presentation
+
+- Restored the PS1 HUD/letterbox state machine and synchronized it with radio
+  dialogue, fast skipping and the authored viewport transition.
+- Smoothed HUD and letterbox motion at the display refresh rate while retaining
+  authoritative 20 Hz game logic; presentation now settles 15% faster.
+- Reworked SVD night vision to preserve fog and scene gradients, restore scope
+  markings and trails, and rotate billboard sprites while aiming.
+- Removed the alternating framebuffer-page flicker and the lingering green
+  filter after leaving the SVD scope.
+- Restored the viral detector's original first-person sight, pulsing marker and
+  exact under-128 object pairing; level geometry, boxes and GMD now receive the
+  retail orange semitransparent material, while enemy models remain
+  unchanged.
+- Restored the sniper scope's specialized PS1 STP/semitransparency blend for
+  `SCOPED.TIM`, recovering its dark gradient and the dark regions around the
+  crosshair.
+- Hid the presentation FPS counter by default and added an F6 display toggle.
+
+### Media and localization
+
+- Reduced gameplay-FMV startup latency, restored gameplay-FMV fades and fixed
+  mission-briefing audio-clock startup failures.
+- Renamed the launcher language option from `Русский (ViT Co.)` to `Русский`.
+
+### Validation
+
+- Added regression coverage for viewport normalization, display-rate UI
+  interpolation, radio state and presentation timing.
+
 ## 0.1.0-public-test.15 - 2026-07-31
 
 ### Lighting and distance presentation
