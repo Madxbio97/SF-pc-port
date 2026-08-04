@@ -77,6 +77,20 @@ CameraRay cameraRayAtProjectionOffset(const CameraState &camera,
   };
 }
 
+CameraState applyChaseCameraPitch(CameraState camera, double pitch) noexcept {
+  const auto clamped = std::clamp(pitch, -512.0, 512.0);
+  const auto horizontal_distance =
+      std::hypot(camera.target_x - camera.x, camera.target_z - camera.z);
+  if (!std::isfinite(horizontal_distance) || horizontal_distance <= 0.000001) {
+    return camera;
+  }
+  const auto radians =
+      clamped *
+      (2.0 * std::numbers::pi / static_cast<double>(heading_angle_units));
+  camera.target_y -= std::tan(radians) * horizontal_distance;
+  return camera;
+}
+
 ChaseCamera::ChaseCamera(ChaseCameraConfiguration configuration) noexcept
     : configuration_(configuration) {}
 

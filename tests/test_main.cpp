@@ -1582,6 +1582,21 @@ void testChaseCamera() {
               std::abs(behind_north.target_z - 300.0) < 0.0001,
           "Chase camera did not stay behind the player");
 
+  const auto look_up = sf::game::applyChaseCameraPitch(behind_north, 256.0);
+  const auto look_down =
+      sf::game::applyChaseCameraPitch(behind_north, -256.0);
+  const auto clamped_pitch =
+      sf::game::applyChaseCameraPitch(behind_north, 10000.0);
+  const auto maximum_pitch =
+      sf::game::applyChaseCameraPitch(behind_north, 512.0);
+  require(look_up.x == behind_north.x && look_up.y == behind_north.y &&
+              look_up.z == behind_north.z &&
+              look_up.target_y < behind_north.target_y &&
+              look_down.target_y > behind_north.target_y &&
+              std::abs(clamped_pitch.target_y - maximum_pitch.target_y) <
+                  epsilon,
+          "Optional chase pitch moved the eye or escaped its clamp");
+
   const auto project_player_y = [&](double world_y) {
     constexpr auto native_screen_center_y = 120.0;
     constexpr auto native_projection = 320.0;

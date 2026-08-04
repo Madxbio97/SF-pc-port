@@ -127,12 +127,14 @@ SceneViewerResult PsyCrossSceneViewer::run(
   double presentation_delta_seconds = 0.0;
   game::GameplayInput latched_gameplay_input{};
   sf::platform::PlayerLookLatch latched_player_look;
+  sf::platform::PlayerLookLatch latched_chase_look;
   sf::platform::PlayerLookDisplayIntegrator display_player_look;
   sf::platform::PlayerAimFireLatch latched_aim_for_fire;
   sf::platform::PlayerLookSample presentation_look_correction{};
   const auto clear_latched_gameplay_input = [&] {
     latched_gameplay_input = {};
     latched_player_look.reset();
+    latched_chase_look.reset();
     display_player_look.reset();
     latched_aim_for_fire.reset();
     presentation_look_correction = {};
@@ -826,7 +828,8 @@ SceneViewerResult PsyCrossSceneViewer::run(
     const auto interact_pressed =
         input_settle_seconds <= 0.0 && interact_down && !interact_was_down;
     const auto manual_aim_down = bound_actions[KeyboardMouseAction::aim];
-    mouse_capture.set(!paused && manual_aim_down);
+    mouse_capture.set(!paused &&
+                      (manual_aim_down || input_.mouse_chase_look));
     int mouse_delta_x{};
     int mouse_delta_y{};
     SDL_GetRelativeMouseState(&mouse_delta_x, &mouse_delta_y);
@@ -1349,11 +1352,24 @@ SceneViewerResult PsyCrossSceneViewer::run(
       relative_look.mouse_look_yaw = first_person_input.mouse_look.yaw;
       relative_look.mouse_look_pitch = first_person_input.mouse_look.pitch;
       latched_player_look.latch(relative_look);
+      latched_chase_look.reset();
     } else if (!latched_aim_for_fire.pending()) {
       // If an aimed fire edge is pending, retain the look sample paired with
       // that edge instead of replacing it with post-RMB-release controller
       // state before the guest consumes the shot.
       latched_player_look.reset();
+      if (input_.mouse_chase_look) {
+        sf::platform::PlayerInput relative_look;
+        relative_look.mouse_look_yaw =
+            raw_player_input.pc.mouse_delta_x *
+            input_.chase_mouse_yaw_sensitivity;
+        relative_look.mouse_look_pitch =
+            -raw_player_input.pc.mouse_delta_y *
+            input_.chase_mouse_pitch_sensitivity;
+        latched_chase_look.latch(relative_look);
+      } else {
+        latched_chase_look.reset();
+      }
     }
     latch_gameplay_input(sampled_input);
     simulation_accumulator_seconds =
@@ -1375,9 +1391,27 @@ SceneViewerResult PsyCrossSceneViewer::run(
         consumed_look = nativeManualAimLook(relative);
         simulation_input.look_yaw += consumed_look.yaw;
         simulation_input.look_pitch -= consumed_look.pitch;
+      } else {
+        const auto relative = simulation_updates_this_frame == 0U
+                                  ? latched_chase_look.consumeForGuestTick()
+                                  : sf::platform::PlayerLookSample{};
+        // SF2/SF3 use both paths: retail turn keeps locomotion, animation and
+        // collision aligned, while the proportional guest-facing command
+        // removes the analog camera response ceiling. Mouse yaw must reach
+        // both in the same guest tick; neither path is a substitute for the
+        // other.
+        simulation_input.turn = std::clamp(
+            simulation_input.turn +
+                relative.yaw /
+                    static_cast<double>(
+                        game::PlayerController::turn_units_per_update),
+            -1.0, 1.0);
+        simulation_input.look_yaw += relative.yaw;
+        simulation_input.look_pitch += relative.pitch * 0.35;
       }
       latched_gameplay_input = {};
       latched_player_look.reset();
+      latched_chase_look.reset();
       display_player_look.reset();
       std::swap(previous_render_presentation, current_render_presentation);
       previous_weapon_switch_countdown = current_weapon_switch_countdown;

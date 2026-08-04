@@ -1669,6 +1669,8 @@ void GameplaySession::reset() {
   legacy_radio_skip_suppression_ = {};
   host_manual_aim_strafe_ = 0.0;
   host_manual_aim_body_heading_.reset();
+  host_free_look_active_ = false;
+  host_free_look_pitch_ = 0.0;
   pending_host_aim_heading_restore_.reset();
   legacy_manual_aim_neutral_camera_.reset();
   legacy_manual_aim_neutral_player_root_ = {};
@@ -1920,6 +1922,8 @@ bool GameplaySession::restartCheckpoint() {
   legacy_radio_skip_suppression_ = {};
   host_manual_aim_strafe_ = 0.0;
   host_manual_aim_body_heading_.reset();
+  host_free_look_active_ = false;
+  host_free_look_pitch_ = 0.0;
   pending_host_aim_heading_restore_.reset();
   legacy_manual_aim_neutral_camera_.reset();
   legacy_manual_aim_neutral_player_root_ = {};
@@ -3924,6 +3928,39 @@ GameplayInput GameplaySession::admittedFirstPersonAimInput(
   return admitted;
 }
 
+void GameplaySession::stageNativeChaseFreelook(const GameplayInput &input) {
+  if (input.aim || !playerAlive() || !legacyMissionAuthoritative() ||
+      !legacy_first_mission_->openingFinished()) {
+    if (legacy_first_mission_ != nullptr) {
+      legacy_first_mission_->setHostChaseMouseYawInput(0, false);
+    }
+    if (input.aim) {
+      host_free_look_active_ = false;
+      host_free_look_pitch_ = 0.0;
+    }
+    return;
+  }
+  const auto *bridge = legacy_first_mission_->bridge();
+  if (bridge == nullptr || !bridge->player.resident ||
+      bridge->player.control_locked || bridge->camera.scripted ||
+      bridge->camera.locked) {
+    legacy_first_mission_->setHostChaseMouseYawInput(0, false);
+    host_free_look_active_ = false;
+    host_free_look_pitch_ = 0.0;
+    return;
+  }
+
+  host_free_look_active_ = true;
+  legacy_first_mission_->setHostChaseMouseYawInput(
+      static_cast<std::int32_t>(std::clamp(
+          std::llround(input.look_yaw),
+          static_cast<long long>(std::numeric_limits<std::int32_t>::min()),
+          static_cast<long long>(std::numeric_limits<std::int32_t>::max()))),
+      true);
+  host_free_look_pitch_ =
+      std::clamp(host_free_look_pitch_ + input.look_pitch, -512.0, 512.0);
+}
+
 void GameplaySession::stageNativeFirstPersonAim(const GameplayInput &input) {
   // Always consume the host release edge first. A retail camera/control lock
   // may appear on that same update; it must not leave the native controller
@@ -5915,6 +5952,7 @@ void GameplaySession::update(const GameplayInput &input) {
   }
 
   const auto guest_weapon_before_update = hud_.inventory().current();
+  stageNativeChaseFreelook(input);
   const auto admitted_input = admittedFirstPersonAimInput(input);
   stageNativeFirstPersonAim(admitted_input);
   stageLegacyHostState(admitted_input);
@@ -6391,7 +6429,7 @@ CameraState GameplaySession::camera() const noexcept {
       }
       return native;
     }
-    return CameraState{
+    auto native_chase = CameraState{
         static_cast<double>(camera.eye.x),
         static_cast<double>(camera.eye.y),
         static_cast<double>(camera.eye.z),
@@ -6400,6 +6438,12 @@ CameraState GameplaySession::camera() const noexcept {
         static_cast<double>(camera.target.z),
         camera.projectionForDisplayWidth(384),
     };
+    if (host_free_look_active_ && !bridge.player.control_locked &&
+        !camera.scripted && !camera.locked) {
+      native_chase =
+          applyChaseCameraPitch(native_chase, host_free_look_pitch_);
+    }
+    return native_chase;
   }
   if (mission_cinematic_phase_ == MissionCinematicPhase::intro) {
     if (legacy_first_mission_ != nullptr && legacy_first_mission_->ready() &&

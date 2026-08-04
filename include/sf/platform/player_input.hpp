@@ -183,8 +183,20 @@ enum class KeyboardMouseAction : std::uint8_t {
 inline constexpr auto keyboard_mouse_action_count =
     static_cast<std::size_t>(KeyboardMouseAction::count);
 
+inline constexpr double default_chase_mouse_yaw_sensitivity = 3.75;
+inline constexpr double default_chase_mouse_pitch_sensitivity = 1.5;
+inline constexpr double minimum_chase_mouse_sensitivity = 0.1;
+inline constexpr double maximum_chase_mouse_sensitivity = 20.0;
+
 struct KeyboardMouseBindings {
   std::array<KeyboardMouseInput, keyboard_mouse_action_count> values{};
+  // Opt-in modern chase control. Disabled preserves the original RMB-only
+  // relative mouse capture and retail tank controls.
+  bool mouse_chase_look{};
+  double chase_mouse_yaw_sensitivity{
+      default_chase_mouse_yaw_sensitivity};
+  double chase_mouse_pitch_sensitivity{
+      default_chase_mouse_pitch_sensitivity};
 
   [[nodiscard]] KeyboardMouseInput
   operator[](KeyboardMouseAction action) const noexcept {

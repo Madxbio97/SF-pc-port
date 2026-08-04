@@ -1657,6 +1657,46 @@ void LegacyGameplayVm::bindSyphonFilterUsaV11BootstrapPlatformCalls() {
   });
 }
 
+void LegacyGameplayVm::bindSyphonFilterUsaV11ChaseMouseYawHook() {
+  // Common actor-facing/camera boundary used by the accepted SF1 Redux mouse
+  // path. The processed controller is preserved in s2 at this instruction.
+  constexpr std::uint32_t boundary = 0x80037b08U;
+  constexpr std::uint32_t horizontal_offset = 0xccU;
+  constexpr std::uint32_t middle_offset = 0xd0U;
+  constexpr std::uint32_t vertical_offset = 0xd4U;
+  constexpr std::int32_t fixed_one = 4096;
+  bindHostCall(boundary, [this](LegacyHostCallContext &context) {
+    if (host_chase_mouse_yaw_enabled_) {
+      const auto command =
+          std::clamp(host_chase_mouse_yaw_pending_, -256, 256);
+      const auto controller = context.registerValue(18U);
+      if (command != 0 && controller != 0U &&
+          context.write32(controller + horizontal_offset,
+                          guestWord(command * fixed_one)) &&
+          context.write32(controller + middle_offset, 0U) &&
+          context.write32(controller + vertical_offset, 0U)) {
+        host_chase_mouse_yaw_command_ = command;
+        host_chase_mouse_yaw_pending_ = 0;
+        ++host_chase_mouse_yaw_hook_count_;
+      }
+    }
+    context.continueGuestInstruction();
+  });
+}
+
+void LegacyGameplayVm::setHostChaseMouseYawInput(std::int32_t delta,
+                                                  bool enabled) noexcept {
+  host_chase_mouse_yaw_enabled_ = enabled;
+  if (!enabled) {
+    host_chase_mouse_yaw_pending_ = 0;
+    host_chase_mouse_yaw_command_ = 0;
+    return;
+  }
+  host_chase_mouse_yaw_pending_ = static_cast<std::int32_t>(std::clamp(
+      static_cast<std::int64_t>(host_chase_mouse_yaw_pending_) + delta,
+      std::int64_t{-1024}, std::int64_t{1024}));
+}
+
 void LegacyGameplayVm::bindSyphonFilterUsaV11EnemyCloseAimHook(
     const LegacyEnemyCloseAimProfile &profile) {
   bindHostCall(profile.boundary, [this,
@@ -2119,6 +2159,10 @@ void LegacyGameplayVm::clearHostCalls() noexcept {
   attached_text_sources_.clear();
   ui_messages_.clear();
   host_aim_ray_patch_count_ = 0U;
+  host_chase_mouse_yaw_pending_ = 0;
+  host_chase_mouse_yaw_command_ = 0;
+  host_chase_mouse_yaw_hook_count_ = 0U;
+  host_chase_mouse_yaw_enabled_ = false;
   enemy_close_aim_patch_count_ = 0U;
   interrupt_callbacks_.fill(0U);
   machine_.setCdRomMedia(nullptr);
@@ -6383,6 +6427,11 @@ bool LegacyGameplayVm::restoreSnapshot(
   ui_messages_ = snapshot.ui_messages;
   pending_actor_drops_ = snapshot.pending_actor_drops;
   weapon_events_.clear();
+  // Host input is presentation-time state and must never replay across a
+  // checkpoint or restart snapshot.
+  host_chase_mouse_yaw_pending_ = 0;
+  host_chase_mouse_yaw_command_ = 0;
+  host_chase_mouse_yaw_enabled_ = false;
   return true;
 }
 
