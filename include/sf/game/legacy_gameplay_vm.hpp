@@ -996,6 +996,7 @@ public:
       std::shared_ptr<LegacyVirtualCd> virtual_cd);
   void bindSyphonFilterUsaV11PlatformCalls();
   void bindSyphonFilterUsaV11BootstrapPlatformCalls();
+  void bindSyphonFilterUsaV11ChaseMouseYawHook();
   void bindSyphonFilterUsaV11HostAimRayHook(
       const LegacyHostAimRayProfile &profile =
           syphonFilterUsaV11HostAimRayProfile());
@@ -1076,6 +1077,13 @@ public:
       std::int32_t yaw,
       const LegacyNativeMissionBridgeProfile &profile =
           syphonFilterUsaV11NativeMissionBridgeProfile()) noexcept;
+  void setHostChaseMouseYawInput(std::int32_t delta, bool enabled) noexcept;
+  [[nodiscard]] std::uint64_t hostChaseMouseYawHookCount() const noexcept {
+    return host_chase_mouse_yaw_hook_count_;
+  }
+  [[nodiscard]] std::int32_t hostChaseMouseYawCommand() const noexcept {
+    return host_chase_mouse_yaw_command_;
+  }
   void setHostAimRay(std::optional<LegacyHostAimRay> ray) noexcept;
   [[nodiscard]] std::uint64_t hostAimRayPatchCount() const noexcept {
     return host_aim_ray_patch_count_;
@@ -1266,9 +1274,13 @@ private:
   LegacyGameplayBridgeReadStage last_bridge_read_stage_{
       LegacyGameplayBridgeReadStage::none};
   std::uint64_t host_aim_ray_patch_count_{};
+  std::int32_t host_chase_mouse_yaw_pending_{};
+  std::int32_t host_chase_mouse_yaw_command_{};
+  std::uint64_t host_chase_mouse_yaw_hook_count_{};
   std::uint64_t enemy_close_aim_patch_count_{};
   bool video_timing_baseline_initialized_{};
   bool audio_frame_tick_initialized_{};
+  bool host_chase_mouse_yaw_enabled_{};
 };
 
 } // namespace sf::game

@@ -146,6 +146,7 @@ LegacyFirstMissionRuntime::LegacyFirstMissionRuntime(
     vm_ = std::make_unique<LegacyGameplayVm>(image.executable());
     vm_->bindSyphonFilterUsaV11BootstrapPlatformCalls();
     vm_->bindSyphonFilterUsaV11VirtualCdCalls(virtual_cd_);
+    vm_->bindSyphonFilterUsaV11ChaseMouseYawHook();
 
     if (mission.selection_index < 0) {
       markFault();
@@ -244,6 +245,13 @@ void LegacyFirstMissionRuntime::setHostAimRay(
     std::optional<LegacyHostAimRay> ray) noexcept {
   if (vm_) {
     vm_->setHostAimRay(std::move(ray));
+  }
+}
+
+void LegacyFirstMissionRuntime::setHostChaseMouseYawInput(
+    std::int32_t delta, bool enabled) noexcept {
+  if (vm_) {
+    vm_->setHostChaseMouseYawInput(delta, enabled);
   }
 }
 

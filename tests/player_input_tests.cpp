@@ -187,6 +187,13 @@ void testKeyboardMouseBindingCatalog() {
   const auto defaults = sf::platform::defaultKeyboardMouseBindings();
   require(sf::platform::keyboard_mouse_action_count == 31U,
           "Keyboard/mouse action catalog is incomplete");
+  require(!defaults.mouse_chase_look,
+          "Optional chase mouse look unexpectedly changed existing controls");
+  require(defaults.chase_mouse_yaw_sensitivity ==
+                  sf::platform::default_chase_mouse_yaw_sensitivity &&
+              defaults.chase_mouse_pitch_sensitivity ==
+                  sf::platform::default_chase_mouse_pitch_sensitivity,
+          "Optional chase mouse sensitivity defaults changed unexpectedly");
   for (std::size_t index = 0U;
        index < sf::platform::keyboard_mouse_action_count; ++index) {
     const auto action = static_cast<KeyboardMouseAction>(index);

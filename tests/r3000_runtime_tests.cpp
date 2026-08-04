@@ -1714,6 +1714,42 @@ void testLegacyGameplayVmBoundary() {
   require(vm.unbindHostCall(overlay_address),
           "Could not remove the pass-through host hook");
 
+  constexpr std::uint32_t chase_mouse_hook = 0x80037b08U;
+  constexpr std::uint32_t chase_mouse_wrapper = overlay_address + 0x100U;
+  constexpr std::array chase_mouse_wrapper_words{
+      encodeI(0x0fU, 0U, 18U, 0x8002U),
+      encodeI(0x0dU, 18U, 18U, 0x0100U),
+      encodeJ(0x02U, chase_mouse_hook),
+      0U,
+  };
+  constexpr std::array chase_mouse_hook_words{
+      encodeI(0x09U, 0U, 2U, 77U),
+      encodeR(31U, 0U, 0U, 0U, 0x08U),
+      0U,
+  };
+  require(vm.loadOverlay(chase_mouse_wrapper,
+                         instructionBytes(chase_mouse_wrapper_words)) &&
+              vm.loadOverlay(chase_mouse_hook,
+                             instructionBytes(chase_mouse_hook_words)),
+          "Legacy chase mouse hook overlays failed to load");
+  vm.bindSyphonFilterUsaV11ChaseMouseYawHook();
+  vm.setHostChaseMouseYawInput(12, true);
+  const auto first_chase_mouse = vm.invoke(chase_mouse_wrapper, {});
+  vm.setHostChaseMouseYawInput(48, true);
+  const auto second_chase_mouse = vm.invoke(chase_mouse_wrapper, {});
+  require(first_chase_mouse.completed() && second_chase_mouse.completed() &&
+              first_chase_mouse.return_value == 77U &&
+              second_chase_mouse.return_value == 77U &&
+              vm.hostChaseMouseYawHookCount() == 2U &&
+              vm.hostChaseMouseYawCommand() == 48,
+          "Chase mouse yaw did not preserve proportional guest commands");
+  vm.setHostChaseMouseYawInput(99, false);
+  const auto disabled_chase_mouse = vm.invoke(chase_mouse_wrapper, {});
+  require(disabled_chase_mouse.completed() &&
+              vm.hostChaseMouseYawHookCount() == 2U &&
+              vm.hostChaseMouseYawCommand() == 0,
+          "Disabled chase mouse yaw still injected a guest command");
+
   constexpr auto retail_aim_profile =
       sf::game::syphonFilterUsaV11HostAimRayProfile();
   static_assert(

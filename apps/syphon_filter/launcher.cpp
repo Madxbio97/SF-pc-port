@@ -18,6 +18,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cwchar>
 #include <cwctype>
 #include <filesystem>
 #include <limits>
@@ -57,6 +58,9 @@ constexpr int change_binding_control_id = 2002;
 constexpr int clear_binding_control_id = 2003;
 constexpr int default_bindings_control_id = 2004;
 constexpr int close_bindings_control_id = 2005;
+constexpr int mouse_chase_look_control_id = 2006;
+constexpr int chase_yaw_sensitivity_control_id = 2007;
+constexpr int chase_pitch_sensitivity_control_id = 2008;
 constexpr int previous_dossier_control_id = 3001;
 constexpr int next_dossier_control_id = 3002;
 constexpr int close_dossier_control_id = 3003;
@@ -109,6 +113,9 @@ struct ControlsState {
   HWND list{};
   HWND change_button{};
   HWND status{};
+  HWND mouse_chase_look{};
+  HWND chase_yaw_sensitivity{};
+  HWND chase_pitch_sensitivity{};
   HFONT title_font{};
   HFONT heading_font{};
   HFONT ui_font{};
@@ -212,6 +219,45 @@ void writeProfileInteger(const std::filesystem::path &path,
       WritePrivateProfileStringW(section, key, text.c_str(), path.c_str()));
 }
 
+std::wstring sensitivityText(double value) {
+  auto text = std::to_wstring(value);
+  while (!text.empty() && text.back() == L'0') {
+    text.pop_back();
+  }
+  if (!text.empty() && text.back() == L'.') {
+    text.pop_back();
+  }
+  return text;
+}
+
+std::optional<double> sensitivityFromControl(HWND control) noexcept {
+  std::array<wchar_t, 64U> text{};
+  const auto copied = GetWindowTextW(control, text.data(),
+                                     static_cast<int>(text.size()));
+  if (copied <= 0 || static_cast<std::size_t>(copied) >= text.size()) {
+    return std::nullopt;
+  }
+  wchar_t *end{};
+  const auto value = std::wcstod(text.data(), &end);
+  while (end != nullptr && std::iswspace(*end) != 0) {
+    ++end;
+  }
+  if (end == text.data() || end == nullptr || *end != L'\0' ||
+      !std::isfinite(value) || value < minimum_chase_mouse_sensitivity ||
+      value > maximum_chase_mouse_sensitivity) {
+    return std::nullopt;
+  }
+  return value;
+}
+
+void refreshChaseSensitivityControls(ControlsState &state) {
+  const auto yaw = sensitivityText(state.input->chase_mouse_yaw_sensitivity);
+  const auto pitch =
+      sensitivityText(state.input->chase_mouse_pitch_sensitivity);
+  SetWindowTextW(state.chase_yaw_sensitivity, yaw.c_str());
+  SetWindowTextW(state.chase_pitch_sensitivity, pitch.c_str());
+}
+
 std::filesystem::path loadGameImagePath() {
   const auto path = launcherSettingsPath(false);
   std::array<wchar_t, 32768U> buffer{};
@@ -282,6 +328,27 @@ void loadSettingsFile(GraphicsSettings &graphics, KeyboardMouseBindings &input,
       input[action] = loaded;
     }
   }
+  input.mouse_chase_look =
+      readProfileInteger(path, L"KeyboardMouse", L"MouseChaseLook",
+                         input.mouse_chase_look ? 1 : 0) != 0;
+  const auto chase_yaw = readProfileInteger(
+      path, L"KeyboardMouse", L"ChaseYawSensitivity",
+      static_cast<int>(std::lround(input.chase_mouse_yaw_sensitivity * 1000.0)));
+  const auto chase_pitch = readProfileInteger(
+      path, L"KeyboardMouse", L"ChasePitchSensitivity",
+      static_cast<int>(
+          std::lround(input.chase_mouse_pitch_sensitivity * 1000.0)));
+  const auto load_sensitivity = [](int scaled, double fallback) {
+    const auto value = static_cast<double>(scaled) / 1000.0;
+    return value >= minimum_chase_mouse_sensitivity &&
+                   value <= maximum_chase_mouse_sensitivity
+               ? value
+               : fallback;
+  };
+  input.chase_mouse_yaw_sensitivity = load_sensitivity(
+      chase_yaw, input.chase_mouse_yaw_sensitivity);
+  input.chase_mouse_pitch_sensitivity = load_sensitivity(
+      chase_pitch, input.chase_mouse_pitch_sensitivity);
 }
 
 void saveSettingsFile(const GraphicsSettings &graphics,
@@ -312,6 +379,15 @@ void saveSettingsFile(const GraphicsSettings &graphics,
     writeProfileInteger(path, L"KeyboardMouse", key.c_str(),
                         static_cast<int>(input[action]));
   }
+  writeProfileInteger(path, L"KeyboardMouse", L"MouseChaseLook",
+                      input.mouse_chase_look ? 1 : 0);
+  writeProfileInteger(
+      path, L"KeyboardMouse", L"ChaseYawSensitivity",
+      static_cast<int>(std::lround(input.chase_mouse_yaw_sensitivity * 1000.0)));
+  writeProfileInteger(
+      path, L"KeyboardMouse", L"ChasePitchSensitivity",
+      static_cast<int>(
+          std::lround(input.chase_mouse_pitch_sensitivity * 1000.0)));
   saveGameImagePath(cue_path);
 }
 
@@ -868,9 +944,24 @@ LRESULT CALLBACK controlsWindowProc(HWND window, UINT message, WPARAM w_param,
     state->status = createControl(window, L"STATIC",
                                   L"Select an action, then press Change.", 0,
                                   472, 332, 244, 62, 0, state->ui_font);
-    createControl(window, L"STATIC",
-                  L"Stealth: crouch + movement\nSide roll: roll + strafe", 0,
-                  472, 398, 244, 44, 0, state->ui_font);
+    state->mouse_chase_look = createControl(
+        window, L"BUTTON", L"Mouse look in chase mode",
+        WS_TABSTOP | BS_AUTOCHECKBOX, 472, 366, 244, 24,
+        mouse_chase_look_control_id, state->ui_font);
+    SendMessageW(state->mouse_chase_look, BM_SETCHECK,
+                 state->input->mouse_chase_look ? BST_CHECKED : BST_UNCHECKED,
+                 0);
+    createControl(window, L"STATIC", L"Horizontal", 0, 472, 394, 112, 20, 0,
+                  state->ui_font);
+    createControl(window, L"STATIC", L"Vertical", 0, 604, 394, 112, 20, 0,
+                  state->ui_font);
+    state->chase_yaw_sensitivity = createControl(
+        window, L"EDIT", L"", WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, 472,
+        416, 112, 26, chase_yaw_sensitivity_control_id, state->ui_font);
+    state->chase_pitch_sensitivity = createControl(
+        window, L"EDIT", L"", WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL, 604,
+        416, 112, 26, chase_pitch_sensitivity_control_id, state->ui_font);
+    refreshChaseSensitivityControls(*state);
     createControl(window, L"BUTTON", L"APPLY", WS_TABSTOP | BS_OWNERDRAW, 472,
                   448, 244, 34, close_bindings_control_id, state->heading_font);
     refreshControlsList(*state);
@@ -939,12 +1030,34 @@ LRESULT CALLBACK controlsWindowProc(HWND window, UINT message, WPARAM w_param,
     }
     if (LOWORD(w_param) == default_bindings_control_id) {
       *state->input = defaultKeyboardMouseBindings();
+      SendMessageW(state->mouse_chase_look, BM_SETCHECK,
+                   state->input->mouse_chase_look ? BST_CHECKED
+                                                  : BST_UNCHECKED,
+                   0);
+      refreshChaseSensitivityControls(*state);
       state->capture.reset();
       refreshControlsList(*state);
       SetWindowTextW(state->status, L"Default controls restored.");
       return 0;
     }
+    if (LOWORD(w_param) == mouse_chase_look_control_id) {
+      state->input->mouse_chase_look =
+          SendMessageW(state->mouse_chase_look, BM_GETCHECK, 0, 0) ==
+          BST_CHECKED;
+      return 0;
+    }
     if (LOWORD(w_param) == close_bindings_control_id) {
+      const auto yaw =
+          sensitivityFromControl(state->chase_yaw_sensitivity);
+      const auto pitch =
+          sensitivityFromControl(state->chase_pitch_sensitivity);
+      if (!yaw.has_value() || !pitch.has_value()) {
+        SetWindowTextW(state->status,
+                       L"Sensitivity must be between 0.10 and 20.00.");
+        return 0;
+      }
+      state->input->chase_mouse_yaw_sensitivity = *yaw;
+      state->input->chase_mouse_pitch_sensitivity = *pitch;
       DestroyWindow(window);
       return 0;
     }

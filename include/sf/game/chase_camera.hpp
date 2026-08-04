@@ -63,6 +63,11 @@ headingDirection(std::int32_t heading) noexcept;
 [[nodiscard]] CameraRay
 cameraRayAtProjectionOffset(const CameraState &camera, double horizontal_offset,
                             double vertical_offset) noexcept;
+// Applies optional modern pitch to an authored chase view without moving its
+// eye or changing projection. Positive pitch looks upward in the game's
+// positive-Y-down world convention.
+[[nodiscard]] CameraState applyChaseCameraPitch(CameraState camera,
+                                                double pitch) noexcept;
 
 class ChaseCamera final {
 public:
