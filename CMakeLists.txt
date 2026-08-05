@@ -4,7 +4,7 @@ if(POLICY CMP0174)
     cmake_policy(SET CMP0174 NEW)
 endif()
 
-project(SyphonFilterPC VERSION 0.1.0 LANGUAGES CXX)
+project(SyphonFilterPC VERSION 0.1.0 LANGUAGES C CXX)
 
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
@@ -207,9 +207,13 @@ if(SF_ENABLE_PSYCROSS)
     sf_set_project_warnings(sf_psycross_backend)
 
     add_executable(syphon_filter
-        apps/syphon_filter/launcher.cpp
         apps/syphon_filter/main.cpp
     )
+    if(WIN32)
+        target_sources(syphon_filter PRIVATE apps/syphon_filter/launcher.cpp)
+    else()
+        target_sources(syphon_filter PRIVATE apps/syphon_filter/launcher_posix.cpp)
+    endif()
     if(WIN32)
         set(SF_LAUNCHER_ICON_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/syphon_filter.ico")
         set(SF_LAUNCHER_ICON_SOURCE

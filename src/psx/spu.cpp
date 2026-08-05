@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cstring>
 #include <limits>
 
 namespace sf::psx {
@@ -206,7 +207,11 @@ Spu::Spu()
 }
 
 void Spu::reset() noexcept {
-  *state_ = {};
+  // Clear the state in place. `*state_ = {}` materialises the ~580 KiB fresh
+  // state as a stack temporary, which overflows the 512 KiB default stack of
+  // macOS worker threads (the mission briefing preloads gameplay on one).
+  std::memset(state_.get(), 0, sizeof(SpuState));
+  state_->cd_input_matrix = {0x80U, 0U, 0U, 0x80U};
   state_->noise_level = 1U;
   clearPcm();
 }

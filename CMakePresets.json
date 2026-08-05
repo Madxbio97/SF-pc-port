@@ -27,6 +27,27 @@
         "VCPKG_TARGET_TRIPLET": "x64-windows",
         "SF_ENABLE_PSYCROSS": "ON"
       }
+    },
+    {
+      "name": "macos",
+      "displayName": "macOS / Clang / Ninja",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/macos",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_PREFIX_PATH": "/opt/homebrew;/opt/homebrew/opt/openal-soft;/usr/local;/usr/local/opt/openal-soft",
+        "SF_WARNINGS_AS_ERRORS": "OFF",
+        "SF_BUILD_TESTS": "ON"
+      }
+    },
+    {
+      "name": "macos-psycross",
+      "displayName": "macOS / Clang / Ninja / PsyCross",
+      "inherits": "macos",
+      "binaryDir": "${sourceDir}/build/macos-psycross",
+      "cacheVariables": {
+        "SF_ENABLE_PSYCROSS": "ON"
+      }
     }
   ],
   "buildPresets": [
@@ -58,6 +79,14 @@
       "configurePreset": "windows-psycross",
       "configuration": "Release",
       "targets": ["syphon_filter"]
+    },
+    {
+      "name": "macos-release",
+      "configurePreset": "macos"
+    },
+    {
+      "name": "macos-psycross-release",
+      "configurePreset": "macos-psycross"
     }
   ],
   "testPresets": [
@@ -77,6 +106,16 @@
       "name": "windows-psycross-release",
       "configurePreset": "windows-psycross",
       "configuration": "Release",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "macos-release",
+      "configurePreset": "macos",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "macos-psycross-release",
+      "configurePreset": "macos-psycross",
       "output": { "outputOnFailure": true }
     }
   ]

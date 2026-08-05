@@ -2659,6 +2659,20 @@ void testCueSheet() {
   require(cue.dataTrack().sectorSize() == 2352, "CUE sector size mismatch");
   require(cue.dataTrack().userDataOffset() == 24, "CUE data offset mismatch");
   require(cue.dataTrack().index_lba == 150, "CUE index mismatch");
+
+  // Single-digit INDEX 1 (CloneCD-style sheets) must parse the same as 01.
+  const auto single_digit_cue_path = directory / "single digit.cue";
+  {
+    std::ofstream cue{single_digit_cue_path, std::ios::trunc};
+    cue << "FILE \"test image.bin\" BINARY\r\n"
+           "   TRACK 1 MODE2/2352\r\n"
+           "   INDEX 1 00:00:00\r\n";
+  }
+  const auto single_digit_cue = sf::disc::CueSheet::load(single_digit_cue_path);
+  require(single_digit_cue.dataTrack().sectorSize() == 2352,
+          "CUE single-digit track sector size mismatch");
+  require(single_digit_cue.dataTrack().index_lba == 0,
+          "CUE single-digit index mismatch");
   std::filesystem::remove_all(directory);
 }
 

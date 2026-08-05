@@ -55,7 +55,7 @@ CueSheet CueSheet::load(const std::filesystem::path& cue_path) {
 
     const std::regex file_pattern{R"(^\s*FILE\s+\"([^\"]+)\"\s+BINARY\s*$)", std::regex::icase};
     const std::regex track_pattern{R"(^\s*TRACK\s+([0-9]+)\s+([^\s]+)\s*$)", std::regex::icase};
-    const std::regex index_pattern{R"(^\s*INDEX\s+01\s+([0-9]+):([0-9]+):([0-9]+)\s*$)", std::regex::icase};
+    const std::regex index_pattern{R"(^\s*INDEX\s+0?1\s+([0-9]+):([0-9]+):([0-9]+)\s*$)", std::regex::icase};
 
     std::optional<std::filesystem::path> binary_path;
     std::optional<TrackMode> mode;

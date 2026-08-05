@@ -4,6 +4,10 @@
 #include "types.h"
 #include "PsyX/common/pgxp_defs.h"
 
+#if !defined(__cplusplus)
+#include <assert.h> // static_assert macro for C11-C17 TUs (MSVC accepts it unconditionally)
+#endif
+
 extern	int (*GPU_printf)(const char *fmt, ...);
 
 #define WAIT_TIME	0x800000
@@ -329,7 +333,7 @@ typedef struct _RECT16 {
 
 #if USE_EXTENDED_PRIM_POINTERS
 
-#if defined(_M_X64) || defined(__amd64__)
+#if defined(_M_X64) || defined(__amd64__) || defined(_M_ARM64) || defined(__aarch64__) || defined(__LP64__)
 
 #define DECLARE_P_ADDR \
 		uintptr_t addr; \
