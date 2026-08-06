@@ -3,6 +3,32 @@
 All notable public-test changes are documented here. The project currently uses
 pre-release tags rather than a stable semantic-versioning promise.
 
+## 0.1.0-public-test.25 - 2026-08-06
+
+### Mission presentation and retries
+
+- Completed localized status messages against their canonical source text and
+  made their backdrops follow the rendered width in both supported languages.
+- Kept the final Mission Failed frame visible long enough to complete its text
+  and restored deterministic world, overlay and fade ordering after retries.
+- Added a framed localized Select Difficulty heading in both supported locales.
+- Preserved checkpoint weapons and ammunition across death and mission-failure
+  retries while leaving a full mission restart authoritative.
+
+### World presentation
+
+- Restored distant authored fire in the second mission with stable prefetch,
+  gradual reveal, fog integration and texture residency.
+- Primed active and prefetched world chunks after checkpoint restores to avoid
+  exposed interiors and layered geometry during the first rebuilt frame.
+- Removed the redundant Agent-only bomb-technician health and suspicion meters;
+  the original retail Danger indicator and remaining Agent meters are unchanged.
+
+### Validation
+
+- Windows x64 PsyCross Release build completed successfully.
+- Full PsyCross CTest suite passed: 40/40, including supported-ROM probes.
+
 ## 0.1.0-public-test.24 - 2026-08-06
 
 ### Difficulty and saves

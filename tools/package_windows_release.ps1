@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "0.1.0-public-test.24",
+    [string]$Version = "0.1.0-public-test.25",
     [string]$Configuration = "Release"
 )
 
