@@ -402,7 +402,7 @@ void testEmdScene() {
 }
 
 void testGmdModel() {
-  std::vector<std::byte> bytes(76);
+  std::vector<std::byte> bytes(88);
   writeLe32(bytes, 0, 0x7b);
   writeLe16(bytes, 4, 2);
   writeLe16(bytes, 6, 0x38);
@@ -416,24 +416,35 @@ void testGmdModel() {
   writeLe32(bytes, 0x18, 0x9fbd1f00U);
   writeLe32(bytes, 0x1c, 0x1f1f0000U);
   writeLe32(bytes, 0x20, 0x9f010200U);
+  writeLe32(bytes, 0x24, 0x00020103U);
   writeLe32(bytes, 0x28, 0x00be001fU);
   writeLe32(bytes, 0x2c, 0x00001f1fU);
   // The second textured triangle repeats vertex zero. Retail NCLIP rejects
   // this zero-area seam even though its compact material byte is non-zero.
   writeLe32(bytes, 0x30, 0x1f000100U);
+  writeLe32(bytes, 0x34, 0x00000000U);
   writeLe32(bytes, 0x38, 0x00000022U);
   writeLe32(bytes, 0x3c, 0x000003deU);
   writeLe32(bytes, 0x40, 0x000ef422U);
   writeLe32(bytes, 0x44, 0x000ef7deU);
+  writeLe32(bytes, 0x48, 0x00000040U);
+  writeLe32(bytes, 0x4c, 0x00004000U);
+  writeLe32(bytes, 0x50, 0x00400000U);
+  writeLe32(bytes, 0x54, 0x000000c0U);
 
   const auto model = sf::assets::GmdModel::parse(bytes);
-  require(model.vertices().size() == 4 && model.triangles().size() == 2,
+  require(model.vertices().size() == 4 && model.normals().size() == 4 &&
+              model.triangles().size() == 2,
           "GMD table counts mismatch");
   require(model.vertices()[2].x == 34 && model.vertices()[2].y == -67,
           "GMD packed vertex mismatch");
   const auto &triangle = model.triangles().front();
   require(triangle.vertex_indices == std::array<std::uint8_t, 3>{0, 2, 1},
           "GMD compact indices mismatch");
+  require(triangle.normal_indices == std::array<std::uint8_t, 3>{3, 1, 2} &&
+              model.normals()[0].x == 64 && model.normals()[1].y == 64 &&
+              model.normals()[2].z == 64 && model.normals()[3].x == -64,
+          "GMD authored corner normals mismatch");
   require(triangle.texture_page == 0xbd && triangle.clut == 0x7ff0 &&
               triangle.flags == 0x1f && triangle.semi_transparent &&
               !triangle.degenerate && model.triangles()[1].degenerate &&
@@ -443,6 +454,56 @@ void testGmdModel() {
               model.renderableTexturePageMask() == (1U << 29U) &&
               model.planar(),
           "GMD texture mask mismatch");
+
+  auto invalid_normal = bytes;
+  writeLe32(invalid_normal, 0x24, 0x00020104U);
+  try {
+    static_cast<void>(sf::assets::GmdModel::parse(invalid_normal));
+    throw std::runtime_error{"Out-of-range GMD normal was accepted"};
+  } catch (const sf::core::Error &error) {
+    require(error.code() == sf::core::ErrorCode::invalid_format,
+            "Invalid GMD normal returned the wrong error code");
+  }
+
+  auto invalid_normal_index_padding = bytes;
+  writeLe32(invalid_normal_index_padding, 0x24, 0x01020103U);
+  try {
+    static_cast<void>(
+        sf::assets::GmdModel::parse(invalid_normal_index_padding));
+    throw std::runtime_error{"Invalid GMD normal-index padding was accepted"};
+  } catch (const sf::core::Error &error) {
+    require(error.code() == sf::core::ErrorCode::invalid_format,
+            "Invalid GMD normal-index padding returned the wrong error code");
+  }
+
+  auto invalid_normal_padding = bytes;
+  writeLe32(invalid_normal_padding, 0x48, 0x7f000040U);
+  try {
+    static_cast<void>(sf::assets::GmdModel::parse(invalid_normal_padding));
+    throw std::runtime_error{"Invalid GMD normal padding was accepted"};
+  } catch (const sf::core::Error &error) {
+    require(error.code() == sf::core::ErrorCode::invalid_format,
+            "Invalid GMD normal padding returned the wrong error code");
+  }
+
+  auto trailing_slack = bytes;
+  trailing_slack.push_back(std::byte{0x54});
+  trailing_slack.push_back(std::byte{0x46});
+  trailing_slack.push_back(std::byte{0x00});
+  const auto slack_model = sf::assets::GmdModel::parse(trailing_slack);
+  require(slack_model.normals().size() == 4U &&
+              slack_model.normals()[3].x == -64,
+          "GMD trailing resource slack was parsed as authored normals");
+
+  auto truncated_normals = bytes;
+  truncated_normals.pop_back();
+  try {
+    static_cast<void>(sf::assets::GmdModel::parse(truncated_normals));
+    throw std::runtime_error{"Truncated GMD normal table was accepted"};
+  } catch (const sf::core::Error &error) {
+    require(error.code() == sf::core::ErrorCode::invalid_format,
+            "Truncated GMD normals returned the wrong error code");
+  }
 }
 
 void testCfireSpawnPoint() {
@@ -621,9 +682,11 @@ void testLegacyDynamicPresentationPolicy() {
           "Guest-owned retail NPC escaped exact-pose rendering");
   require(sf::game::legacyGuestUsesSecondaryItemModel(0x4fU, 0x20U) &&
               sf::game::legacyGuestUsesSecondaryItemModel(0x50U, 0xa0U) &&
+              sf::game::legacyGuestUsesSecondaryItemModel(0x63U, 0x20U) &&
               !sf::game::legacyGuestUsesSecondaryItemModel(0x50U, 0x80U) &&
+              !sf::game::legacyGuestUsesSecondaryItemModel(0x63U, 0x80U) &&
               !sf::game::legacyGuestUsesSecondaryItemModel(0x4eU, 0x20U),
-          "Retail weapon-crate consumed latch lost its secondary model");
+          "Retail item-consumed latch lost its crate/keycard presentation");
   using sf::game::LegacyDedicatedHmdActor;
   const auto dedicated_actor = sf::game::legacyDedicatedHmdActor;
   constexpr auto overlay_handler = 0x80150000U;
@@ -646,6 +709,24 @@ void testLegacyDynamicPresentationPolicy() {
                   sf::game::WeaponId::chopper_gun &&
               !sf::game::legacyDedicatedHmdWeapon(bomb),
           "Dedicated HMD actor/weapon mapping differs from retail identities");
+  constexpr auto hmd_bone_world = sf::game::legacyHmdBoneWorldTranslation(
+      sf::assets::MissionTransform{{}, 120, -340, 560});
+  require(hmd_bone_world == sf::game::LegacyNativePoint{120, 340, 560},
+          "HMD bone translation did not restore native renderer Y");
+  constexpr std::array fully_occluded{false, false, false, false, false};
+  constexpr std::array one_sided_peek{false, false, false, true, false};
+  constexpr std::array exposed_upper_body{true, true, false, false, false};
+  constexpr std::array exposed_side{false, false, false, true, true};
+  constexpr std::array fully_visible{true, true, true, true, true};
+  constexpr std::array incomplete_sample{true, true, true, true};
+  require(!sf::game::legacyPark2FlameDamageVisible(fully_occluded) &&
+              sf::game::legacyPark2FlameDamageVisible(one_sided_peek) &&
+              sf::game::legacyPark2FlameDamageVisible(exposed_upper_body) &&
+              sf::game::legacyPark2FlameDamageVisible(exposed_side) &&
+              sf::game::legacyPark2FlameDamageVisible(fully_visible) &&
+              !sf::game::legacyPark2FlameDamageVisible(incomplete_sample),
+          "PARK2 flame LOS did not admit a one-sided peek or reject full "
+          "cover");
   require(
       dedicated_actor(false, 4U, 9U, 8U, sf::game::legacy_park2_hans_class,
                       sf::game::legacy_park2_hans_handler,
@@ -1043,11 +1124,15 @@ void testEmissiveObjectLightingPolicy() {
                   sf::game::ObjectVisualEffect::none) &&
               sf::game::objectVisualEffectReceivesDepthCue(
                   sf::game::ObjectVisualEffect::lamp_fixture, false) &&
-              !sf::game::objectVisualEffectReceivesDepthCue(
+              sf::game::objectVisualEffectReceivesDepthCue(
                   sf::game::ObjectVisualEffect::lamp_fixture, true) &&
+              sf::game::objectVisualEffectReceivesDepthCue(
+                  sf::game::ObjectVisualEffect::billboard_glow) &&
+              sf::game::objectVisualEffectReceivesDepthCue(
+                  sf::game::ObjectVisualEffect::police_lightbar) &&
               !sf::game::objectVisualEffectReceivesDepthCue(
-                  sf::game::ObjectVisualEffect::billboard_glow),
-          "Emissive lamp presentation inherited scene lighting or fog");
+                  sf::game::ObjectVisualEffect::scanner_xray),
+          "Emissive object lighting or distance-fog policy mismatch");
 }
 
 void testVirusScannerMarkerPolicy() {
@@ -1221,6 +1306,15 @@ void testHmdModel() {
               flat_model.triangles().front().vertex_indices ==
                   std::array<std::uint16_t, 3>{0, 1, 2},
           "Flat-lit HMD vertex stride mismatch");
+
+  auto advisory_normal_count = bytes;
+  writeLe16(advisory_normal_count, 0x34U + 0x36U, 1U);
+  const auto advisory_model =
+      sf::assets::HmdModel::parse(advisory_normal_count);
+  require(advisory_model.parts().front().declared_normal_count == 1U &&
+              advisory_model.parts().front().normal_count == 3U &&
+              advisory_model.normals().size() == 3U,
+          "HMD vertex-indexed authored normals followed advisory +0x36");
 
   auto invalid = bytes;
   writeLe16(invalid, 0x34U + 0x38U, 0);
@@ -2887,61 +2981,43 @@ void testPlayerInventory() {
               flashlight_layers[0] == "FLASHLTA.TIM" &&
               flashlight_layers[1] == "FLASHLTB.TIM",
           "Scanner/flashlight HUD layer mapping mismatch");
-  const auto pistol_pickup = sf::game::droppedItemIconLayers(
-      static_cast<std::uint16_t>(sf::game::WeaponId::pistol_9mm));
-  require(pistol_pickup.size() == 2U && pistol_pickup[0] == "PISTOL2A.TIM" &&
-              pistol_pickup[1] == "PISTOL2B.TIM",
-          "Glock 17 floor pickup must use its authored interface sprite");
-  const auto flamethrower_pickup = sf::game::droppedItemIconLayers(
-      static_cast<std::uint16_t>(sf::game::WeaponId::flamethrower));
-  require(flamethrower_pickup.size() == 2U &&
-              flamethrower_pickup[0] == "FLAKA.TIM" &&
-              flamethrower_pickup[1] == "FLAKB.TIM",
-          "Flamethrower floor pickup must use its authored interface sprite");
+  const auto keycard_pickup = sf::game::droppedItemIconLayers(
+      static_cast<std::uint16_t>(sf::game::WeaponId::key_card));
+  require(keycard_pickup.size() == 2U && keycard_pickup[0] == "KEYCARDA.TIM" &&
+              keycard_pickup[1] == "KEYCARDB.TIM",
+          "Keycard floor pickup must use its authored interface sprite");
   const auto armor_pickup = sf::game::droppedItemIconLayers(0x80U);
-  require(armor_pickup.size() == 1U && armor_pickup[0] == "VEST2.TIM",
-          "Armour floor pickup must use the retail SPFX vest sprite");
-  require(
-      std::abs(sf::game::droppedItemPresentationScale(0x80U) -
-               sf::game::compact_dropped_item_scale) < 0.000001 &&
-          std::abs(
-              sf::game::droppedItemPresentationScale(static_cast<std::uint16_t>(
-                  sf::game::WeaponId::fragmentation_grenade)) -
-              sf::game::compact_dropped_item_scale) < 0.000001 &&
-          std::abs(
-              sf::game::droppedItemPresentationScale(
-                  static_cast<std::uint16_t>(sf::game::WeaponId::gas_grenade)) -
-              sf::game::compact_dropped_item_scale) < 0.000001 &&
-          sf::game::droppedItemPresentationScale(
-              static_cast<std::uint16_t>(sf::game::WeaponId::silenced_9mm)) ==
-              sf::game::compact_dropped_item_scale &&
-          sf::game::droppedItemPresentationScale(
-              static_cast<std::uint16_t>(sf::game::WeaponId::m_16)) == 1.0 &&
-          sf::game::droppedItemPresentationScale(0xffffU) == 1.0,
-      "Small floor pickups no longer use their compact presentation scale");
-  constexpr std::array visible_floor_pickups{
-      sf::game::WeaponId::silenced_9mm,
-      sf::game::WeaponId::pistol_9mm,
-      sf::game::WeaponId::pistol_45,
-      sf::game::WeaponId::g_18,
-      sf::game::WeaponId::combat_shotgun,
-      sf::game::WeaponId::shotgun,
-      sf::game::WeaponId::pk_102,
-      sf::game::WeaponId::m_16,
-      sf::game::WeaponId::biz_2,
-      sf::game::WeaponId::hk_5,
-      sf::game::WeaponId::nightvision_rifle,
-      sf::game::WeaponId::sniper_rifle,
-      sf::game::WeaponId::k3g4,
-      sf::game::WeaponId::key_card,
+  require(armor_pickup.size() == 1U && armor_pickup[0] == "VEST_PICKUP.TIM",
+          "Armour floor pickup must use the dedicated VEST-derived sprite");
+
+  const auto item_model = [](sf::game::WeaponId item) {
+    return sf::game::droppedItemWorldModel(static_cast<std::uint16_t>(item));
   };
-  require(std::ranges::all_of(visible_floor_pickups,
+  require(item_model(sf::game::WeaponId::pistol_9mm) == "GLOCK17" &&
+              item_model(sf::game::WeaponId::fragmentation_grenade) ==
+                  "GRENADE" &&
+              item_model(sf::game::WeaponId::gas_grenade) == "GRENADE" &&
+              item_model(sf::game::WeaponId::m_16) == "M16" &&
+              item_model(sf::game::WeaponId::sniper_rifle) == "SUPERG" &&
+              sf::game::droppedItemWorldModel(0x80U) == "VEST" &&
+              item_model(sf::game::WeaponId::key_card).empty() &&
+              item_model(sf::game::WeaponId::c4_explosives).empty() &&
+              item_model(sf::game::WeaponId::viral_antigen).empty() &&
+              sf::game::droppedItemWorldModel(0xffffU).empty(),
+          "Retail dropped-item GMD table mismatch");
+
+  constexpr std::array sprite_only_pickups{
+      sf::game::WeaponId::unused_357,    sf::game::WeaponId::chopper_gun,
+      sf::game::WeaponId::key_card,      sf::game::WeaponId::c4_explosives,
+      sf::game::WeaponId::viral_antigen,
+  };
+  require(std::ranges::all_of(sprite_only_pickups,
                               [](const auto item) {
                                 return !sf::game::droppedItemIconLayers(
                                             static_cast<std::uint16_t>(item))
                                             .empty();
                               }),
-          "A retail weapon, key-card, or rifle floor pickup has no sprite");
+          "A .ZZZ or utility floor pickup has no authored sprite");
 
   sf::game::PlayerInventory inventory;
   require(inventory.current() == sf::game::WeaponId::silenced_9mm,
@@ -3128,6 +3204,16 @@ void testGameplayHud() {
   require(revealed(0U, 1U, 20U) == 0U && revealed(10U, 1U, 0U) == 0U,
           "Empty gameplay message reveal inputs were not rejected");
 
+  constexpr auto short_message_layout =
+      sf::platform::gameplayMessageHorizontalLayout(384, 16, 96);
+  constexpr auto long_message_layout =
+      sf::platform::gameplayMessageHorizontalLayout(384, 16, 999);
+  require(short_message_layout ==
+                  sf::platform::GameplayMessageHorizontalLayout{144, 96} &&
+              long_message_layout ==
+                  sf::platform::GameplayMessageHorizontalLayout{16, 352},
+          "Localized status backing no longer follows rendered line width");
+
   require(sf::game::originalHudGlyph('!') ==
                   sf::game::OriginalHudGlyph{8U, 24U, 1U} &&
               sf::game::originalHudGlyph('\'') ==
@@ -3203,6 +3289,47 @@ void testGameplayHud() {
                   sf::game::OriginalHeadshotCalloutGeometry{0, -14, 9, -20, 16,
                                                             -20, 8, -28},
           "Original target reticle/callout geometry mismatch");
+
+  const auto reference_reticle_scale =
+      sf::game::originalAimReticleScale(320, 3072.0);
+  const auto near_reticle_scale =
+      sf::game::originalAimReticleScale(320, 1536.0);
+  const auto far_reticle_scale = sf::game::originalAimReticleScale(320, 6144.0);
+  const auto reference_reticle_geometry =
+      sf::game::scaledOriginalAimReticleGeometry(false,
+                                                  reference_reticle_scale);
+  const auto near_reticle_geometry =
+      sf::game::scaledOriginalAimReticleGeometry(false, near_reticle_scale);
+  const auto far_reticle_geometry =
+      sf::game::scaledOriginalAimReticleGeometry(false, far_reticle_scale);
+  require(std::abs(reference_reticle_scale - 0.8) < 0.000001 &&
+              near_reticle_scale > reference_reticle_scale &&
+              reference_reticle_scale > far_reticle_scale &&
+              reference_reticle_geometry ==
+                  sf::game::OriginalAimReticleGeometry{14, 6, 14, 7} &&
+              near_reticle_geometry.half_width >
+                  far_reticle_geometry.half_width &&
+              near_reticle_geometry.half_height >
+                  far_reticle_geometry.half_height &&
+              near_reticle_geometry.horizontal_ray >
+                  far_reticle_geometry.horizontal_ray &&
+              near_reticle_geometry.vertical_ray >
+                  far_reticle_geometry.vertical_ray,
+          "Original target reticle no longer follows projected distance");
+
+  require(sf::game::aimReticleOwner(true, false, false, false) ==
+                  sf::game::AimReticleOwner::host &&
+              sf::game::aimReticleOwner(false, true, false, false) ==
+                  sf::game::AimReticleOwner::host &&
+              sf::game::aimReticleOwner(false, true, true, false) ==
+                  sf::game::AimReticleOwner::host &&
+              sf::game::aimReticleOwner(true, false, false, true) ==
+                  sf::game::AimReticleOwner::none &&
+              sf::game::aimReticleOwner(true, false, true, false) ==
+                  sf::game::AimReticleOwner::none &&
+              sf::game::aimReticleOwner(false, false, false, false) ==
+                  sf::game::AimReticleOwner::none,
+          "Aim reticle ownership no longer has exactly one rendering path");
 
   const auto &pistol =
       sf::game::weaponDefinition(sf::game::WeaponId::silenced_9mm);
@@ -3639,8 +3766,29 @@ void testTitleMenu() {
   require(menu.selection() == 0,
           "Reverse title navigation did not skip unavailable Load Game");
   require(menu.update(sf::game::TitleInput{.confirm = true}) ==
-              sf::game::TitleCommand::new_game,
-          "New Game was unavailable while searching");
+                  sf::game::TitleCommand::none &&
+              menu.phase() == sf::game::TitlePhase::select_difficulty &&
+              menu.selectedDifficulty() ==
+                  sf::game::CampaignDifficulty::original &&
+              !menu.itemEnabled(0) && !menu.itemEnabled(1) &&
+              !menu.itemEnabled(2),
+          "New Game did not open the difficulty picker");
+  static_cast<void>(menu.update(sf::game::TitleInput{.next = true}));
+  require(menu.selectedDifficulty() ==
+              sf::game::CampaignDifficulty::hard_mode,
+          "Difficulty picker did not select Hard Mode");
+  static_cast<void>(menu.update(sf::game::TitleInput{.next = true}));
+  require(menu.selectedDifficulty() == sf::game::CampaignDifficulty::agent &&
+              menu.update(sf::game::TitleInput{.confirm = true}) ==
+                  sf::game::TitleCommand::none &&
+              menu.phase() == sf::game::TitlePhase::agent_warning,
+          "Difficulty picker did not open the Agent warning");
+  require(menu.update(sf::game::TitleInput{}) ==
+                  sf::game::TitleCommand::none &&
+              menu.update(sf::game::TitleInput{.confirm = true}) ==
+                  sf::game::TitleCommand::new_game &&
+              menu.phase() == sf::game::TitlePhase::menu,
+          "Agent warning did not accept a fresh confirmation");
   require(menu.update(sf::game::TitleInput{.cancel = true}) ==
               sf::game::TitleCommand::exit,
           "Title cancel command mismatch");
@@ -3731,6 +3879,26 @@ void testTitleMenu() {
               sf::game::TitleInput{.confirm = true, .confirm_down = true}) ==
               sf::game::TitleCommand::load_game,
           "Fresh slot confirmation was not accepted after release");
+
+  sf::game::TitleMenu held_difficulty_menu;
+  held_difficulty_menu.completeSearch();
+  require(held_difficulty_menu.update(
+              sf::game::TitleInput{.confirm = true, .confirm_down = true}) ==
+                  sf::game::TitleCommand::none &&
+              held_difficulty_menu.phase() ==
+                  sf::game::TitlePhase::select_difficulty,
+          "New Game press did not enter the difficulty picker");
+  require(held_difficulty_menu.update(
+              sf::game::TitleInput{.confirm = true, .confirm_down = true}) ==
+                  sf::game::TitleCommand::none &&
+              held_difficulty_menu.phase() ==
+                  sf::game::TitlePhase::select_difficulty,
+          "Opening New Game press leaked into the difficulty picker");
+  static_cast<void>(held_difficulty_menu.update({}));
+  require(held_difficulty_menu.update(
+              sf::game::TitleInput{.confirm = true, .confirm_down = true}) ==
+                  sf::game::TitleCommand::new_game,
+          "Fresh difficulty confirmation was not accepted after release");
 
   const auto encoded_slots = sf::game::serializeTitleSaveSlots(slots);
   const auto decoded_slots = sf::game::parseTitleSaveSlots(encoded_slots);
@@ -3946,10 +4114,192 @@ void testWorldChunkAppearance() {
 
   constexpr std::array reactivated{std::uint16_t{0U}, std::uint16_t{2U}};
   appearance.advance(reactivated, 1.0 / 60.0);
-  require(appearance.depthCueFloorQ12(0U) > 0L &&
-              appearance.depthCueFloorQ12(0U) <
+  require(appearance.revealProgress(0U) > 0.0 &&
+              appearance.revealProgress(0U) < 1.0 &&
+              appearance.depthCueFloorQ12(0U) > 0L &&
+              appearance.depthCueFloorQ12(0U) <=
                   sf::platform::retail_depth_cue_q12_one,
           "Reactivated world chunk did not enter the smooth transition");
+
+  sf::platform::WorldChunkAppearance portal_jitter;
+  constexpr std::array room_zero{std::uint16_t{0U}};
+  constexpr std::array room_one{std::uint16_t{1U}};
+  portal_jitter.advance(room_zero, 1.0 / 60.0);
+  portal_jitter.advance(room_one, 1.0 / 60.0);
+  const auto cold_room = portal_jitter.depthCueFloorQ12(1U);
+  portal_jitter.advance(room_zero, 1.0 / 60.0);
+  require(portal_jitter.isActive(0U) && !portal_jitter.isActive(1U) &&
+              portal_jitter.depthCueFloorQ12(0U) < cold_room,
+          "One-frame portal jitter restarted a warm chunk from full fog");
+
+  sf::platform::WorldChunkAppearance authored_prefetch;
+  authored_prefetch.advance(room_zero, 1.0 / 60.0, room_one, 10.0, 20.0);
+  require(authored_prefetch.isActive(0U) &&
+              !authored_prefetch.isActive(1U) &&
+              authored_prefetch.isWarm(1U) &&
+              authored_prefetch.revealProgress(1U) == 0.0 &&
+              std::abs(authored_prefetch.revealCoordinate(1U, 10.0, 120.0) -
+                       100.0) < 0.000001 &&
+              std::abs(authored_prefetch.revealCoordinate(1U, 110.0, 20.0) -
+                       100.0) < 0.000001,
+          "A prefetched world chunk did not start hidden from its fixed "
+          "origin");
+  authored_prefetch.advance(
+      room_zero,
+      sf::platform::world_chunk_fade_seconds *
+          sf::platform::world_chunk_prefetch_lead * 0.5,
+      room_one, 100.0, 20.0);
+  const auto warming_progress = authored_prefetch.revealProgress(1U);
+  require(warming_progress > 0.0 &&
+              warming_progress < sf::platform::world_chunk_prefetch_lead &&
+              std::abs(authored_prefetch.revealCoordinate(1U, 10.0, 120.0) -
+                       100.0) < 0.000001,
+          "Prefetch progress or its captured reveal origin was not stable");
+  authored_prefetch.advance(
+      room_zero,
+      sf::platform::world_chunk_fade_seconds *
+          sf::platform::world_chunk_prefetch_lead,
+      room_one, 100.0, 20.0);
+  require(authored_prefetch.revealProgress(1U) ==
+              sf::platform::world_chunk_prefetch_lead,
+          "Prefetch progress did not stop at its presentation lead");
+
+  authored_prefetch.advance(room_one, 1.0 / 60.0,
+                            std::span<const std::uint16_t>{}, 100.0, 20.0);
+  const auto prefetched_progress = authored_prefetch.revealProgress(1U);
+  require(authored_prefetch.isActive(1U) &&
+              !authored_prefetch.isWarm(1U) &&
+              prefetched_progress > sf::platform::world_chunk_prefetch_lead &&
+              prefetched_progress < 1.0 &&
+              authored_prefetch.depthCueFloorQ12(1U) > 0L &&
+              std::abs(authored_prefetch.revealCoordinate(1U, 10.0, 120.0) -
+                       100.0) < 0.000001,
+          "An activated prefetch bypassed its stable partial reveal");
+
+  const auto spatial_floor = sf::platform::worldChunkSpatialDepthCueFloorQ12;
+  constexpr auto near_depth = 100.0;
+  constexpr auto middle_depth = 600.0;
+  constexpr auto far_depth = 1100.0;
+  require(spatial_floor(0.0, near_depth, near_depth, far_depth) ==
+                  sf::platform::retail_depth_cue_q12_one &&
+              spatial_floor(0.0, far_depth, near_depth, far_depth) ==
+                  sf::platform::retail_depth_cue_q12_one &&
+              spatial_floor(1.0, near_depth, near_depth, far_depth) == 0L &&
+              spatial_floor(1.0, far_depth, near_depth, far_depth) == 0L,
+          "Spatial chunk reveal endpoints are not exact");
+  const auto spatial_near =
+      spatial_floor(0.5, near_depth, near_depth, far_depth);
+  const auto spatial_middle =
+      spatial_floor(0.5, middle_depth, near_depth, far_depth);
+  const auto spatial_far =
+      spatial_floor(0.5, far_depth, near_depth, far_depth);
+  require(spatial_near < spatial_middle && spatial_middle < spatial_far &&
+              spatial_floor(0.25, middle_depth, near_depth, far_depth) >=
+                  spatial_middle &&
+              spatial_middle >=
+                  spatial_floor(0.75, middle_depth, near_depth, far_depth),
+          "Spatial chunk reveal is not a monotonic near-to-far wave");
+
+  authored_prefetch.advance(room_one,
+                            sf::platform::world_chunk_fade_seconds);
+  require(authored_prefetch.revealProgress(1U) == 1.0 &&
+              authored_prefetch.depthCueFloorQ12(1U) == 0L,
+          "A prefetched world chunk did not finish its reveal");
+}
+
+void testWorldPresentationEnvelope() {
+  constexpr std::array retained{std::uint16_t{2U}, std::uint16_t{7U}};
+  constexpr std::array turned_camera{std::uint16_t{7U}, std::uint16_t{9U},
+                                     std::uint16_t{9U}};
+  const auto widened = sf::game::buildWorldPresentationEnvelope(
+      retained, turned_camera, false);
+  require(widened ==
+              std::vector<std::uint16_t>{std::uint16_t{2U},
+                                         std::uint16_t{7U},
+                                         std::uint16_t{9U}},
+          "A camera-dependent portal set discarded the exterior shell");
+
+  const auto next_room = sf::game::buildWorldPresentationEnvelope(
+      widened, turned_camera, true);
+  require(next_room ==
+              std::vector<std::uint16_t>{std::uint16_t{7U},
+                                         std::uint16_t{9U}},
+          "A real room transition retained the previous room envelope");
+
+  constexpr std::array visible_terrain{
+      std::uint16_t{2U}, std::uint16_t{7U}, std::uint16_t{2U}};
+  constexpr std::array authored_tail{
+      std::uint16_t{11U}, std::uint16_t{9U}, std::uint16_t{8U},
+      std::uint16_t{9U}};
+  constexpr std::array portal_candidates{
+      std::uint16_t{7U}, std::uint16_t{8U}, std::uint16_t{9U},
+      std::uint16_t{8U}};
+  const auto validated_tail_choice = sf::game::buildWorldTerrainEnvelope(
+      visible_terrain, authored_tail, portal_candidates);
+  require(validated_tail_choice ==
+                  std::vector<std::uint16_t>{std::uint16_t{2U},
+                                             std::uint16_t{7U},
+                                             std::uint16_t{9U}} &&
+              validated_tail_choice.size() == 3U,
+          "Terrain lookahead did not prefer one validated DAT-tail step");
+
+  constexpr std::array far_authored_tail{
+      std::uint16_t{13U}, std::uint16_t{12U}, std::uint16_t{7U}};
+  constexpr std::array near_room_candidates{
+      std::uint16_t{7U}, std::uint16_t{9U}, std::uint16_t{12U},
+      std::uint16_t{13U}};
+  const auto connected_far_choice = sf::game::buildWorldTerrainEnvelope(
+      validated_tail_choice, far_authored_tail, near_room_candidates);
+  require(connected_far_choice ==
+              std::vector<std::uint16_t>{std::uint16_t{2U},
+                                         std::uint16_t{7U},
+                                         std::uint16_t{9U},
+                                         std::uint16_t{13U}},
+          "A second connected terrain lookahead step was not retained");
+
+  constexpr std::array distant_authored_tail{
+      std::uint16_t{17U}, std::uint16_t{15U}, std::uint16_t{13U}};
+  constexpr std::array far_room_candidates{
+      std::uint16_t{13U}, std::uint16_t{15U}, std::uint16_t{17U}};
+  const auto connected_distant_choice = sf::game::buildWorldTerrainEnvelope(
+      connected_far_choice, distant_authored_tail, far_room_candidates);
+  require(sf::game::world_terrain_lookahead_steps == 3U &&
+              connected_distant_choice ==
+                  std::vector<std::uint16_t>{std::uint16_t{2U},
+                                             std::uint16_t{7U},
+                                             std::uint16_t{9U},
+                                             std::uint16_t{13U},
+                                             std::uint16_t{17U}},
+          "A third connected terrain lookahead step was not retained");
+
+  constexpr std::array unmatched_tail{
+      std::uint16_t{11U}, std::uint16_t{12U}};
+  constexpr std::array fallback_candidates{
+      std::uint16_t{7U}, std::uint16_t{8U}, std::uint16_t{8U},
+      std::uint16_t{9U}};
+  const auto fallback_choice = sf::game::buildWorldTerrainEnvelope(
+      visible_terrain, unmatched_tail, fallback_candidates);
+  require(fallback_choice ==
+              std::vector<std::uint16_t>{std::uint16_t{2U},
+                                         std::uint16_t{7U},
+                                         std::uint16_t{8U}},
+          "Terrain lookahead did not use the first unseen portal fallback");
+
+  constexpr std::array duplicate_visible{
+      std::uint16_t{4U}, std::uint16_t{4U}, std::uint16_t{5U},
+      std::uint16_t{5U}};
+  constexpr std::array already_visible{
+      std::uint16_t{5U}, std::uint16_t{4U}, std::uint16_t{5U}};
+  const auto duplicate_only = sf::game::buildWorldTerrainEnvelope(
+      duplicate_visible, already_visible, already_visible);
+  const auto empty = sf::game::buildWorldTerrainEnvelope(
+      std::span<const std::uint16_t>{}, std::span<const std::uint16_t>{},
+      std::span<const std::uint16_t>{});
+  require(duplicate_only ==
+                  std::vector<std::uint16_t>{std::uint16_t{4U},
+                                             std::uint16_t{5U}} &&
+              empty.empty(),
+          "Terrain lookahead retained duplicates or invented an empty tail");
 }
 
 void testPlayerCameraFade() {
@@ -4199,6 +4549,7 @@ int main() {
     testActorShadowReceiverStability();
     testRetailTerrainDepthCuePolicy();
     testWorldChunkAppearance();
+    testWorldPresentationEnvelope();
     testPlayerCameraFade();
     testPresentationFrameMeter();
     std::cout << "All tests passed\n";

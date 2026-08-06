@@ -761,6 +761,31 @@ void testRetailVertexLightDirectionAndMalformedRecordsFailClosed() {
           "Oversized retail light list escaped its fixed guest capacity");
 }
 
+void testPreparedRetailVertexLightMatchesExactPath() {
+  auto source = retailLight();
+  source.flags = 1U;
+  const auto prepared = sf::game::prepareRetailVertexLight(source);
+  require(prepared.has_value(), "Valid retail light was not prepared");
+  const std::array raw_lights{source};
+  const std::array prepared_lights{*prepared};
+  constexpr std::array points{
+      sf::game::DynamicLightPoint{10.0, 20.0, -226.0},
+      sf::game::DynamicLightPoint{42.0, 12.0, -98.0},
+      sf::game::DynamicLightPoint{-12.0, 48.0, 286.0},
+  };
+  for (const auto point : points) {
+    require(sf::game::applyRetailVertexLightingPacked(0x00204060U, raw_lights,
+                                                      point, 320) ==
+                sf::game::applyRetailVertexLightingPacked(
+                    0x00204060U, prepared_lights, point, 320),
+            "Prepared retail light changed exact projection output");
+  }
+
+  source.extent = 0;
+  require(!sf::game::prepareRetailVertexLight(source),
+          "Malformed retail light entered the prepared path");
+}
+
 void testRetailVertexLightRayUsesGuestMatrixAndAttachedAxis() {
   auto source = retailLight();
   source.flags = 1U;
@@ -871,6 +896,7 @@ int main() {
     testRetailVertexLightShiftSemanticsAreExact();
     testRetailVertexLightThresholdMaskAndSaturation();
     testRetailVertexLightDirectionAndMalformedRecordsFailClosed();
+    testPreparedRetailVertexLightMatchesExactPath();
     testRetailVertexLightRayUsesGuestMatrixAndAttachedAxis();
     testMissionFlashlightRecordLightsItsRetailForwardAxis();
     testCaveFlashlightUsesRetailWorldYAxis();

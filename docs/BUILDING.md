@@ -52,6 +52,9 @@ build/windows-psycross/Release/syphon_filter.exe
 The build also stages the required dossier images and runtime DLLs beside the
 executable. Do not launch from an intermediate directory that lacks those files.
 
+Release builds enable interprocedural optimization by default. Configure with
+`-DSF_ENABLE_RELEASE_IPO=OFF` only when diagnosing compiler or linker problems.
+
 ## Core-only build
 
 For headless gameplay/emulator work:
@@ -162,9 +165,10 @@ voices, FMV or a game image.
 Build `syphon_filter` first, then run:
 
 ```powershell
+$Version = '<version>'
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File tools/package_windows_release.ps1 `
-  -Version 0.1.0-public-test.15 `
+  -Version $Version `
   -Configuration Release
 ```
 
@@ -176,6 +180,9 @@ and produces a ZIP plus a `.zip.sha256` sidecar under `dist/`.
 The script refuses to overwrite an existing release. Move an old artifact aside
 or choose a new version. See [RELEASING.md](RELEASING.md) for the complete release
 checklist.
+
+Use [PERFORMANCE.md](PERFORMANCE.md) for performance changes; a successful build
+alone does not establish 240 FPS.
 
 ## Build-directory hygiene
 

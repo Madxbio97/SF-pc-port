@@ -23,6 +23,7 @@ physical keyboard scancodes or mouse inputs and are saved in
 | Weapon menu previous / next | Wheel Down / Wheel Up | Open and scroll the retail weapon ribbon |
 | Pause menu | Escape | Open or close pause |
 | Quick weapon 1..10 | 1..9, 0 | Equip the corresponding available quick slot |
+| Performance counter | F6 | Show or hide presentation FPS and frame time |
 
 Mouse movement controls the sight only while Aim is held. Crouch plus movement
 is the stealth locomotion path; Roll plus Strafe selects a side roll. These are

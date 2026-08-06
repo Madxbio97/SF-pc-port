@@ -20,13 +20,22 @@ weaponIcon(std::string_view first = {}, std::string_view second = {},
   return WeaponIconDefinition{{first, second, third}};
 }
 
+constexpr double aim_reticle_reference_projection = 320.0;
+constexpr double aim_reticle_reference_depth = 3072.0;
+constexpr double aim_reticle_reference_scale = 0.8;
+constexpr double aim_reticle_minimum_scale = 0.08;
+constexpr double aim_reticle_maximum_scale = 2.4;
+
 constexpr std::array<std::string_view, 2U> pistol_9mm_pickup_layers{
     "PISTOL2A.TIM", "PISTOL2B.TIM"};
 constexpr std::array<std::string_view, 2U> unused_357_pickup_layers{
     "PISTOL3A.TIM", "PISTOL3B.TIM"};
 constexpr std::array<std::string_view, 2U> flamethrower_pickup_layers{
     "FLAKA.TIM", "FLAKB.TIM"};
-constexpr std::array<std::string_view, 1U> armor_pickup_layers{"VEST2.TIM"};
+constexpr std::array<std::string_view, 1U> chopper_gun_pickup_layers{
+    "CHNGUN_PICKUP.TIM"};
+constexpr std::array<std::string_view, 1U> armor_pickup_layers{
+    "VEST_PICKUP.TIM"};
 
 constexpr std::array weapon_definitions{
     WeaponDefinition{WeaponId::unarmed, "No Weapon", weaponIcon(), 0U, 0U,
@@ -423,6 +432,35 @@ originalAimReticleGeometry(bool head_target) noexcept {
                      : OriginalAimReticleGeometry{17, 8, 17, 9};
 }
 
+double originalAimReticleScale(std::int32_t projection,
+                               double view_depth) noexcept {
+  if (projection <= 0 || !std::isfinite(view_depth) || view_depth <= 0.0) {
+    return aim_reticle_reference_scale;
+  }
+  // Preserve inverse-perspective scaling across the collision range. These
+  // constants calibrate one shared first-person/auto-lock presentation path.
+  return std::clamp(
+      aim_reticle_reference_scale * static_cast<double>(projection) /
+          aim_reticle_reference_projection * aim_reticle_reference_depth /
+          view_depth,
+      aim_reticle_minimum_scale, aim_reticle_maximum_scale);
+}
+
+OriginalAimReticleGeometry
+scaledOriginalAimReticleGeometry(bool head_target, double scale) noexcept {
+  const auto safe_scale = std::isfinite(scale)
+                              ? std::clamp(scale, aim_reticle_minimum_scale,
+                                           aim_reticle_maximum_scale)
+                              : aim_reticle_reference_scale;
+  const auto scaled = [safe_scale](int value) {
+    return std::max(1, static_cast<int>(std::lround(static_cast<double>(value) *
+                                                    safe_scale)));
+  };
+  const auto base = originalAimReticleGeometry(head_target);
+  return {scaled(base.half_width), scaled(base.half_height),
+          scaled(base.horizontal_ray), scaled(base.vertical_ray)};
+}
+
 OriginalHeadshotCalloutGeometry originalHeadshotCalloutGeometry() noexcept {
   return OriginalHeadshotCalloutGeometry{
       0, -14, 9, -20, 16, -20, 8, -28,
@@ -529,29 +567,10 @@ droppedItemIconLayers(std::uint16_t item) noexcept {
     return unused_357_pickup_layers;
   case WeaponId::flamethrower:
     return flamethrower_pickup_layers;
+  case WeaponId::chopper_gun:
+    return chopper_gun_pickup_layers;
   default:
     return weapon_definitions[item].icon.layers();
-  }
-}
-
-double droppedItemPresentationScale(std::uint16_t item) noexcept {
-  if (item == 0x80U) {
-    return compact_dropped_item_scale;
-  }
-  if (item >= weapon_slot_count) {
-    return 1.0;
-  }
-  switch (static_cast<WeaponId>(item)) {
-  case WeaponId::silenced_9mm:
-  case WeaponId::pistol_9mm:
-  case WeaponId::unused_357:
-  case WeaponId::pistol_45:
-  case WeaponId::g_18:
-  case WeaponId::fragmentation_grenade:
-  case WeaponId::gas_grenade:
-    return compact_dropped_item_scale;
-  default:
-    return 1.0;
   }
 }
 

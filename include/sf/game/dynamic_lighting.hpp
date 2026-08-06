@@ -209,6 +209,16 @@ struct RetailVertexLightState {
   std::uint32_t channel_mask{0x00ffffffU};
 };
 
+struct PreparedRetailVertexLight {
+  RetailVertexLightState state;
+  std::array<std::int16_t, 9U> view_rotation{};
+  std::array<std::int32_t, 3U> inverse_translation{};
+};
+
+// Precomputes the GsSetView2 matrix work shared by every illuminated vertex.
+[[nodiscard]] std::optional<PreparedRetailVertexLight>
+prepareRetailVertexLight(const RetailVertexLightState &light) noexcept;
+
 struct RetailVertexLightRay {
   DynamicLightPoint origin;
   DynamicLightPoint direction;
@@ -230,10 +240,19 @@ retailVertexLightRay(const RetailVertexLightState &light) noexcept;
 [[nodiscard]] std::uint32_t applyRetailVertexLightingPacked(
     std::uint32_t packed_color, std::span<const RetailVertexLightState> lights,
     DynamicLightPoint world_point, std::int32_t projection) noexcept;
+[[nodiscard]] std::uint32_t applyRetailVertexLightingPacked(
+    std::uint32_t packed_color,
+    std::span<const PreparedRetailVertexLight> lights,
+    DynamicLightPoint world_point, std::int32_t projection) noexcept;
 
 [[nodiscard]] DynamicLightVertexColor
 applyRetailVertexLighting(DynamicLightVertexColor base,
                           std::span<const RetailVertexLightState> lights,
+                          DynamicLightPoint world_point,
+                          std::int32_t projection) noexcept;
+[[nodiscard]] DynamicLightVertexColor
+applyRetailVertexLighting(DynamicLightVertexColor base,
+                          std::span<const PreparedRetailVertexLight> lights,
                           DynamicLightPoint world_point,
                           std::int32_t projection) noexcept;
 

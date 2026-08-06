@@ -1,4 +1,5 @@
 #include "psycross_scene_viewer.hpp"
+#include "chopper_gun_pickup_texture.hpp"
 #include "muzzle_flash_texture.hpp"
 #include "psycross_audio_output.hpp"
 #include "psycross_font_texture.hpp"
@@ -6,10 +7,12 @@
 #include "psycross_runtime_guards.hpp"
 #include "psycross_vram.hpp"
 #include "psycross_window_mode.hpp"
+#include "vest_pickup_texture.hpp"
 
 #include "sf/assets/tim_image.hpp"
 #include "sf/core/error.hpp"
 #include "sf/core/polygon_clipper.hpp"
+#include "sf/game/agent_mission_hud.hpp"
 #include "sf/game/dynamic_lighting.hpp"
 #include "sf/game/effects.hpp"
 #include "sf/game/gameplay.hpp"
@@ -101,12 +104,16 @@ constexpr std::uint16_t effect_resident_secondary_clut_y = 253U;
 constexpr std::uint16_t muzzle_flash_resident_u = 0U;
 constexpr std::uint16_t muzzle_flash_resident_clut_y = 252U;
 constexpr std::uint16_t pickup_resident_clut_y = 248U;
-// Pack the 32x32 vest below YELOSHOT in the already reserved lower half of
-// CFIRE page 5. The previous framebuffer placement overlapped the relocated
-// mission CLUT rows (including Gabe's skin palette).
+// Keep the 32x32 armour sprite in the audited free part of CFIRE page 5.
+// Its independent CLUT avoids corrupting the resident HUD and effect palettes.
 constexpr std::uint16_t pickup_resident_x = 336U;
 constexpr std::uint16_t pickup_resident_y = 224U;
-constexpr std::string_view armor_pickup_texture = "VEST2.TIM";
+constexpr std::string_view armor_pickup_texture = "VEST_PICKUP.TIM";
+// The remaining lower-right strip ends immediately below the bullet marks.
+constexpr std::uint16_t chopper_gun_pickup_resident_clut_y = 249U;
+constexpr std::uint16_t chopper_gun_pickup_resident_x = 352U;
+constexpr std::uint16_t chopper_gun_pickup_resident_y = 240U;
+constexpr std::string_view chopper_gun_pickup_texture = "CHNGUN_PICKUP.TIM";
 constexpr std::uint16_t environment_resident_clut_y = 251U;
 
 [[nodiscard]] bool textureDiagnosticsEnabled() noexcept {

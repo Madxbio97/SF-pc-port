@@ -68,22 +68,78 @@ private:
 };
 
 enum class TitlePhase {
-    searching,
-    menu,
-    load_slots,
+  searching,
+  menu,
+  select_difficulty,
+  agent_warning,
+  load_slots,
 };
 
-struct TitleSaveSlot {
-    bool occupied{};
-    std::uint32_t mission_index{};
-    bool campaign_complete{};
-    // A completed mission is committed in two durable phases. While this is
-    // set, mission_index still names the completed mission and its EOL must be
-    // played before the cursor may advance (or become campaign_complete).
-    std::optional<std::uint32_t> pending_eol_mission;
-    std::optional<CampaignCarryState> carry;
+enum class CampaignDifficulty : std::uint8_t {
+  original,
+  hard_mode,
+  agent,
+};
 
-    friend bool operator==(const TitleSaveSlot&, const TitleSaveSlot&) = default;
+[[nodiscard]] constexpr bool
+validCampaignDifficulty(CampaignDifficulty difficulty) noexcept {
+  return difficulty == CampaignDifficulty::original ||
+         difficulty == CampaignDifficulty::hard_mode ||
+         difficulty == CampaignDifficulty::agent;
+}
+
+[[nodiscard]] constexpr std::string_view
+campaignDifficultyDisplayName(CampaignDifficulty difficulty) noexcept {
+  switch (difficulty) {
+  case CampaignDifficulty::original:
+    return "Normal";
+  case CampaignDifficulty::hard_mode:
+    return "Hard Mode";
+  case CampaignDifficulty::agent:
+    return "Agent";
+  }
+  return {};
+}
+
+[[nodiscard]] constexpr std::string_view
+campaignDifficultyGameplayNotice(CampaignDifficulty difficulty) noexcept {
+  switch (difficulty) {
+  case CampaignDifficulty::original:
+    return {};
+  case CampaignDifficulty::hard_mode:
+    return "Playing on HARD difficulty";
+  case CampaignDifficulty::agent:
+    return "Playing Agent mode";
+  }
+  return {};
+}
+
+[[nodiscard]] constexpr std::string_view
+campaignDifficultyGameplayPresentation(std::string_view retail_source,
+                                       CampaignDifficulty difficulty) noexcept {
+  const auto hard_notice =
+      campaignDifficultyGameplayNotice(CampaignDifficulty::hard_mode);
+  const auto is_hard_notice =
+      retail_source == hard_notice ||
+      (retail_source.size() >= 8U && hard_notice.starts_with(retail_source));
+  return difficulty == CampaignDifficulty::agent && is_hard_notice
+             ? campaignDifficultyGameplayNotice(CampaignDifficulty::agent)
+             : retail_source;
+}
+
+struct TitleSaveSlot {
+  bool occupied{};
+  std::uint32_t mission_index{};
+  bool campaign_complete{};
+  // A completed mission is committed in two durable phases. While this is
+  // set, mission_index still names the completed mission and its EOL must be
+  // played before the cursor may advance (or become campaign_complete).
+  std::optional<std::uint32_t> pending_eol_mission;
+  std::optional<CampaignCarryState> carry;
+  CampaignDifficulty difficulty{CampaignDifficulty::original};
+
+  friend bool operator==(const TitleSaveSlot &,
+                         const TitleSaveSlot &) = default;
 };
 
 inline constexpr std::size_t title_save_slot_count = 5U;
@@ -153,6 +209,7 @@ public:
     static constexpr int screen_width = 320;
     static constexpr int screen_height = 240;
     static constexpr std::size_t item_count = 3;
+    static constexpr std::size_t difficulty_count = 3;
     static constexpr std::size_t visual_count = static_cast<std::size_t>(TitleVisual::count);
     static constexpr std::uint32_t search_frames = 60;
     static constexpr std::uint32_t movie_fade_frame = 0x274;
@@ -171,6 +228,18 @@ public:
     void setSaveSlots(TitleSaveSlots slots) noexcept { save_slots_ = slots; }
     [[nodiscard]] const TitleSaveSlots& saveSlots() const noexcept { return save_slots_; }
     [[nodiscard]] std::size_t loadSlotSelection() const noexcept { return load_slot_selection_; }
+    [[nodiscard]] std::size_t difficultySelection() const noexcept {
+        return difficulty_selection_;
+    }
+    [[nodiscard]] CampaignDifficulty selectedDifficulty() const noexcept {
+        return static_cast<CampaignDifficulty>(difficulty_selection_);
+    }
+    [[nodiscard]] std::uint8_t
+    difficultyBrightness(std::size_t index) const noexcept {
+        return index < difficulty_brightness_.size()
+            ? difficulty_brightness_[index]
+            : 0U;
+    }
     [[nodiscard]] std::uint32_t remainingSearchFrames() const noexcept {
         return remaining_search_frames_;
     }
@@ -183,9 +252,13 @@ private:
     TitlePhase phase_{TitlePhase::searching};
     std::size_t selection_{};
     std::size_t load_slot_selection_{};
+    std::size_t difficulty_selection_{};
     bool load_slot_confirm_armed_{true};
+    bool difficulty_confirm_armed_{true};
+    bool agent_warning_confirm_armed_{true};
     std::uint32_t remaining_search_frames_{search_frames};
     std::array<std::uint8_t, visual_count> brightness_{};
+    std::array<std::uint8_t, difficulty_count> difficulty_brightness_{};
     TitleSaveSlots save_slots_{};
 };
 

@@ -79,7 +79,10 @@ extern "C"
 	extern int g_cfg_swapInterval;
 	extern int g_cfg_pgxpZBuffer;
 	extern int g_cfg_bilinearFiltering;
+	extern int g_cfg_trilinearFiltering;
 	extern int g_cfg_anisotropicFiltering;
+	extern int g_cfg_smaa;
+	extern int g_cfg_volumetricFog;
 	extern int g_cfg_pgxpTextureCorrection;
 	extern int g_cfg_msaaSamples;
 	extern int g_cfg_aspectMode;

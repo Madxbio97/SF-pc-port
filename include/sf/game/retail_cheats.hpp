@@ -10,18 +10,16 @@ namespace sf::game {
 // Button masks use the normal host representation (one bit means held).
 enum class RetailCheat : std::uint8_t {
   all_weapons,
-  hard_mode,
   one_shot_kills,
   stage_select,
   weak_enemies,
   movie_theater,
 };
 
-inline constexpr std::size_t retail_cheat_count = 6U;
+inline constexpr std::size_t retail_cheat_count = 5U;
 
 struct RetailCheatState {
   bool all_weapons{};
-  bool hard_mode{};
   bool one_shot_kills{};
   bool stage_select{};
   bool weak_enemies{};
@@ -43,10 +41,6 @@ enum class RetailPauseCheatContext : std::uint8_t {
   silenced_9mm,
   select_mission,
 };
-
-[[nodiscard]] std::optional<RetailCheat>
-detectRetailTitleCheat(std::uint16_t held_buttons,
-                       bool new_game_selected) noexcept;
 
 [[nodiscard]] std::optional<RetailCheat>
 detectRetailPauseCheat(std::uint16_t held_buttons,

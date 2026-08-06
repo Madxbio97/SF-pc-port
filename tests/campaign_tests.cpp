@@ -299,7 +299,9 @@ void testSaveMigrationAndCompletedSlotUi() {
   require(migrated && (*migrated)[0].occupied &&
               (*migrated)[0].mission_index == 7U &&
               !(*migrated)[0].campaign_complete &&
-              !(*migrated)[0].pending_eol_mission,
+              !(*migrated)[0].pending_eol_mission &&
+              (*migrated)[0].difficulty ==
+                  sf::game::CampaignDifficulty::original,
           "V1 campaign save did not migrate to the current slot model");
 
   constexpr std::string_view version_two_save{"SFPC_SAVE_V2\n"
@@ -311,12 +313,43 @@ void testSaveMigrationAndCompletedSlotUi() {
   const auto version_two = sf::game::parseTitleSaveSlots(version_two_save);
   require(version_two && (*version_two)[0].occupied &&
               (*version_two)[0].mission_index == 11U &&
-              !(*version_two)[0].pending_eol_mission,
+              !(*version_two)[0].pending_eol_mission &&
+              (*version_two)[0].difficulty ==
+                  sf::game::CampaignDifficulty::original,
           "V2 campaign save did not migrate to the current slot model");
+
+  constexpr std::string_view version_three_save{
+      "SFPC_SAVE_V3\n"
+      "0 1 4 0 0 0\n"
+      "1 0 0 0 0 0\n"
+      "2 0 0 0 0 0\n"
+      "3 0 0 0 0 0\n"
+      "4 0 0 0 0 0\n"};
+  const auto version_three =
+      sf::game::parseTitleSaveSlots(version_three_save);
+  require(version_three &&
+              (*version_three)[0].difficulty ==
+                  sf::game::CampaignDifficulty::original,
+          "V3 campaign save did not default to Original difficulty");
+
+  constexpr std::string_view version_four_save{
+      "SFPC_SAVE_V4\n"
+      "0 1 9 0 0 0 0\n"
+      "1 0 0 0 0 0 0\n"
+      "2 0 0 0 0 0 0\n"
+      "3 0 0 0 0 0 0\n"
+      "4 0 0 0 0 0 0\n"};
+  const auto version_four =
+      sf::game::parseTitleSaveSlots(version_four_save);
+  require(version_four &&
+              (*version_four)[0].difficulty ==
+                  sf::game::CampaignDifficulty::original,
+          "V4 campaign save did not default to Original difficulty");
+
   const auto current_bytes = sf::game::serializeTitleSaveSlots(*version_two);
-  require(current_bytes.starts_with("SFPC_SAVE_V4\n") &&
+  require(current_bytes.starts_with("SFPC_SAVE_V5\n") &&
               sf::game::parseTitleSaveSlots(current_bytes) == version_two,
-          "Migrated V2 save did not round-trip through V4");
+          "Migrated V2 save did not round-trip through V5");
 
   sf::game::TitleSaveSlots completed{};
   completed[0] = sf::game::TitleSaveSlot{true, 19U, true};
@@ -335,6 +368,82 @@ void testSaveMigrationAndCompletedSlotUi() {
   require(menu.update({.confirm = true}) == sf::game::TitleCommand::none &&
               menu.phase() == sf::game::TitlePhase::load_slots,
           "Completed campaign slot replayed the final mission");
+}
+
+void testCampaignDifficultyPersistence() {
+  using sf::game::CampaignDifficulty;
+
+  require(sf::game::campaignDifficultyDisplayName(
+              CampaignDifficulty::original) == "Normal" &&
+              sf::game::campaignDifficultyDisplayName(
+                  CampaignDifficulty::hard_mode) == "Hard Mode" &&
+              sf::game::campaignDifficultyDisplayName(
+                  CampaignDifficulty::agent) == "Agent",
+          "Campaign difficulty display names do not match the title menu");
+  require(
+      sf::game::campaignDifficultyGameplayNotice(CampaignDifficulty::original)
+              .empty() &&
+          sf::game::campaignDifficultyGameplayNotice(
+              CampaignDifficulty::hard_mode) == "Playing on HARD difficulty" &&
+          sf::game::campaignDifficultyGameplayNotice(
+              CampaignDifficulty::agent) == "Playing Agent mode",
+      "Campaign difficulty gameplay notices are incorrect");
+  require(
+      sf::game::campaignDifficultyGameplayPresentation(
+          "Playing on HARD difficulty", CampaignDifficulty::agent) ==
+              "Playing Agent mode" &&
+          sf::game::campaignDifficultyGameplayPresentation(
+              "Playing on HARD difficulty", CampaignDifficulty::hard_mode) ==
+              "Playing on HARD difficulty" &&
+          sf::game::campaignDifficultyGameplayPresentation(
+              "Playing on HARD", CampaignDifficulty::agent) ==
+              "Playing Agent mode" &&
+          sf::game::campaignDifficultyGameplayPresentation(
+              "Checkpoint", CampaignDifficulty::agent) == "Checkpoint",
+      "Agent gameplay presentation did not isolate the retail Hard notice");
+
+  sf::game::TitleSaveSlots slots{};
+  auto campaign = sf::game::CampaignProgress::startNew(
+      slots, 0U, true, CampaignDifficulty::agent);
+  require(campaign && campaign->difficulty() == CampaignDifficulty::agent &&
+              slots[0].difficulty == CampaignDifficulty::agent,
+          "New Agent campaign did not persist its difficulty");
+  require(campaign->stageMissionCompletion(slots) &&
+              slots[0].difficulty == CampaignDifficulty::agent,
+          "Staging mission completion lost Agent difficulty");
+
+  const auto durable =
+      sf::game::parseTitleSaveSlots(sf::game::serializeTitleSaveSlots(slots));
+  require(durable && (*durable)[0].difficulty == CampaignDifficulty::agent,
+          "Agent difficulty did not round-trip through V5");
+  auto resumed = sf::game::CampaignProgress::resume(*durable, 0U);
+  auto finalized = *durable;
+  require(resumed && resumed->difficulty() == CampaignDifficulty::agent &&
+              resumed->completeMission(finalized) ==
+                  sf::game::CampaignAdvance::next_mission &&
+              finalized[0].difficulty == CampaignDifficulty::agent,
+          "Resuming or advancing a campaign lost Agent difficulty");
+
+  auto unsaved = sf::game::CampaignProgress::startUnsaved(
+      0U, true, CampaignDifficulty::hard_mode);
+  sf::game::TitleSaveSlots target{};
+  require(unsaved &&
+              unsaved->stageMissionCompletionInSlot(target, 3U) &&
+              target[3].difficulty == CampaignDifficulty::hard_mode,
+          "Saving an unsaved Hard Mode campaign lost its difficulty");
+
+  require(!sf::game::CampaignProgress::startUnsaved(
+              0U, true, static_cast<CampaignDifficulty>(255U)),
+          "Campaign accepted an invalid difficulty");
+  constexpr std::string_view invalid_difficulty{
+      "SFPC_SAVE_V5\n"
+      "0 1 0 0 0 0 0 3\n"
+      "1 0 0 0 0 0 0 0\n"
+      "2 0 0 0 0 0 0 0\n"
+      "3 0 0 0 0 0 0 0\n"
+      "4 0 0 0 0 0 0 0\n"};
+  require(!sf::game::parseTitleSaveSlots(invalid_difficulty),
+          "V5 parser accepted an invalid difficulty");
 }
 
 void testInterruptedEolRecovery() {
@@ -419,7 +528,7 @@ void testConnectedMissionCarryAndSaveRoundTrip() {
   const auto durable =
       sf::game::parseTitleSaveSlots(sf::game::serializeTitleSaveSlots(slots));
   require(durable && (*durable)[0].carry == carry,
-          "Campaign player state did not round-trip through V4");
+          "Campaign player state did not round-trip through V5");
   auto resumed = sf::game::CampaignProgress::resume(*durable, 0U);
   auto finalized = *durable;
   require(resumed &&
@@ -463,9 +572,69 @@ void testExplicitFullSaveOverwrite() {
   sf::game::TitleMenu menu;
   menu.completeSearch();
   menu.setSaveSlots(full);
-  require(menu.update({.confirm = true}) == sf::game::TitleCommand::new_game &&
+  require(menu.update({.confirm = true}) == sf::game::TitleCommand::none &&
+              menu.phase() == sf::game::TitlePhase::select_difficulty &&
+              full == before,
+          "New Game changed a slot before difficulty selection");
+  static_cast<void>(menu.update({}));
+  require(menu.update({.confirm = true}) ==
+                  sf::game::TitleCommand::new_game &&
               menu.phase() == sf::game::TitlePhase::menu && full == before,
           "New Game requested or changed a slot before mission completion");
+}
+
+void testAgentWarningGate() {
+  using sf::game::CampaignDifficulty;
+  using sf::game::TitleCommand;
+  using sf::game::TitlePhase;
+
+  sf::game::TitleSaveSlots slots{};
+  const auto before = slots;
+  sf::game::TitleMenu menu;
+  menu.completeSearch();
+  menu.setSaveSlots(slots);
+  require(menu.update({.confirm = true}) == TitleCommand::none &&
+              menu.phase() == TitlePhase::select_difficulty,
+          "New Game did not open the difficulty selector");
+  static_cast<void>(menu.update({}));
+  static_cast<void>(menu.update({.next = true}));
+  static_cast<void>(menu.update({.next = true}));
+  require(menu.selectedDifficulty() == CampaignDifficulty::agent &&
+              menu.update({.confirm = true, .confirm_down = true}) ==
+                  TitleCommand::none &&
+              menu.phase() == TitlePhase::agent_warning &&
+              menu.saveSlots() == before,
+          "Agent selection bypassed its warning or changed save data");
+  require(menu.update({.confirm = true, .confirm_down = true}) ==
+                  TitleCommand::none &&
+              menu.phase() == TitlePhase::agent_warning,
+          "Held confirm skipped the Agent warning");
+  require(menu.update({.cancel = true}) == TitleCommand::none &&
+              menu.phase() == TitlePhase::select_difficulty &&
+              menu.selectedDifficulty() == CampaignDifficulty::agent,
+          "Agent warning did not return to the preserved selection");
+
+  require(menu.update({.confirm = true, .confirm_down = true}) ==
+                  TitleCommand::none &&
+              menu.phase() == TitlePhase::agent_warning,
+          "Agent warning did not reopen after returning to difficulty");
+  require(menu.update({.confirm_down = true}) == TitleCommand::none &&
+              menu.phase() == TitlePhase::agent_warning,
+          "Held confirm leaked through the reopened Agent warning");
+  static_cast<void>(menu.update({}));
+  require(menu.update({.confirm = true}) == TitleCommand::new_game &&
+              menu.phase() == TitlePhase::menu && menu.saveSlots() == before,
+          "Fresh confirmation did not accept the Agent warning");
+
+  sf::game::TitleMenu hard;
+  hard.completeSearch();
+  static_cast<void>(hard.update({.confirm = true}));
+  static_cast<void>(hard.update({}));
+  static_cast<void>(hard.update({.next = true}));
+  require(hard.selectedDifficulty() == CampaignDifficulty::hard_mode &&
+              hard.update({.confirm = true}) == TitleCommand::new_game &&
+              hard.phase() == TitlePhase::menu,
+          "Hard Mode incorrectly entered the Agent warning");
 }
 
 void testUserDataSaveMigrationAndRecovery() {
@@ -533,7 +702,7 @@ void testUserDataSaveMigrationAndRecovery() {
               remigrated.slots[0] == sf::game::TitleSaveSlot{true, 7U, false} &&
               repaired_backup.status == sf::game::TitleSaveLoadStatus::loaded &&
               repaired_backup.slots == remigrated.slots,
-          "Legacy recovery did not replace the corrupt backup with V4");
+          "Legacy recovery did not replace the corrupt backup with V5");
   std::filesystem::remove_all(directory);
 }
 
@@ -567,9 +736,11 @@ int main() {
   testLoadAndFailurePaths();
   testLoadedProgressSurvivesMissionReplay();
   testSaveMigrationAndCompletedSlotUi();
+  testCampaignDifficultyPersistence();
   testInterruptedEolRecovery();
   testConnectedMissionCarryAndSaveRoundTrip();
   testExplicitFullSaveOverwrite();
+  testAgentWarningGate();
   testUserDataSaveMigrationAndRecovery();
   testBackupRepairFailureKeepsPrimary();
   return 0;

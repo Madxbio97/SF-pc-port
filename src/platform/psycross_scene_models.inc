@@ -424,11 +424,13 @@ struct HmdPoseScratch {
   ResolvedHmdPose pose;
   std::vector<std::uint8_t> resolved;
   std::vector<std::uint8_t> referenced;
+  const assets::HmdModel *referenced_model{};
 };
 
 const ResolvedHmdPose &resolveHmdPose(const assets::HmdModel &model,
                                       const game::ActorPose *animation_pose,
-                                      HmdPoseScratch &scratch) {
+                                      HmdPoseScratch &scratch,
+                                      std::vector<Vector3> *posed_vertices = nullptr) {
   auto &result = scratch.pose;
   result.parts.resize(model.parts().size());
   scratch.resolved.assign(model.parts().size(), 0U);
@@ -465,12 +467,20 @@ const ResolvedHmdPose &resolveHmdPose(const assets::HmdModel &model,
     }
   }
 
-  scratch.referenced.assign(model.vertices().size(), 0U);
-  auto &referenced = scratch.referenced;
-  for (const auto &triangle : model.triangles()) {
-    for (const auto index : triangle.vertex_indices) {
-      referenced[index] = 1U;
+  if (scratch.referenced_model != &model ||
+      scratch.referenced.size() != model.vertices().size()) {
+    scratch.referenced.assign(model.vertices().size(), 0U);
+    for (const auto &triangle : model.triangles()) {
+      for (const auto index : triangle.vertex_indices) {
+        scratch.referenced[index] = 1U;
+      }
     }
+    scratch.referenced_model = &model;
+  }
+  auto &referenced = scratch.referenced;
+  if (posed_vertices != nullptr) {
+    posed_vertices->clear();
+    posed_vertices->reserve(model.vertices().size());
   }
   // HMD model-space Y grows downward, so the largest referenced Y is the
   // contact plane. Preserve the axis direction and only move it to zero.
@@ -483,6 +493,9 @@ const ResolvedHmdPose &resolveHmdPose(const assets::HmdModel &model,
                                         static_cast<double>(vertex.y),
                                         static_cast<double>(vertex.z),
                                     });
+    if (posed_vertices != nullptr) {
+      posed_vertices->push_back(posed);
+    }
     if (referenced[index] != 0U) {
       result.ground_y = std::max(result.ground_y, posed.y);
     }
@@ -573,6 +586,26 @@ SVECTOR transformHmdVertex(const Vector3 &vertex,
                            const assets::MissionTransform &transform) {
   const auto point = transformPoint(vertex.x, vertex.y, vertex.z, transform);
   return makeVertex(point.x, point.y, point.z);
+}
+
+Vector3 rotateMissionVector(Vector3 vector,
+                            const assets::MissionTransform &transform) {
+  const auto component = [&](std::size_t row) {
+    return (static_cast<double>(transform.rotation[row * 3U]) * vector.x +
+            static_cast<double>(transform.rotation[row * 3U + 1U]) * vector.y +
+            static_cast<double>(transform.rotation[row * 3U + 2U]) * vector.z) /
+           4096.0;
+  };
+  return {component(0U), component(1U), component(2U)};
+}
+
+Vector3 normalizedHmdNormal(Vector3 normal) noexcept {
+  const auto length = std::sqrt(normal.x * normal.x + normal.y * normal.y +
+                                normal.z * normal.z);
+  if (!std::isfinite(length) || length <= 0.000001) {
+    return {};
+  }
+  return {normal.x / length, normal.y / length, normal.z / length};
 }
 
 std::optional<Vector3> posedActorPartAnchor(const assets::HmdModel &model,
@@ -1009,6 +1042,46 @@ game::SceneObject currentPlayerObject(const game::GameplaySession &gameplay) {
 }
 
 std::optional<Vector3>
+playerHeadshotCalloutAnchor(const game::GameplaySession &gameplay,
+                            const game::ActorAnimationBank &actor_animations,
+                            std::uint64_t player_animation_tick,
+                            const RenderPresentationSnapshot &presentation,
+                            HmdPoseScratch &pose_scratch) {
+  const auto player = presentedPlayerObject(presentation);
+  const auto &player_model = gameplay.playerModel();
+  if (const auto *model =
+          std::get_if<assets::HmdModel>(&player_model.geometry)) {
+    const auto pose = [&] {
+      if (!gameplay.playerAlive()) {
+        return actor_animations.npcPose(
+            game::NpcAnimationRequest{
+                game::NpcAnimationAction::death,
+                game::weaponStance(gameplay.hud().inventory().current()), 0U},
+            gameplay.playerDeathAnimationTick());
+      }
+      return actor_animations.playerPose(
+          gameplay.playerAnimation(), player_animation_tick,
+          gameplay.playerPresentationAnimationTick());
+    }();
+    if (const auto head =
+            posedActorPartAnchor(*model, player, pose, pose_scratch, "Head")) {
+      return head;
+    }
+  }
+  // Keep the warning visible even if a transient pose has no resolved Head
+  // part. PSX actor space uses the minimum local Y at the top of the model.
+  if (player_model.bounds) {
+    const auto &bounds = *player_model.bounds;
+    return transformPoint(
+        (static_cast<double>(bounds.minimum_x) + bounds.maximum_x) * 0.5,
+        static_cast<double>(bounds.minimum_y),
+        (static_cast<double>(bounds.minimum_z) + bounds.maximum_z) * 0.5,
+        player.transform);
+  }
+  return transformPoint(0.0, -512.0, 0.0, player.transform);
+}
+
+std::optional<Vector3>
 playerWeaponMuzzleAnchor(const game::GameplaySession &gameplay,
                          const game::ActorAnimationBank &actor_animations,
                          const game::SceneObject &player_object,
@@ -1119,6 +1192,52 @@ actorRootForGuestSlot(const game::GameplaySession &gameplay,
   return transformPoint(0.0, 0.0, 0.0, object.transform);
 }
 
+struct LegacyHmdWoundVertexSelection {
+  std::array<std::uint16_t, game::legacy_hmd_wound_vertex_capacity> indices{};
+  std::size_t count{};
+
+  [[nodiscard]] bool contains(std::uint16_t vertex) const noexcept {
+    return std::ranges::find(indices.begin(), indices.begin() + count, vertex) !=
+           indices.begin() + count;
+  }
+
+  void append(std::uint16_t vertex) noexcept {
+    if (count < indices.size() && !contains(vertex)) {
+      indices[count++] = vertex;
+    }
+  }
+};
+
+LegacyHmdWoundVertexSelection
+legacyHmdWoundVertices(const game::GameplaySession &gameplay,
+                       std::int16_t guest_slot,
+                       const assets::HmdModel &model) noexcept {
+  auto selection = LegacyHmdWoundVertexSelection{};
+  if (model.flatLit() || guest_slot < 0) {
+    return selection;
+  }
+  const auto frame = gameplay.legacyPresentationFrame();
+  if (!frame || !frame->renderer ||
+      static_cast<std::size_t>(guest_slot) >=
+          frame->renderer->state.objects.size()) {
+    return selection;
+  }
+  const auto &guest =
+      frame->renderer->state.objects[static_cast<std::size_t>(guest_slot)];
+  if (!guest.resident ||
+      guest.slot != static_cast<std::uint32_t>(guest_slot)) {
+    return selection;
+  }
+  const auto count = std::min<std::size_t>(
+      guest.hmd_wound_vertex_count, guest.hmd_wound_vertices.size());
+  for (std::size_t index = 0U; index < count; ++index) {
+    const auto vertex = guest.hmd_wound_vertices[index];
+    if (vertex < model.vertices().size()) {
+      selection.append(vertex);
+    }
+  }
+  return selection;
+}
 Vector3 attachedEffectCentre(const game::GameplaySession &gameplay,
                              const game::ActorAnimationBank &actor_animations,
                              const RenderPresentationSnapshot &presentation,
@@ -1265,7 +1384,8 @@ void submitClippedTriangle(
     StableFrameVector<POLY_GT3> &primitive_buffer, RenderStats &stats,
     OrderingDepthTransform ordering_depth = worldOrderingDepth,
     bool terrain_depth_cue = false, bool depth_cue_enabled = true,
-    long depth_cue_floor = 0L) {
+    long depth_cue_floor = 0L,
+    bool depth_cue_semi_transparent = false) {
   if (vertices.size() != 3U) {
     throw core::Error{core::ErrorCode::invalid_argument,
                       "Near-plane submission expects one triangle"};
@@ -1324,20 +1444,35 @@ void submitClippedTriangle(
       continue;
     }
 
-    auto &primitive = primitive_buffer.emplace_back();
-    configurePrimitive(primitive, triangle, material);
-    setProjected(&primitive.x0, xy0);
-    setProjected(&primitive.x1, xy1);
-    setProjected(&primitive.x2, xy2);
-    if (depth_cue_enabled && !material.semi_transparent) {
+    const auto apply_depth_cue =
+        depth_cue_enabled &&
+        (!material.semi_transparent || depth_cue_semi_transparent);
+    auto depth_cues = std::array<long, 3U>{};
+    if (apply_depth_cue) {
       const auto cue = [terrain_depth_cue, depth_cue_floor](double camera_z) {
         return std::max(depth_cue_floor, terrain_depth_cue
                                              ? retailTerrainDepthCue(camera_z)
                                              : retailObjectDepthCue(camera_z));
       };
-      depthCuePrimitive(primitive, {cue(cameraDepth(view, triangle[0])),
-                                    cue(cameraDepth(view, triangle[1])),
-                                    cue(cameraDepth(view, triangle[2]))});
+      depth_cues = {cue(cameraDepth(view, triangle[0])),
+                    cue(cameraDepth(view, triangle[1])),
+                    cue(cameraDepth(view, triangle[2]))};
+      if (material.semi_transparent &&
+          std::ranges::all_of(depth_cues, [](long value) {
+            return value >= retail_depth_cue_q12_one;
+          })) {
+        ++stats.rejected;
+        continue;
+      }
+    }
+
+    auto &primitive = primitive_buffer.emplace_back();
+    configurePrimitive(primitive, triangle, material);
+    setProjected(&primitive.x0, xy0);
+    setProjected(&primitive.x1, xy1);
+    setProjected(&primitive.x2, xy2);
+    if (apply_depth_cue) {
+      depthCuePrimitive(primitive, depth_cues);
     }
     addPrim(&ordering_table[std::clamp(ordering_depth(depth), 1,
                                        ordering_table_size - 1)],
@@ -1416,8 +1551,20 @@ void renderGmdObject(const assets::GmdModel &model,
                      PrimitiveBuffer &primitives, RenderStats &stats,
                      VertexColor back_color = {128U, 128U, 128U},
                      bool force_two_sided = false,
-                     bool force_semi_transparent = false) {
+                     bool force_semi_transparent = false,
+                     long depth_cue_floor = 0L) {
   const auto reverse_winding = reversesWinding(object.transform);
+  std::array<Vector3, 256U> world_normals{};
+  if (visual_effect != game::ObjectVisualEffect::billboard_glow) {
+    for (std::size_t index = 0U; index < model.normals().size(); ++index) {
+      const auto &source = model.normals()[index];
+      world_normals[index] = normalizedHmdNormal(rotateMissionVector(
+          Vector3{static_cast<double>(source.x),
+                  static_cast<double>(source.y),
+                  static_cast<double>(source.z)},
+          object.transform));
+    }
+  }
   for (auto triangle_index = std::size_t{};
        triangle_index < model.triangles().size(); ++triangle_index) {
     const auto &triangle = model.triangles()[triangle_index];
@@ -1444,6 +1591,22 @@ void renderGmdObject(const assets::GmdModel &model,
     auto v1 = transform_vertex(triangle.vertex_indices[1]);
     auto v2 = transform_vertex(triangle.vertex_indices[2]);
     const std::array positions{v0, v1, v2};
+    const auto face_normal = visibleSurfaceNormal(positions);
+    const auto corner_normal = [&](std::size_t corner) {
+      const auto normal_index = triangle.normal_indices[corner];
+      if (visual_effect != game::ObjectVisualEffect::billboard_glow &&
+          normal_index < model.normals().size()) {
+        const auto &normal = world_normals[normal_index];
+        const auto length_squared =
+            normal.x * normal.x + normal.y * normal.y + normal.z * normal.z;
+        if (std::isfinite(length_squared) && length_squared > 0.000001) {
+          return game::DynamicLightPoint{normal.x, normal.y, normal.z};
+        }
+      }
+      return face_normal;
+    };
+    const std::array normals{corner_normal(0U), corner_normal(1U),
+                             corner_normal(2U)};
     const auto near_status = classifyNearPlane(view, positions);
     const auto two_sided_effect =
         force_two_sided || (model.planar() && triangle.semi_transparent);
@@ -1452,14 +1615,13 @@ void renderGmdObject(const assets::GmdModel &model,
       continue;
     }
     if (near_status == NearPlaneStatus::intersecting) {
-      const auto normal = visibleSurfaceNormal(positions);
       const std::array textured{
           makeTexturedVertex(v0, triangle.uv[0], back_color,
-                             apply_scene_lighting, normal),
+                             apply_scene_lighting, normals[0]),
           makeTexturedVertex(v1, triangle.uv[1], back_color,
-                             apply_scene_lighting, normal),
+                             apply_scene_lighting, normals[1]),
           makeTexturedVertex(v2, triangle.uv[2], back_color,
-                             apply_scene_lighting, normal),
+                             apply_scene_lighting, normals[2]),
       };
       submitClippedTriangle(
           textured,
@@ -1472,7 +1634,7 @@ void renderGmdObject(const assets::GmdModel &model,
           },
           two_sided_effect, reverse_winding, view, ordering_table,
           primitives.objects, stats, worldOrderingDepth, false,
-          apply_depth_cue);
+          apply_depth_cue && !force_semi_transparent, depth_cue_floor, true);
       continue;
     }
 
@@ -1490,23 +1652,40 @@ void renderGmdObject(const assets::GmdModel &model,
       continue;
     }
 
+    const auto apply_triangle_depth_cue =
+        apply_depth_cue && !force_semi_transparent;
+    auto depth_cues = std::array<long, 3U>{};
+    if (apply_triangle_depth_cue) {
+      depth_cues = {
+          std::max(depth_cue_floor,
+                   retailObjectDepthCue(cameraDepth(view, v0))),
+          std::max(depth_cue_floor,
+                   retailObjectDepthCue(cameraDepth(view, v1))),
+          std::max(depth_cue_floor,
+                   retailObjectDepthCue(cameraDepth(view, v2))),
+      };
+      if (triangle.semi_transparent &&
+          std::ranges::all_of(depth_cues, [](long value) {
+            return value >= retail_depth_cue_q12_one;
+          })) {
+        ++stats.rejected;
+        continue;
+      }
+    }
+
     auto &primitive = primitives.objects.emplace_back();
     configurePrimitive(primitive, triangle, texture_bank, back_color);
     if (force_semi_transparent) {
       setSemiTrans(&primitive, 1);
     }
     if (apply_scene_lighting) {
-      dynamicallyLight(primitive, positions);
+      dynamicallyLight(primitive, positions, normals);
     }
     setProjected(&primitive.x0, xy0);
     setProjected(&primitive.x1, xy1);
     setProjected(&primitive.x2, xy2);
-    if (apply_depth_cue && !triangle.semi_transparent &&
-        !force_semi_transparent) {
-      depthCuePrimitive(primitive,
-                        {retailObjectDepthCue(cameraDepth(view, v0)),
-                         retailObjectDepthCue(cameraDepth(view, v1)),
-                         retailObjectDepthCue(cameraDepth(view, v2))});
+    if (apply_triangle_depth_cue) {
+      depthCuePrimitive(primitive, depth_cues);
     }
     addPrim(&ordering_table[std::clamp(depth, 1, ordering_table_size - 1)],
             &primitive);
@@ -1566,34 +1745,57 @@ void renderActorWeapon(const ActorWeaponPresentation &presentation,
 const ResolvedHmdPose *prepareHmdWorldVertices(
     const assets::HmdModel &model, const game::SceneObject &object,
     const game::ActorPose *animation_pose, HmdPoseScratch &pose_scratch,
-    std::vector<Vector3> &result) {
+    std::vector<Vector3> &result,
+    std::vector<Vector3> *world_normals = nullptr) {
   const auto direct_legacy_pose = hasLegacyHmdBones(model, object);
-  const auto *resolved_pose =
-      direct_legacy_pose ? nullptr
-                         : &resolveHmdPose(model, animation_pose, pose_scratch);
-  result.clear();
-  result.reserve(model.vertices().size());
-  for (std::size_t index = 0U; index < model.vertices().size(); ++index) {
-    if (!direct_legacy_pose) {
-      const auto &source = model.vertices()[index];
-      auto vertex = applyHmdPose(
-          resolved_pose->parts[model.vertexParts()[index]],
-          Vector3{static_cast<double>(source.x), static_cast<double>(source.y),
-                  static_cast<double>(source.z)});
+  if (!direct_legacy_pose) {
+    const auto *resolved_pose = &resolveHmdPose(
+        model, animation_pose, pose_scratch, &result);
+    for (auto &vertex : result) {
       if (!object.legacy_hmd_root_space) {
         vertex.y -= resolved_pose->ground_y;
       }
-      result.push_back(
-          transformPoint(vertex.x, vertex.y, vertex.z, object.transform));
-      continue;
+      vertex = transformPoint(vertex.x, vertex.y, vertex.z, object.transform);
     }
+    if (world_normals != nullptr) {
+      world_normals->assign(model.vertices().size(), Vector3{});
+      const auto count = std::min(model.normals().size(), model.vertices().size());
+      for (auto index = std::size_t{}; index < count; ++index) {
+        const auto &source = model.normals()[index];
+        const auto local = rotateHmdPose(
+            resolved_pose->parts[model.vertexParts()[index]],
+            Vector3{static_cast<double>(source.x),
+                    static_cast<double>(source.y),
+                    static_cast<double>(source.z)});
+        (*world_normals)[index] = normalizedHmdNormal(
+            rotateMissionVector(local, object.transform));
+      }
+    }
+    return resolved_pose;
+  }
+
+  result.clear();
+  result.reserve(model.vertices().size());
+  for (std::size_t index = 0U; index < model.vertices().size(); ++index) {
     const auto &source = model.vertices()[index];
     result.push_back(transformPoint(
         static_cast<double>(source.x), static_cast<double>(source.y),
         static_cast<double>(source.z),
         object.legacy_hmd_bones[model.vertexParts()[index]]));
   }
-  return resolved_pose;
+  if (world_normals != nullptr) {
+    world_normals->assign(model.vertices().size(), Vector3{});
+    const auto count = std::min(model.normals().size(), model.vertices().size());
+    for (auto index = std::size_t{}; index < count; ++index) {
+      const auto &source = model.normals()[index];
+      (*world_normals)[index] = normalizedHmdNormal(rotateMissionVector(
+          Vector3{static_cast<double>(source.x),
+                  static_cast<double>(source.y),
+                  static_cast<double>(source.z)},
+          object.legacy_hmd_bones[model.vertexParts()[index]]));
+    }
+  }
+  return nullptr;
 }
 
 void prepareActorShadowGeometry(const assets::HmdModel &body_model,
@@ -1651,11 +1853,15 @@ void renderHmdObject(
     RenderStats &stats,
     std::optional<VertexColor> back_color_override = std::nullopt,
     std::span<const Vector3> prepared_world_vertices = {},
-    bool force_semi_transparent = false, bool apply_scene_lighting = true) {
+    std::span<const Vector3> prepared_world_normals = {},
+    bool force_semi_transparent = false, bool apply_scene_lighting = true,
+    const LegacyHmdWoundVertexSelection *wound_vertices = nullptr) {
   if (prepared_world_vertices.empty()) {
     prepareHmdWorldVertices(model, object, animation_pose, pose_scratch,
-                            primitives.actor_scratch.hmd_world_vertices);
+                            primitives.actor_scratch.hmd_world_vertices,
+                            &primitives.actor_scratch.hmd_world_normals);
     prepared_world_vertices = primitives.actor_scratch.hmd_world_vertices;
+    prepared_world_normals = primitives.actor_scratch.hmd_world_normals;
   }
   const auto world_vertices = prepared_world_vertices;
   const auto back_color =
@@ -1665,31 +1871,73 @@ void renderHmdObject(
     return makeVertex(world.x, world.y, world.z);
   };
   for (const auto &triangle : model.triangles()) {
+    const auto wounded = [&](std::size_t corner) {
+      return wound_vertices != nullptr &&
+             wound_vertices->contains(triangle.vertex_indices[corner]);
+    };
+
     auto v0 = vertex(triangle.vertex_indices[0]);
     auto v1 = vertex(triangle.vertex_indices[1]);
     auto v2 = vertex(triangle.vertex_indices[2]);
     const std::array positions{v0, v1, v2};
+    const auto face_normal = visibleSurfaceNormal(positions);
+    const auto corner_normal = [&](std::size_t corner) {
+      const auto vertex_index = triangle.vertex_indices[corner];
+      if (!model.flatLit() && vertex_index < prepared_world_normals.size()) {
+        const auto &normal = prepared_world_normals[vertex_index];
+        const auto length_squared =
+            normal.x * normal.x + normal.y * normal.y + normal.z * normal.z;
+        if (std::isfinite(length_squared) && length_squared > 0.000001) {
+          return game::DynamicLightPoint{normal.x, normal.y, normal.z};
+        }
+      }
+      return face_normal;
+    };
+    const std::array normals{corner_normal(0U), corner_normal(1U),
+                             corner_normal(2U)};
     const auto near_status = classifyNearPlane(view, positions);
     if (near_status == NearPlaneStatus::outside) {
       ++stats.rejected;
       continue;
     }
     if (near_status == NearPlaneStatus::intersecting) {
-      const auto normal = visibleSurfaceNormal(positions);
-      const std::array textured{
+      std::array textured{
           makeTexturedVertex(v0, triangle.uv[0], back_color,
-                             apply_scene_lighting, normal),
+                             apply_scene_lighting, normals[0]),
           makeTexturedVertex(v1, triangle.uv[1], back_color,
-                             apply_scene_lighting, normal),
+                             apply_scene_lighting, normals[1]),
           makeTexturedVertex(v2, triangle.uv[2], back_color,
-                             apply_scene_lighting, normal),
+                             apply_scene_lighting, normals[2]),
       };
+      // Retail NCDT has already applied depth cue when FUN_800d1be0 masks
+      // a matching normal. Do the same before host near clipping, then let
+      // the clipped polygon interpolate those final per-corner colours.
+      if (!force_semi_transparent) {
+        for (auto &corner : textured) {
+          auto red = quantizeColorOrUv(corner.red);
+          auto green = quantizeColorOrUv(corner.green);
+          auto blue = quantizeColorOrUv(corner.blue);
+          depthCueColor(
+              red, green, blue,
+              retailObjectDepthCue(cameraDepth(view, corner)));
+          corner.red = red;
+          corner.green = green;
+          corner.blue = blue;
+        }
+      }
+      for (std::size_t corner = 0U; corner < textured.size(); ++corner) {
+        if (wounded(corner)) {
+          textured[corner].green = 0.0;
+          textured[corner].blue = 0.0;
+        }
+      }
       submitClippedTriangle(
           textured,
           TexturedMaterial{triangle.texture_page, triangle.clut,
                            force_semi_transparent, false,
                            static_cast<std::uint8_t>(texture_bank)},
-          true, false, view, ordering_table, primitives.objects, stats);
+          true, false, view, ordering_table, primitives.objects, stats,
+          worldOrderingDepth, false, false);
       continue;
     }
 
@@ -1711,7 +1959,7 @@ void renderHmdObject(
       setSemiTrans(&primitive, 1);
     }
     if (apply_scene_lighting) {
-      dynamicallyLight(primitive, positions);
+      dynamicallyLight(primitive, positions, normals);
     }
     setProjected(&primitive.x0, xy0);
     setProjected(&primitive.x1, xy1);
@@ -1721,6 +1969,18 @@ void renderHmdObject(
                         {retailObjectDepthCue(cameraDepth(view, v0)),
                          retailObjectDepthCue(cameraDepth(view, v1)),
                          retailObjectDepthCue(cameraDepth(view, v2))});
+    }
+    if (wounded(0U)) {
+      primitive.g0 = 0U;
+      primitive.b0 = 0U;
+    }
+    if (wounded(1U)) {
+      primitive.g1 = 0U;
+      primitive.b1 = 0U;
+    }
+    if (wounded(2U)) {
+      primitive.g2 = 0U;
+      primitive.b2 = 0U;
     }
     addPrim(&ordering_table[std::clamp(depth, 1, ordering_table_size - 1)],
             &primitive);
@@ -1797,8 +2057,6 @@ void renderActorShadow(
   const auto ground_normal = support->normal;
   const auto projection = game::sampleDynamicShadowProjection(
       shadow_state.projection, interpolation_amount);
-  const auto refresh_receivers =
-      shadow_state.receiver_guest_frame != guest_frame;
   const auto receiver_for = [&](game::DynamicLightPoint source,
                                 ActorShadowCachedReceiver &history)
       -> std::optional<ActorShadowReceiverVertex> {
@@ -1807,32 +2065,11 @@ void renderActorShadow(
     if (!floor) {
       return std::nullopt;
     }
-    if (refresh_receivers) {
-      const auto query_floor = game::projectDynamicShadowPoint(
-          source, shadow_state.support.current.point,
-          shadow_state.support.current.normal, shadow_state.projection.current);
-      const auto receiver = gameplay.actorShadowSurface(
-          source.x, source.y, source.z, query_floor ? query_floor->x : floor->x,
-          query_floor ? query_floor->y : floor->y,
-          query_floor ? query_floor->z : floor->z);
-      auto candidate = std::optional<ActorShadowReceiverPlane>{};
-      if (receiver) {
-        const auto receiver_normal = game::DynamicLightPoint{
-            receiver->normal_x, receiver->normal_y, receiver->normal_z};
-        if (actorShadowReceiverIsWall(receiver_normal, ground_normal)) {
-          candidate = ActorShadowReceiverPlane{
-              {receiver->x, receiver->y, receiver->z}, receiver_normal, true};
-        }
-      }
-      updateActorShadowReceiver(history, candidate);
-    }
-    if (history.stable) {
-      if (const auto point = projectActorShadowOntoCachedPlane(
-              source, *floor, *history.stable)) {
-        return ActorShadowReceiverVertex{*point, history.stable->normal,
-                                         history.stable->wall};
-      }
-    }
+    // Keep the flat shadow on the actor's authored support surface. Folding it
+    // onto the first intersected EMD face lets invisible prop/collision shells
+    // around missiles and barrels receive untextured F3 polygons, producing
+    // the apparent duplicate geometry and z-fighting seen on their GMD skin.
+    static_cast<void>(history);
     return ActorShadowReceiverVertex{*floor, ground_normal, false};
   };
   auto &receivers = primitives.actor_scratch.shadow_receivers;

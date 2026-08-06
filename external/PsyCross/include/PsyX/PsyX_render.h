@@ -179,6 +179,7 @@ typedef enum
 {
 	TEXTURE_FILTER_NEAREST,
 	TEXTURE_FILTER_BILINEAR,
+	TEXTURE_FILTER_WORLD_TRILINEAR,
 	TEXTURE_FILTER_WORLD_ANISOTROPIC
 } TextureFilterMode;
 
@@ -248,7 +249,6 @@ extern void			GR_SetBlendMode(BlendMode blendMode);
 extern void			GR_SetPolygonOffset(float slope, float units);
 extern void			GR_SetStencilMode(int drawPrim);
 extern void			GR_BeginShadowMask(void);
-extern void			GR_BeginShadowShade(void);
 extern void			GR_EndShadowMask(void);
 extern void			GR_EnableDepth(int enable);
 extern void			GR_SetDepthState(int testEnable, int writeEnable);
@@ -259,7 +259,12 @@ extern void			GR_SetOffscreenState(const RECT16* offscreenRect, int enable);
 extern void			GR_SetupClipMode(const RECT16* clipRect, int enable);
 extern void			GR_SetViewPort(int x, int y, int width, int height);
 extern TextureFilterMode GR_ResolveTextureFilterMode(TextureFilterMode requestedMode,
-	int bilinearFiltering, int anisotropicFiltering);
+	int bilinearFiltering, int trilinearFiltering, int anisotropicFiltering);
+extern void			GR_SetSceneFogParameters(int enable, unsigned char red,
+	unsigned char green, unsigned char blue, int dqa, int dqb, int projection,
+	unsigned int terrainDepthCue);
+extern void			GR_EnableSceneFog(int enable);
+extern void			GR_ApplySceneSMAA(void);
 extern void			GR_SetTexture(TextureID texture, TexFormat texFormat, TextureFilterMode filterMode);
 extern void			GR_SetTextureBlendMode(BlendMode blendMode);
 extern void			GR_SetOverrideTextureSize(int width, int height);

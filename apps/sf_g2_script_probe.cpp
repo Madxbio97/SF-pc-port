@@ -139,6 +139,10 @@ bool replayStateEqual(const sf::game::LegacyGameplayVmSnapshot &left,
          left.video_timing_baseline == right.video_timing_baseline &&
          left.audio_frame_tick == right.audio_frame_tick &&
          left.interrupt_callbacks == right.interrupt_callbacks &&
+         left.agent_cbdc_friendly_fire_frame ==
+             right.agent_cbdc_friendly_fire_frame &&
+         left.agent_cbdc_friendly_fire_pending_penalties ==
+             right.agent_cbdc_friendly_fire_pending_penalties &&
          left.video_timing_baseline_initialized ==
              right.video_timing_baseline_initialized &&
          left.audio_frame_tick_initialized ==

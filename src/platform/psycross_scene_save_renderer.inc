@@ -61,6 +61,10 @@ void PsyCrossCampaignSaveRenderer::draw(const game::CampaignSaveMenu &menu,
       } else if (slots[index].mission_index < game::missionCatalog().size()) {
         label += game::missionCatalog()[slots[index].mission_index].title;
       }
+      if (slots[index].occupied) {
+        label += "  ";
+        label += game::campaignDifficultyDisplayName(slots[index].difficulty);
+      }
       const auto active = menu.slotSelection() == index;
       drawBorderedRect(
           {52, static_cast<std::int16_t>(76 + index * 24), 165, 17},
@@ -123,6 +127,10 @@ void PsyCrossCampaignSaveRenderer::drawLoadSlots(
     } else {
       label += "Invalid";
     }
+    if (slots[index].occupied) {
+      label += "  ";
+      label += game::campaignDifficultyDisplayName(slots[index].difficulty);
+    }
     const auto active = selection == index;
     const auto y = static_cast<std::int16_t>(52 + index * 27);
     drawBorderedRect({30, y, 260, 20}, {0U, 0U, 0U}, active ? selected : muted);
@@ -135,6 +143,89 @@ void PsyCrossCampaignSaveRenderer::drawLoadSlots(
   text("Cancel", {36, 192, 248, 10}, cancel_active ? selected : normal,
        game::PauseTextAlignment::center);
   text("%x load   %t back", {30, 211, 260, 10}, normal,
+       game::PauseTextAlignment::center);
+  DrawSync(0);
+}
+
+void PsyCrossCampaignSaveRenderer::drawDifficultySelection(
+    const game::TitleMenu &menu) {
+  GR_SetBlendMode(BM_NONE);
+  GR_SetPolygonOffset(0.0F, 0.0F);
+  GR_SetDepthState(0, 0);
+  GR_EnableDepth(0);
+  state_->textures.restoreFont();
+
+  // TITLE.HOG uses a dim/bright green ramp for its three authored buttons.
+  // Draw the new labels through the retail font atlas with the same visual
+  // hierarchy, leaving TITLE.STR visible instead of opening an ACD panel.
+  constexpr auto normal = PauseRgb{35U, 70U, 41U};
+  constexpr auto selected = PauseRgb{100U, 200U, 116U};
+  constexpr auto muted = PauseRgb{10U, 28U, 15U};
+  const auto text = [&](std::string_view value, game::PauseRect bounds,
+                        PauseRgb color = PauseRgb{48U, 118U, 64U},
+                        game::PauseTextAlignment alignment =
+                            game::PauseTextAlignment::left) {
+    drawMenuText(value, bounds, 1, color, alignment, 11, state_->textures,
+                 state_->input);
+  };
+
+  text("Select Difficulty", {28, 70, 264, 12}, selected,
+       game::PauseTextAlignment::center);
+
+  constexpr std::array labels{
+      std::string_view{"Normal"},
+      std::string_view{"Hard Mode"},
+      std::string_view{"Agent"},
+  };
+  for (std::size_t index = 0U; index < labels.size(); ++index) {
+    const auto brightness = menu.difficultyBrightness(index);
+    const auto color = PauseRgb{
+        static_cast<std::uint8_t>(brightness / 2U),
+        brightness,
+        static_cast<std::uint8_t>((brightness * 29U) / 50U),
+    };
+    const auto y = static_cast<std::int16_t>(100 + index * 34);
+    drawBorderedRect({42, y, 236, 23}, {0U, 0U, 0U},
+                     brightness == 0U ? muted : color);
+    text(labels[index], {48, static_cast<std::int16_t>(y + 7), 224, 10},
+         brightness == 0U ? normal : color,
+         game::PauseTextAlignment::center);
+  }
+
+  text("%x select   %t back", {30, 211, 260, 10}, normal,
+       game::PauseTextAlignment::center);
+  DrawSync(0);
+}
+
+void PsyCrossCampaignSaveRenderer::drawAgentModeWarning() {
+  GR_SetBlendMode(BM_NONE);
+  GR_SetPolygonOffset(0.0F, 0.0F);
+  GR_SetDepthState(0, 0);
+  GR_EnableDepth(0);
+  state_->textures.restoreFont();
+
+  constexpr auto normal = PauseRgb{48U, 118U, 64U};
+  constexpr auto selected = PauseRgb{100U, 200U, 116U};
+  constexpr auto muted = PauseRgb{10U, 28U, 15U};
+  const auto text = [&](std::string_view value, game::PauseRect bounds,
+                        PauseRgb color = PauseRgb{48U, 118U, 64U},
+                        game::PauseTextAlignment alignment =
+                            game::PauseTextAlignment::left) {
+    drawMenuText(value, bounds, 1, color, alignment, 11, state_->textures,
+                 state_->input);
+  };
+
+  drawBorderedRect({24, 52, 272, 142}, {0U, 0U, 0U}, muted);
+  drawBorderedRect({42, 60, 236, 23}, {0U, 0U, 0U}, selected);
+  text("DIFFICULTY", {48, 67, 224, 10}, selected,
+       game::PauseTextAlignment::center);
+  text("AGENT MODE", {36, 91, 248, 12}, selected,
+       game::PauseTextAlignment::center);
+  text("A special PC-version mode not present in the original game. Enemies "
+       "are more accurate and aggressive, and some missions have stricter "
+       "conditions.",
+       {40, 112, 240, 70}, normal, game::PauseTextAlignment::center);
+  text("%x - continue; %t - back", {30, 211, 260, 10}, normal,
        game::PauseTextAlignment::center);
   DrawSync(0);
 }

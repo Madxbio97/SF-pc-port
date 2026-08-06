@@ -6,8 +6,8 @@
 #include "sf/game/legacy_presentation_bridge.hpp"
 #include "sf/game/mission.hpp"
 
-#include <cstdint>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <iostream>
 #include <memory>
@@ -106,6 +106,53 @@ bool carriesState(const sf::game::CampaignCarryState &actual,
   return true;
 }
 
+bool sameInventory(const sf::game::LegacyInventoryBridgeState &actual,
+                   const sf::game::LegacyInventoryBridgeState &expected) {
+  return actual.current_weapon == expected.current_weapon &&
+         actual.owned_weapons == expected.owned_weapons &&
+         actual.magazines == expected.magazines &&
+         actual.reserves == expected.reserves;
+}
+
+bool sameCheckpointState(const sf::game::LegacyMissionBridgeState &actual,
+                         const sf::game::LegacyMissionBridgeState &expected) {
+  return actual.player_health == expected.player_health &&
+         actual.player_armor == expected.player_armor &&
+         actual.objective_count == expected.objective_count &&
+         actual.parameter_count == expected.parameter_count &&
+         actual.completed_objectives == expected.completed_objectives &&
+         actual.failed_objectives == expected.failed_objectives &&
+         actual.revealed_objectives == expected.revealed_objectives &&
+         actual.notified_objectives == expected.notified_objectives &&
+         actual.failed_parameters == expected.failed_parameters &&
+         actual.parameter_mask == expected.parameter_mask &&
+         sameInventory(actual.inventory, expected.inventory);
+}
+
+std::optional<std::size_t>
+seedCheckpointPickup(sf::game::GameplaySession &gameplay,
+                     const sf::game::LegacyMissionBridgeState &state,
+                     std::uint32_t mission_index) {
+  auto inventory = state.inventory;
+  for (std::size_t weapon = 0U;
+       weapon < sf::game::legacy_inventory_weapon_count; ++weapon) {
+    const auto bit = std::uint32_t{1U} << weapon;
+    if ((inventory.owned_weapons & bit) != 0U) {
+      continue;
+    }
+    inventory.owned_weapons |= bit;
+    inventory.magazines[weapon] =
+        static_cast<std::uint16_t>(31U + mission_index);
+    inventory.reserves[weapon] =
+        static_cast<std::uint16_t>(97U + mission_index);
+    return sf::game::G4CampaignTransitionProbeAccess::writeInventory(gameplay,
+                                                                     inventory)
+               ? std::optional{weapon}
+               : std::nullopt;
+  }
+  return std::nullopt;
+}
+
 bool waitForActiveGameplay(sf::game::GameplaySession &gameplay,
                            std::uint64_t &updates) {
   auto stable = std::uint32_t{};
@@ -163,7 +210,9 @@ int runProbe(const std::filesystem::path &cue_path) {
     campaign->markOpeningMovieHandled();
 
     const auto package = sf::game::MissionPackage::load(disc, mission.index);
-    auto gameplay = std::make_unique<sf::game::GameplaySession>(package);
+    const auto agent_bomb_fixture = mission.index == 4U;
+    auto gameplay = std::make_unique<sf::game::GameplaySession>(
+        package, agent_bomb_fixture);
     if (campaign_carry &&
         (!gameplay->applyCampaignCarryState(*campaign_carry) ||
          !gameplay->campaignCarryState() ||
@@ -183,8 +232,65 @@ int runProbe(const std::filesystem::path &cue_path) {
     if (!waitForActiveGameplay(*gameplay, transition_updates)) {
       return fail(mission.index, "active-gameplay", *gameplay);
     }
+    const auto reset_state =
+        sf::game::G4CampaignTransitionProbeAccess::liveMissionState(*gameplay);
+    if (!reset_state ||
+        !seedCheckpointPickup(*gameplay, *reset_state, mission.index)) {
+      return fail(mission.index, "checkpoint-inventory-fixture", *gameplay);
+    }
+    const auto checkpoint_state =
+        sf::game::G4CampaignTransitionProbeAccess::liveMissionState(*gameplay);
+    if (!checkpoint_state) {
+      return fail(mission.index, "checkpoint-state-read", *gameplay);
+    }
     if (!captureStableCheckpoint(*gameplay)) {
       return fail(mission.index, "checkpoint-capture", *gameplay);
+    }
+    if (agent_bomb_fixture) {
+      if (!sf::game::G4CampaignTransitionProbeAccess::
+              seedAgentPark2BombDetonation(*gameplay, 73U) ||
+          !gameplay->restartCheckpoint() ||
+          sf::game::G4CampaignTransitionProbeAccess::
+                  agentPark2BombDetonationState(*gameplay) !=
+              std::optional<std::uint8_t>{std::uint8_t{}}) {
+        return fail(mission.index, "bomb-checkpoint-reset", *gameplay);
+      }
+      const auto manually_restored =
+          sf::game::G4CampaignTransitionProbeAccess::liveMissionState(
+              *gameplay);
+      if (!manually_restored ||
+          !sameCheckpointState(*manually_restored, *checkpoint_state)) {
+        return fail(mission.index, "manual-checkpoint-state", *gameplay);
+      }
+      if (!sf::game::G4CampaignTransitionProbeAccess::
+              seedAgentPark2BombDetonation(*gameplay, 47U) ||
+          !sf::game::G4CampaignTransitionProbeAccess::writePlayerVitals(
+              *gameplay, 0, checkpoint_state->player_armor)) {
+        return fail(mission.index, "bomb-player-death-fixture", *gameplay);
+      }
+      const auto death_edge =
+          sf::game::G4CampaignTransitionProbeAccess::liveMissionState(
+              *gameplay);
+      if (!death_edge || death_edge->player_health > 0 ||
+          death_edge->terminal || death_edge->failure ||
+          sf::game::G4CampaignTransitionProbeAccess::
+                  agentPark2BombDetonationState(*gameplay) !=
+              std::optional<std::uint8_t>{std::uint8_t{}} ||
+          gameplay->agentPark2BombDetonationPercent() ||
+          !gameplay->restartCheckpoint()) {
+        return fail(mission.index, "bomb-player-death-reset", *gameplay);
+      }
+      const auto death_restored =
+          sf::game::G4CampaignTransitionProbeAccess::liveMissionState(
+              *gameplay);
+      if (!death_restored ||
+          !sameCheckpointState(*death_restored, *checkpoint_state)) {
+        return fail(mission.index, "death-checkpoint-state", *gameplay);
+      }
+      if (!sf::game::G4CampaignTransitionProbeAccess::
+              seedAgentPark2BombDetonation(*gameplay, 61U)) {
+        return fail(mission.index, "bomb-failure-fixture", *gameplay);
+      }
     }
 
     const auto save_before_failure = saves;
@@ -202,6 +308,12 @@ int runProbe(const std::filesystem::path &cue_path) {
       ++transition_updates;
       if (gameplay->runtimeFaulted()) {
         return fail(mission.index, "failure-transition", *gameplay);
+      }
+      if (agent_bomb_fixture &&
+          sf::game::G4CampaignTransitionProbeAccess::
+                  agentPark2BombDetonationState(*gameplay) !=
+              std::optional<std::uint8_t>{std::uint8_t{}}) {
+        return fail(mission.index, "bomb-failure-edge", *gameplay);
       }
       if (!gameplay->failureRestartRequested()) {
         continue;
@@ -224,6 +336,12 @@ int runProbe(const std::filesystem::path &cue_path) {
     if (!restarted || saves != save_before_failure) {
       return fail(mission.index, "failure-exactly-once", *gameplay);
     }
+    const auto failure_restored_state =
+        sf::game::G4CampaignTransitionProbeAccess::liveMissionState(*gameplay);
+    if (!failure_restored_state ||
+        !sameCheckpointState(*failure_restored_state, *checkpoint_state)) {
+      return fail(mission.index, "failure-checkpoint-state", *gameplay);
+    }
     const auto restored_sequence = gameplay->legacyPresentationSequence();
     if (!step(*gameplay)) {
       return fail(mission.index, "post-restart-audio-clock", *gameplay);
@@ -242,6 +360,16 @@ int runProbe(const std::filesystem::path &cue_path) {
     }
     if (!waitForActiveGameplay(*gameplay, transition_updates)) {
       return fail(mission.index, "reset-active-gameplay", *gameplay);
+    }
+    const auto fully_reset_state =
+        sf::game::G4CampaignTransitionProbeAccess::liveMissionState(*gameplay);
+    if (!fully_reset_state ||
+        !sameCheckpointState(*fully_reset_state, *reset_state) ||
+        (agent_bomb_fixture &&
+         sf::game::G4CampaignTransitionProbeAccess::
+                 agentPark2BombDetonationState(*gameplay) !=
+             std::optional<std::uint8_t>{std::uint8_t{}})) {
+      return fail(mission.index, "full-reset-state", *gameplay);
     }
     if (campaign_carry &&
         (!gameplay->campaignCarryState() ||
@@ -322,7 +450,8 @@ int runProbe(const std::filesystem::path &cue_path) {
 
     std::cout << "mission=" << mission.index
               << " resource=" << mission.resource_name
-              << " failure-restart=1 ending-request=1 eol-stage/finalize=1/1 "
+              << " checkpoint-state=1 failure-restart=1 ending-request=1 "
+                 "eol-stage/finalize=1/1 "
                  "advance="
               << (final_mission ? "complete" : "next") << '\n';
   }

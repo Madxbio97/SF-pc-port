@@ -77,6 +77,16 @@ const WeaponCombatDefinition& weaponCombatDefinition(WeaponId id) noexcept {
     return definitions[static_cast<std::size_t>(id)];
 }
 
+std::string_view droppedItemWorldModel(std::uint16_t item) noexcept {
+    if (item == 0x80U) {
+        return "VEST";
+    }
+    if (item >= weapon_slot_count) {
+        return {};
+    }
+    return definitions[item].world_model;
+}
+
 PlayerWeaponStance weaponStance(WeaponId weapon) noexcept {
     switch (weapon) {
     case WeaponId::silenced_9mm:

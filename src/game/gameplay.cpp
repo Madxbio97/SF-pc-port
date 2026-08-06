@@ -867,6 +867,7 @@ std::optional<ActorAimHit> actorAimHit(const ActorAimRay &ray, double actor_x,
 }
 
 GameplaySession::GameplaySession(const MissionPackage &mission,
+                                 bool initial_agent_difficulty,
                                  LoadProgressCallback load_progress)
     : mission_(mission) {
   const auto report_load = [&](std::uint8_t percent) {
@@ -1202,6 +1203,14 @@ GameplaySession::GameplaySession(const MissionPackage &mission,
     weapon_models_[index] =
         load_model(std::string{stem}, *resources->second.gmd, 0U);
   }
+  const auto armor_stem = droppedItemWorldModel(0x80U);
+  const auto armor = object_entries.find(std::string{armor_stem});
+  if (armor == object_entries.end() || armor->second.gmd == nullptr) {
+    throw core::Error{core::ErrorCode::not_found,
+                      "Retail VEST.GMD pickup model is missing"};
+  }
+  armor_pickup_model_ =
+      load_model(std::string{armor_stem}, *armor->second.gmd, 0U);
 
   // SPFX is a global retail particle atlas. Several overlays, including
   // PARK/PARK2, emit effects without placing a class-0x30 CFIRE object.
@@ -1399,7 +1408,7 @@ GameplaySession::GameplaySession(const MissionPackage &mission,
   current_room_ = mission.layout().initialRoom();
   rebuildActiveModels();
   legacy_first_mission_ = std::make_unique<LegacyFirstMissionRuntime>(
-      mission.definition(), mission.legacyImage());
+      mission.definition(), mission.legacyImage(), initial_agent_difficulty);
   reset();
   report_load(100U);
 }
@@ -1478,6 +1487,23 @@ bool GameplaySession::setRetailAllWeaponsCheat(bool enabled) noexcept {
 bool GameplaySession::setRetailHardMode(bool enabled) noexcept {
   return legacy_first_mission_ &&
          legacy_first_mission_->setRetailHardMode(enabled);
+}
+
+bool GameplaySession::setAgentDifficulty(bool enabled) noexcept {
+  return legacy_first_mission_ &&
+         legacy_first_mission_->setAgentDifficulty(enabled);
+}
+
+bool GameplaySession::agentHeadshotThreatActive() const noexcept {
+  return legacy_first_mission_ &&
+         legacy_first_mission_->agentHeadshotThreatActive();
+}
+
+std::optional<std::uint8_t>
+GameplaySession::agentPark2BombDetonationPercent() const noexcept {
+  return legacy_first_mission_
+             ? legacy_first_mission_->agentPark2BombDetonationPercent()
+             : std::nullopt;
 }
 
 bool GameplaySession::setRetailOneShotKills(bool enabled) noexcept {
@@ -1660,6 +1686,8 @@ void GameplaySession::reset() {
   guest_weapon_in_flight_expected_.reset();
   pending_guest_weapon_menu_ = false;
   guest_quick_weapon_pending_ = false;
+  pending_grenade_throw_down_ = false;
+  pending_grenade_throw_down_staged_ = false;
   host_manual_aim_ = false;
   retail_host_aim_active_ = false;
   first_person_aim_roll_block_updates_ = 0U;
@@ -1827,7 +1855,7 @@ bool GameplaySession::restartCheckpoint() {
   player_controller_ = checkpoint_player_controller_;
   current_room_ = checkpoint_room_;
   active_models_ = checkpoint_active_models_;
-  rebuildPresentationModels();
+  rebuildPresentationModels(true);
   legacy_world_vertex_colors_ = checkpoint_legacy_world_vertex_colors_;
   hud_ = checkpoint_hud_;
   object_health_ = checkpoint_object_health_;
@@ -1911,6 +1939,8 @@ bool GameplaySession::restartCheckpoint() {
       checkpoint_guest_weapon_in_flight_expected_;
   pending_guest_weapon_menu_ = checkpoint_pending_guest_weapon_menu_;
   guest_quick_weapon_pending_ = checkpoint_guest_quick_weapon_pending_;
+  pending_grenade_throw_down_ = false;
+  pending_grenade_throw_down_staged_ = false;
   host_manual_aim_ = false;
   retail_host_aim_active_ = false;
   first_person_aim_roll_block_updates_ = 0U;
@@ -2018,6 +2048,15 @@ void GameplaySession::captureCheckpoint() {
   checkpoint_pending_ = false;
 }
 
+std::span<const std::uint16_t>
+GameplaySession::prefetchedModels() const noexcept {
+  if (terrain_models_.size() <= presentation_models_.size()) {
+    return {};
+  }
+  return std::span<const std::uint16_t>{terrain_models_}.subspan(
+      presentation_models_.size());
+}
+
 std::vector<std::uint16_t> GameplaySession::buildActiveModels(
     std::uint16_t room, std::span<const std::uint16_t> retail_traversal) const {
   std::vector<std::uint16_t> result;
@@ -2055,14 +2094,117 @@ std::vector<std::uint16_t> GameplaySession::buildActiveModels(
   return result;
 }
 
+std::vector<std::uint16_t>
+buildWorldPresentationEnvelope(std::span<const std::uint16_t> retained,
+                               std::span<const std::uint16_t> active,
+                               bool reset_for_new_room) {
+  std::vector<std::uint16_t> result;
+  result.reserve((reset_for_new_room ? 0U : retained.size()) + active.size());
+  const auto append_unique = [&result](std::uint16_t model) {
+    if (std::ranges::find(result, model) == result.end()) {
+      result.push_back(model);
+    }
+  };
+  if (!reset_for_new_room) {
+    for (const auto model : retained) {
+      append_unique(model);
+    }
+  }
+  for (const auto model : active) {
+    append_unique(model);
+  }
+  return result;
+}
+
+std::vector<std::uint16_t>
+buildWorldTerrainEnvelope(std::span<const std::uint16_t> visible,
+                          std::span<const std::uint16_t> prefetched,
+                          std::span<const std::uint16_t> portal_candidates) {
+  std::vector<std::uint16_t> result;
+  result.reserve(visible.size() + 1U);
+  for (const auto model : visible) {
+    if (std::ranges::find(result, model) == result.end()) {
+      result.push_back(model);
+    }
+  }
+  const auto unseen = [&result](std::uint16_t model) {
+    return std::ranges::find(result, model) == result.end();
+  };
+  const auto portal_candidate = [portal_candidates](std::uint16_t model) {
+    return std::ranges::find(portal_candidates, model) !=
+           portal_candidates.end();
+  };
+  for (const auto model : prefetched) {
+    if (unseen(model) && portal_candidate(model)) {
+      result.push_back(model);
+      return result;
+    }
+  }
+  for (const auto model : portal_candidates) {
+    if (unseen(model)) {
+      result.push_back(model);
+      return result;
+    }
+  }
+  return result;
+}
+
 void GameplaySession::rebuildActiveModels() {
   active_models_ = buildActiveModels(current_room_);
-  rebuildPresentationModels();
+  rebuildPresentationModels(true);
   rebuildActiveObjects();
 }
 
-void GameplaySession::rebuildPresentationModels() {
-  presentation_models_ = active_models_;
+void GameplaySession::rebuildPresentationModels(bool reset_for_new_room) {
+  presentation_models_ = buildWorldPresentationEnvelope(
+      presentation_models_, active_models_, reset_for_new_room);
+  const auto &layout = mission_.layout();
+  const auto &current_visibility = layout.visibility(current_room_);
+  std::vector<std::uint16_t> portal_candidates;
+  const auto append_candidates = [&](std::span<const std::uint16_t> models) {
+    for (const auto model : models) {
+      if (model < layout.modelCount() &&
+          std::ranges::find(portal_candidates, model) ==
+              portal_candidates.end()) {
+        portal_candidates.push_back(model);
+      }
+    }
+  };
+  append_candidates(current_visibility.active_models);
+  for (const auto room : current_visibility.active_models) {
+    if (room < layout.modelCount()) {
+      append_candidates(layout.visibility(room).active_models);
+    }
+  }
+  terrain_models_ = buildWorldTerrainEnvelope(
+      presentation_models_, current_visibility.prefetched_models,
+      portal_candidates);
+  // Extend only along the first selected route. Choosing another entry from
+  // portal_candidates would add a sibling at the same depth instead of moving
+  // the horizon farther from Gabe. A third connected step gives the streamer
+  // a modest extra lead; its cumulative VRAM admission can still stop safely
+  // after either nearer room.
+  auto lookahead_steps = terrain_models_.size() > presentation_models_.size()
+                             ? std::size_t{1U}
+                             : std::size_t{};
+  while (lookahead_steps < world_terrain_lookahead_steps) {
+    if (terrain_models_.size() <= presentation_models_.size()) {
+      break;
+    }
+    const auto route_model = terrain_models_.back();
+    if (route_model >= layout.modelCount()) {
+      break;
+    }
+    const auto &route_visibility = layout.visibility(route_model);
+    const auto previous_size = terrain_models_.size();
+    terrain_models_ = buildWorldTerrainEnvelope(
+        terrain_models_, route_visibility.prefetched_models,
+        route_visibility.active_models);
+    if (terrain_models_.size() == previous_size) {
+      break;
+    }
+    ++lookahead_steps;
+  }
 }
 void GameplaySession::rebuildActiveObjects() {
   active_objects_.clear();
@@ -2405,6 +2547,97 @@ double GameplaySession::traceWorldSegment(double from_x, double from_y,
     }
   }
   return nearest;
+}
+
+std::optional<bool>
+GameplaySession::park2GirdeuxFlameLineOfSight() const noexcept {
+  if (missionIndex() != 4U || !playerAlive()) {
+    return std::nullopt;
+  }
+
+  for (const auto object_index : active_objects_) {
+    if (object_index >= objects_.size() ||
+        legacyDedicatedActorWeapon(object_index) != WeaponId::flamethrower) {
+      continue;
+    }
+    const auto &object = objects_[object_index];
+    if (object.model >= object_models_.size()) {
+      continue;
+    }
+    const auto *model =
+        std::get_if<assets::HmdModel>(&object_models_[object.model].geometry);
+    if (model == nullptr) {
+      continue;
+    }
+    const auto hand =
+        std::ranges::find_if(model->parts(), [](const assets::HmdPart &part) {
+          return part.name.starts_with("RightHan");
+        });
+    if (hand == model->parts().end()) {
+      continue;
+    }
+    const auto hand_index =
+        static_cast<std::size_t>(std::distance(model->parts().begin(), hand));
+    if (hand_index >= object.legacy_hmd_bone_count) {
+      continue;
+    }
+
+    const auto *flamethrower = weaponModel(WeaponId::flamethrower);
+    if (flamethrower == nullptr || !flamethrower->bounds) {
+      continue;
+    }
+    const auto &hand_transform = object.legacy_hmd_bones[hand_index];
+    const auto &bounds = *flamethrower->bounds;
+    const auto local_x =
+        (static_cast<double>(bounds.minimum_x) + bounds.maximum_x) * 0.5;
+    const auto local_y = static_cast<double>(bounds.maximum_y);
+    const auto local_z =
+        (static_cast<double>(bounds.minimum_z) + bounds.maximum_z) * 0.5;
+    const auto component = [&](std::size_t row) {
+      return (static_cast<double>(hand_transform.rotation[row * 3U]) *
+                  local_x +
+              static_cast<double>(hand_transform.rotation[row * 3U + 1U]) *
+                  local_y +
+              static_cast<double>(hand_transform.rotation[row * 3U + 2U]) *
+                  local_z) /
+             4096.0;
+    };
+    const auto origin = Point3{static_cast<double>(hand_transform.x) +
+                                   component(0U),
+                               -static_cast<double>(hand_transform.y) +
+                                   component(1U),
+                               static_cast<double>(hand_transform.z) +
+                                   component(2U)};
+    const auto &target = player();
+    const auto origin_x = static_cast<double>(origin.x);
+    const auto origin_y = static_cast<double>(origin.y);
+    const auto origin_z = static_cast<double>(origin.z);
+    const auto delta_x = target.x - origin_x;
+    const auto delta_z = target.z - origin_z;
+    const auto horizontal_length = std::hypot(delta_x, delta_z);
+    constexpr auto shoulder_offset = 65.0;
+    const auto side_x = horizontal_length > 0.000001
+                            ? -delta_z / horizontal_length * shoulder_offset
+                            : shoulder_offset;
+    const auto side_z = horizontal_length > 0.000001
+                            ? delta_x / horizontal_length * shoulder_offset
+                            : 0.0;
+    const std::array targets{
+        Point3{target.x, target.y - actor_head_height, target.z},
+        Point3{target.x, target.y - 225.0, target.z},
+        Point3{target.x, target.y - actor_target_height, target.z},
+        Point3{target.x + side_x, target.y - 215.0, target.z + side_z},
+        Point3{target.x - side_x, target.y - 215.0, target.z - side_z},
+    };
+    std::array<bool, legacy_park2_flame_visibility_sample_count> visible{};
+    std::ranges::transform(targets, visible.begin(), [&](const Point3 &sample) {
+      return traceWorldSegment(origin_x, origin_y, origin_z, sample.x,
+                               sample.y, sample.z) >=
+             target_visibility_limit;
+    });
+    return legacyPark2FlameDamageVisible(visible);
+  }
+  return std::nullopt;
 }
 
 std::optional<double>
@@ -3697,9 +3930,8 @@ GameplaySession::legacyVirusScannerTargetObject() const noexcept {
     return std::nullopt;
   }
 
-  const auto request = VirusScannerTargetRequest{
-      true,
-      bridge->virus_scanner_target_slot};
+  const auto request =
+      VirusScannerTargetRequest{true, bridge->virus_scanner_target_slot};
   return selectVirusScannerTarget(
       request, objects_.size(),
       [&](std::size_t scene_object) noexcept
@@ -3713,7 +3945,8 @@ GameplaySession::legacyVirusScannerTargetObject() const noexcept {
                 ? legacy_guest_slot_by_scene_object_[scene_object]
                 : -1;
         return VirusScannerTargetCandidate{
-            static_cast<std::uint16_t>(scene_object), guest_slot,
+            static_cast<std::uint16_t>(scene_object),
+            guest_slot,
             object.class_id,
             {object.transform.x, object.transform.y, object.transform.z}};
       },
@@ -3750,10 +3983,12 @@ std::optional<std::uint16_t> GameplaySession::legacyVirusScannerMarkerObject(
                 object_models_[*candidate.destroyed_model].name)) {
           return std::nullopt;
         }
-        return VirusScannerTargetCandidate{
-            static_cast<std::uint16_t>(index), -1, candidate.class_id,
-            {candidate.transform.x, candidate.transform.y,
-             candidate.transform.z}};
+        return VirusScannerTargetCandidate{static_cast<std::uint16_t>(index),
+                                           -1,
+                                           candidate.class_id,
+                                           {candidate.transform.x,
+                                            candidate.transform.y,
+                                            candidate.transform.z}};
       },
       maximum_pair_distance);
 }
@@ -3836,8 +4071,7 @@ bool GameplaySession::letterboxActive() const noexcept {
 }
 
 void GameplaySession::dismissRadioConversationPresentation() noexcept {
-  if (!legacy_radio_conversation_active_ ||
-      legacy_first_mission_ == nullptr) {
+  if (!legacy_radio_conversation_active_ || legacy_first_mission_ == nullptr) {
     return;
   }
   // Do not hide the HUD/letterbox locally. The same input still reaches the
@@ -4028,14 +4262,49 @@ void GameplaySession::stageLegacyHostState(const GameplayInput &input) {
   }
   if (!legacyMissionAuthoritative()) {
     retail_host_aim_active_ = false;
+    pending_grenade_throw_down_ = false;
+    pending_grenade_throw_down_staged_ = false;
     return;
   }
-  const auto pad = legacyPadStateFromPlayerInput(input);
+  const auto *aim_bridge = legacy_first_mission_->bridge();
+  const auto weapon = hud_.inventory().current();
+  const auto grenade_weapon = weapon == WeaponId::fragmentation_grenade ||
+                              weapon == WeaponId::gas_grenade;
+  const auto grenade_throw_queue_available = legacyGrenadeThrowQueueAvailable(
+      grenade_weapon,
+      aim_bridge != nullptr && aim_bridge->thrown_projectile.has_value());
+  if (!grenade_throw_queue_available) {
+    pending_grenade_throw_down_ = false;
+    pending_grenade_throw_down_staged_ = false;
+  } else if (input.fire_pressed && !pending_grenade_throw_down_) {
+    pending_grenade_throw_down_ = true;
+    pending_grenade_throw_down_staged_ = false;
+  }
+
+  if (pending_grenade_throw_down_ && pending_grenade_throw_down_staged_ &&
+      aim_bridge != nullptr && !aim_bridge->grenade_input_ready) {
+    // A staged Square-down changed the retail gate from ready to clear: the
+    // guest accepted it. Release the synthetic pulse now so a quick native
+    // click still produces the mandatory Square-up and throws.
+    pending_grenade_throw_down_ = false;
+    pending_grenade_throw_down_staged_ = false;
+  }
+
+  if (pending_grenade_throw_down_ && !pending_grenade_throw_down_staged_ &&
+      aim_bridge != nullptr && aim_bridge->grenade_input_ready) {
+    // Do not hold Square while the controller is unready: wait for its retail
+    // gate, then create a clean down edge on exactly that frame.
+    pending_grenade_throw_down_staged_ = true;
+  }
+  auto pad = legacyPadStateFromPlayerInput(input);
+  if (pending_grenade_throw_down_staged_) {
+    constexpr std::uint16_t square = 0x8000U;
+    pad.buttons = static_cast<std::uint16_t>(pad.buttons | square);
+  }
   // Stage this frame's PAD before invoking the retail L1 transition.  The
   // transition handler reads PAD RAM synchronously; leaving the previous
   // chase-frame axes there lets W/A/S/D kick the sight once as aim opens.
   legacy_first_mission_->setHostPadState(pad);
-  const auto *aim_bridge = legacy_first_mission_->bridge();
   const auto retail_aim_requested =
       input.aim && playerAim() == PlayerAimState::first_person &&
       aim_bridge != nullptr && aim_bridge->player.resident &&
@@ -5141,13 +5410,18 @@ void GameplaySession::syncLegacyGameplayBridge() {
   // spawned/rebound object for one frame.
   if (fresh_guest_sample && bridge.player.room >= 0) {
     const auto retail_room = static_cast<std::uint16_t>(bridge.player.room);
+    const auto room_changed = current_room_ != retail_room;
     const auto world_set_changed = active_models_ != native_active_models;
-    if (current_room_ != retail_room || world_set_changed) {
+    if (room_changed || world_set_changed) {
       // Commit the guest-owned room and the native-safe visibility
       // envelope as one transaction before resident-object sync.
       current_room_ = retail_room;
       active_models_ = native_active_models;
-      rebuildPresentationModels();
+      // The visibility bytes describe the original 4:3 camera, not the wider
+      // native viewport. Retain every shell observed while the player remains
+      // in this room; the depth buffer resolves overlaps, while a room change
+      // still releases the previous room's envelope immediately.
+      rebuildPresentationModels(room_changed);
       rebuildActiveObjects();
     }
   }
@@ -5442,6 +5716,7 @@ void GameplaySession::syncLegacyUiProjection(
     const LegacyGameplayBridgeState &bridge, const LegacyUiCommandFrame &ui) {
   aim_target_.reset();
   locked_target_.reset();
+  retail_aim_point_.reset();
   headshot_targeted_ = false;
   legacy_world_callouts_.clear();
   taser_target_.reset();
@@ -5451,6 +5726,10 @@ void GameplaySession::syncLegacyUiProjection(
 
   if (!legacy_mission_bridge_active_) {
     return;
+  }
+
+  if (bridge.aim_target_valid) {
+    retail_aim_point_ = bridge.aim_target;
   }
 
   const auto &mission = ui.mission;
@@ -5798,6 +6077,8 @@ void GameplaySession::updateCinematic() {
   }
 
   if (legacy_first_mission_->ready() && !legacy_first_mission_->finished()) {
+    legacy_first_mission_->setPark2FlameLineOfSight(
+        park2GirdeuxFlameLineOfSight());
     legacy_first_mission_->advanceHostUpdate();
     syncLegacyGameplayBridge();
   }
@@ -5934,6 +6215,8 @@ void GameplaySession::update(const GameplayInput &input) {
   }
 
   if (legacy_first_mission_->ready() && !legacy_first_mission_->finished()) {
+    legacy_first_mission_->setPark2FlameLineOfSight(
+        park2GirdeuxFlameLineOfSight());
     legacy_first_mission_->advanceHostUpdate();
     syncLegacyGameplayBridge();
     refreshLegacyTargetFollowCameraState();
@@ -5962,6 +6245,22 @@ const ObjectModel *GameplaySession::weaponModel(WeaponId id) const noexcept {
   const auto model = weapon_models_[static_cast<std::size_t>(id)];
   return model && *model < object_models_.size() ? &object_models_[*model]
                                                  : nullptr;
+}
+
+const ObjectModel *
+GameplaySession::droppedItemModel(std::uint16_t item) const noexcept {
+  if (droppedItemWorldModel(item).empty()) {
+    return nullptr;
+  }
+  if (item == 0x80U) {
+    return armor_pickup_model_ && *armor_pickup_model_ < object_models_.size()
+               ? &object_models_[*armor_pickup_model_]
+               : nullptr;
+  }
+  if (item >= weapon_slot_count) {
+    return nullptr;
+  }
+  return weaponModel(static_cast<WeaponId>(item));
 }
 
 const ObjectModel *
@@ -6097,6 +6396,27 @@ GameplaySession::objectTextureBank(std::uint16_t index) const noexcept {
   return resolveAuthoredObjectTextureBank(
       current_bank, current_is_owner, current_is_spatial_owner,
       spatial_owner_bank_mask, authored_owner_bank_mask);
+}
+
+std::span<const std::uint16_t>
+GameplaySession::authoredObjectRooms(std::uint16_t index) const noexcept {
+  if (index >= objects_.size()) {
+    return {};
+  }
+  const auto source = objects_[index].source_index;
+  if (source >= mission_.objects().objects().size()) {
+    return {};
+  }
+  const auto &authored = mission_.objects().objects()[source];
+  const auto &object = objects_[index];
+  const auto recycled = std::ranges::find(legacy_dynamic_objects_, index) !=
+                        legacy_dynamic_objects_.end();
+  const auto moved = object.transform.x != authored.transform.x ||
+                     object.transform.z != authored.transform.z;
+  if (recycled || moved) {
+    return {};
+  }
+  return mission_.objects().roomsContainingObject(source);
 }
 
 std::uint8_t GameplaySession::displayedObjectTextureBank(

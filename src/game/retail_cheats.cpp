@@ -74,8 +74,6 @@ bool RetailCheatState::enabled(RetailCheat cheat) const noexcept {
   switch (cheat) {
   case RetailCheat::all_weapons:
     return all_weapons;
-  case RetailCheat::hard_mode:
-    return hard_mode;
   case RetailCheat::one_shot_kills:
     return one_shot_kills;
   case RetailCheat::stage_select:
@@ -92,9 +90,6 @@ void RetailCheatState::set(RetailCheat cheat, bool enabled_value) noexcept {
   switch (cheat) {
   case RetailCheat::all_weapons:
     all_weapons = enabled_value;
-    break;
-  case RetailCheat::hard_mode:
-    hard_mode = enabled_value;
     break;
   case RetailCheat::one_shot_kills:
     one_shot_kills = enabled_value;
@@ -113,7 +108,6 @@ void RetailCheatState::set(RetailCheat cheat, bool enabled_value) noexcept {
 
 void RetailCheatState::enableAll() noexcept {
   all_weapons = true;
-  hard_mode = true;
   one_shot_kills = true;
   stage_select = true;
   weak_enemies = true;
@@ -122,9 +116,9 @@ void RetailCheatState::enableAll() noexcept {
 
 RetailCheat retailCheatAt(std::size_t index) noexcept {
   constexpr std::array cheats{
-      RetailCheat::all_weapons,   RetailCheat::hard_mode,
-      RetailCheat::one_shot_kills, RetailCheat::stage_select,
-      RetailCheat::weak_enemies,  RetailCheat::movie_theater,
+      RetailCheat::all_weapons, RetailCheat::one_shot_kills,
+      RetailCheat::stage_select, RetailCheat::weak_enemies,
+      RetailCheat::movie_theater,
   };
   return cheats[std::min(index, cheats.size() - 1U)];
 }
@@ -133,8 +127,6 @@ const char *retailCheatDisplayName(RetailCheat cheat) noexcept {
   switch (cheat) {
   case RetailCheat::all_weapons:
     return "All Weapons + Infinite Ammo";
-  case RetailCheat::hard_mode:
-    return "Hard Mode";
   case RetailCheat::one_shot_kills:
     return "One-Shot Kills";
   case RetailCheat::stage_select:
@@ -145,24 +137,6 @@ const char *retailCheatDisplayName(RetailCheat cheat) noexcept {
     return "Movie Theater";
   }
   return "Unknown";
-}
-
-std::optional<RetailCheat>
-detectRetailTitleCheat(std::uint16_t held_buttons,
-                       bool new_game_selected) noexcept {
-  if (!new_game_selected) {
-    return std::nullopt;
-  }
-  constexpr auto usa = static_cast<std::uint16_t>(
-      left_button | l1_button | r2_button | select_button | square_button |
-      circle_button | cross_button);
-  constexpr auto pal = static_cast<std::uint16_t>(
-      l1_button | l2_button | r2_button | square_button | circle_button |
-      cross_button);
-  if (chordHeld(held_buttons, usa) || chordHeld(held_buttons, pal)) {
-    return RetailCheat::hard_mode;
-  }
-  return std::nullopt;
 }
 
 std::optional<RetailCheat>
@@ -180,8 +154,6 @@ const char *retailCheatName(RetailCheat cheat) noexcept {
   switch (cheat) {
   case RetailCheat::all_weapons:
     return "all-weapons-infinite-ammo";
-  case RetailCheat::hard_mode:
-    return "hard-mode";
   case RetailCheat::one_shot_kills:
     return "one-shot-kills";
   case RetailCheat::stage_select:

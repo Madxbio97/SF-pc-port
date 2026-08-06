@@ -47,9 +47,15 @@ endingMovieSkipPolicy(const game::MissionDefinition &definition) noexcept {
 }
 
 void configureGraphics(const GraphicsSettings &settings) noexcept {
-  g_cfg_msaaSamples = settings.msaa_samples;
+  // SMAA and MSAA are complete scene antialiasing alternatives. Keeping them
+  // exclusive avoids paying twice and gives SMAA an ordinary single-sample
+  // depth texture for geometry-aware edge detection.
+  g_cfg_msaaSamples = settings.smaa ? 0 : settings.msaa_samples;
   g_cfg_bilinearFiltering = settings.bilinear_filtering ? 1 : 0;
+  g_cfg_trilinearFiltering = settings.trilinear_filtering ? 1 : 0;
   g_cfg_anisotropicFiltering = settings.anisotropic_filtering ? 1 : 0;
+  g_cfg_smaa = settings.smaa ? 1 : 0;
+  g_cfg_volumetricFog = settings.volumetric_fog ? 1 : 0;
   g_cfg_aspectMode = settings.aspect_ratio == AspectRatioMode::adaptive
                          ? PSYX_ASPECT_ADAPTIVE
                          : PSYX_ASPECT_ORIGINAL_4_3;
@@ -514,7 +520,6 @@ public:
     PadStartCom();
 
     std::uint16_t previous_buttons = 0xffffU;
-    bool title_cheat_latched{};
     bool title_keyboard_initialized{};
     bool title_interact_was_down{};
     bool title_pause_was_down{};
@@ -523,8 +528,8 @@ public:
     detail::PsyCrossCampaignSaveRenderer title_load_renderer{initial_mission_,
                                                              input_};
     const detail::MovieOverlayCallbacks overlay{
-        [this, &pad, &ui_audio, &title_cheat_latched,
-         &title_keyboard_initialized, &title_interact_was_down,
+        [this, &pad, &ui_audio, &title_keyboard_initialized,
+         &title_interact_was_down,
          &title_pause_was_down](std::uint16_t pressed,
                                 std::uint32_t movie_frame) {
           ui_audio.update();
@@ -539,20 +544,6 @@ public:
           title_keyboard_initialized = true;
           title_interact_was_down = interact_down;
           title_pause_was_down = pause_down;
-          const auto held = static_cast<std::uint16_t>(~readHostButtons(pad));
-          const auto title_cheat = game::detectRetailTitleCheat(
-              held, menu_.phase() == game::TitlePhase::menu &&
-                        menu_.selection() == 0U);
-          if (!title_cheat) {
-            title_cheat_latched = false;
-          } else if (!title_cheat_latched &&
-                     *title_cheat == game::RetailCheat::hard_mode) {
-            cheats_.hard_mode = true;
-            title_cheat_latched = true;
-            PsyX_Log_Info("Retail cheat %s: activated\n",
-                          game::retailCheatName(*title_cheat));
-            ui_audio.play(detail::PsyCrossUiCue::confirm);
-          }
           const auto analog_direction = titleAnalogDirection(pad);
           const auto analog_previous =
               analog_direction < 0 && title_analog_direction_ == 0;
@@ -572,11 +563,14 @@ public:
           const auto previous_selection = menu_.selection();
           const auto previous_phase = menu_.phase();
           const auto previous_slot = menu_.loadSlotSelection();
+          const auto previous_difficulty = menu_.difficultySelection();
           const auto command = menu_.update(input, movie_frame);
-          if (previous_phase == game::TitlePhase::load_slots &&
-              menu_.phase() != game::TitlePhase::load_slots) {
+          if ((previous_phase == game::TitlePhase::load_slots ||
+               previous_phase == game::TitlePhase::select_difficulty ||
+               previous_phase == game::TitlePhase::agent_warning) &&
+              menu_.phase() == game::TitlePhase::menu) {
             // The retail font atlas shares VRAM pages with TITLE.HOG. Restore
-            // the title sprites before returning from the slot picker.
+            // the title sprites before returning from a font-backed picker.
             uploadTitleAssets(assets_);
           }
           if (input.cancel) {
@@ -585,7 +579,8 @@ public:
                                        menu_.phase() != previous_phase)) {
             ui_audio.play(detail::PsyCrossUiCue::confirm);
           } else if (menu_.selection() != previous_selection ||
-                     menu_.loadSlotSelection() != previous_slot) {
+                     menu_.loadSlotSelection() != previous_slot ||
+                     menu_.difficultySelection() != previous_difficulty) {
             ui_audio.play(detail::PsyCrossUiCue::navigate);
           }
           if (command == game::TitleCommand::exit ||
@@ -603,6 +598,12 @@ public:
           if (menu_.phase() == game::TitlePhase::load_slots) {
             title_load_renderer.drawLoadSlots(menu_.saveSlots(),
                                               menu_.loadSlotSelection());
+          } else if (menu_.phase() ==
+                     game::TitlePhase::select_difficulty) {
+            title_load_renderer.drawDifficultySelection(menu_);
+          } else if (menu_.phase() ==
+                     game::TitlePhase::agent_warning) {
+            title_load_renderer.drawAgentModeWarning();
           } else {
             for (std::size_t index = 0; index < game::TitleMenu::visual_count;
                  ++index) {
@@ -664,7 +665,8 @@ public:
         campaign_carry = save_slots[*campaign->saveSlot()].carry;
       } else {
         campaign = game::CampaignProgress::startUnsaved(
-            initial_mission_.definition().index, title_played_opening_movie);
+            initial_mission_.definition().index, title_played_opening_movie,
+            menu_.selectedDifficulty());
         if (!campaign) {
           PsyX_Log_Error("New Game rejected an invalid campaign cursor\n");
           uploadTitleAssets(assets_);
@@ -672,11 +674,16 @@ public:
           menu_.setSaveSlots(loadTitleSaveSlots(save_path));
           continue;
         }
-        PsyX_Log_Info("New Game FMV complete; opening unsaved mission %u\n",
-                      campaign->missionIndex() + 1U);
+        PsyX_Log_Info("New Game FMV complete; opening unsaved mission %u "
+                      "on %s difficulty\n",
+                      campaign->missionIndex() + 1U,
+                      game::campaignDifficultyDisplayName(
+                          campaign->difficulty())
+                          .data());
       }
       detail::PsyCrossMissionStart mission_start;
-      detail::PsyCrossSceneViewer scene_viewer{input_, cheats_};
+      detail::PsyCrossSceneViewer scene_viewer{
+          input_, cheats_, campaign->difficulty()};
       std::optional<game::MissionPackage> loaded_mission;
       auto exit_application = false;
       while (campaign->active()) {
@@ -730,8 +737,9 @@ public:
         // Every campaign entry owns a mission-start loading boundary. DLFs
         // with authored directive text use it verbatim; continuation maps use
         // their catalog title instead of silently skipping the briefing UI.
-        previous_buttons = mission_start.run(*mission, pad, previous_buttons,
-                                             input_, campaign_carry);
+        previous_buttons = mission_start.run(
+            *mission, pad, previous_buttons, input_, campaign_carry,
+            campaign->difficulty() == game::CampaignDifficulty::agent);
 
         const auto &definition = mission->definition();
         std::cout << "Starting mission " << (definition.index + 1U) << ": "
@@ -754,7 +762,8 @@ public:
             // normal mission selection can never move beyond the high-water
             // mark of the loaded save.
             auto replacement =
-                game::CampaignProgress::startUnsaved(selected, false);
+                game::CampaignProgress::startUnsaved(
+                    selected, false, campaign->difficulty());
             if (!replacement) {
               PsyX_Log_Error("Pause mission selection rejected mission %u\n",
                              selected + 1U);
@@ -906,7 +915,8 @@ public:
     detail::PsyCrossMissionStart mission_start;
     previous_buttons =
         mission_start.run(mission_, pad, previous_buttons, input_);
-    detail::PsyCrossSceneViewer scene_viewer{input_, cheats_};
+    detail::PsyCrossSceneViewer scene_viewer{
+        input_, cheats_, game::CampaignDifficulty::original};
     const auto result = scene_viewer.run(mission_, pad, previous_buttons,
                                          cue_path_, mission_.definition().index,
                                          mission_start.takePreloadedGameplay(),

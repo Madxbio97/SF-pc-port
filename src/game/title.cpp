@@ -54,9 +54,13 @@ struct SaveFileReadResult {
 bool validSaveSlots(const TitleSaveSlots& slots) noexcept {
     const auto mission_count = missionCatalog().size();
     return std::ranges::all_of(slots, [mission_count](const auto& slot) {
+        if (!validCampaignDifficulty(slot.difficulty)) {
+            return false;
+        }
         if (!slot.occupied) {
             return !slot.campaign_complete && !slot.pending_eol_mission &&
-                !slot.carry;
+                !slot.carry &&
+                slot.difficulty == CampaignDifficulty::original;
         }
         if (slot.carry && !validCampaignCarry(*slot.carry)) {
             return false;
@@ -295,6 +299,54 @@ TitleCommand TitleMenu::update(
         }
         return TitleCommand::none;
     }
+    if (phase_ == TitlePhase::select_difficulty) {
+        if (!input.confirm_down) {
+            difficulty_confirm_armed_ = true;
+        }
+        if (input.cancel) {
+            phase_ = TitlePhase::menu;
+            difficulty_confirm_armed_ = true;
+            return TitleCommand::none;
+        }
+        if (input.next) {
+            difficulty_selection_ =
+                (difficulty_selection_ + 1U) % difficulty_count;
+        }
+        if (input.previous) {
+            difficulty_selection_ =
+                difficulty_selection_ == 0U
+                    ? difficulty_count - 1U
+                    : difficulty_selection_ - 1U;
+        }
+        if (input.confirm && difficulty_confirm_armed_) {
+            if (selectedDifficulty() == CampaignDifficulty::agent) {
+                phase_ = TitlePhase::agent_warning;
+                agent_warning_confirm_armed_ = false;
+                return TitleCommand::none;
+            }
+            phase_ = TitlePhase::menu;
+            difficulty_confirm_armed_ = true;
+            return TitleCommand::new_game;
+        }
+        return TitleCommand::none;
+    }
+    if (phase_ == TitlePhase::agent_warning) {
+        if (!input.confirm_down) {
+            agent_warning_confirm_armed_ = true;
+        }
+        if (input.cancel) {
+            phase_ = TitlePhase::select_difficulty;
+            difficulty_confirm_armed_ = !input.confirm_down;
+            agent_warning_confirm_armed_ = true;
+            return TitleCommand::none;
+        }
+        if (input.confirm && agent_warning_confirm_armed_) {
+            phase_ = TitlePhase::menu;
+            agent_warning_confirm_armed_ = true;
+            return TitleCommand::new_game;
+        }
+        return TitleCommand::none;
+    }
     if (input.cancel) {
         return TitleCommand::exit;
     }
@@ -312,6 +364,12 @@ TitleCommand TitleMenu::update(
             load_slot_confirm_armed_ = false;
             return TitleCommand::none;
         }
+        if (command == TitleCommand::new_game) {
+            phase_ = TitlePhase::select_difficulty;
+            difficulty_selection_ = 0U;
+            difficulty_confirm_armed_ = false;
+            return TitleCommand::none;
+        }
         return command;
     }
 
@@ -326,7 +384,8 @@ TitleCommand TitleMenu::update(
 }
 
 bool TitleMenu::itemEnabled(std::size_t item) const noexcept {
-    return phase_ != TitlePhase::load_slots && item < item_count &&
+    return (phase_ == TitlePhase::searching || phase_ == TitlePhase::menu) &&
+        item < item_count &&
         !(item == 1U && phase_ == TitlePhase::searching);
 }
 
@@ -380,11 +439,21 @@ void TitleMenu::updateVisuals(std::uint32_t background_movie_frame) noexcept {
         brightness_[index] = approachTitleBrightness(
             brightness_[index], static_cast<std::uint8_t>(target));
     }
+    for (std::size_t index = 0; index < difficulty_brightness_.size();
+         ++index) {
+        const auto target =
+            phase_ != TitlePhase::select_difficulty
+                ? 0U
+                : index == difficulty_selection_ ? selected_brightness
+                                                 : idle_brightness;
+        difficulty_brightness_[index] = approachTitleBrightness(
+            difficulty_brightness_[index], static_cast<std::uint8_t>(target));
+    }
 }
 
 std::string serializeTitleSaveSlots(const TitleSaveSlots& slots) {
     std::ostringstream output;
-    output << "SFPC_SAVE_V4\n";
+    output << "SFPC_SAVE_V5\n";
     for (std::size_t index = 0; index < slots.size(); ++index) {
         const auto& slot = slots[index];
         output << index << ' ' << (slot.occupied ? 1 : 0) << ' '
@@ -392,7 +461,8 @@ std::string serializeTitleSaveSlots(const TitleSaveSlots& slots) {
                << (slot.campaign_complete ? 1 : 0) << ' '
                << (slot.pending_eol_mission ? 1 : 0) << ' '
                << slot.pending_eol_mission.value_or(0U) << ' '
-               << (slot.carry ? 1 : 0);
+               << (slot.carry ? 1 : 0) << ' '
+               << static_cast<unsigned>(slot.difficulty);
         if (slot.carry) {
             output << ' ' << static_cast<unsigned>(slot.carry->current_weapon)
                    << ' ' << slot.carry->owned_weapons << ' '
@@ -414,13 +484,17 @@ std::optional<TitleSaveSlots> parseTitleSaveSlots(std::string_view bytes) {
     std::string magic;
     if (!std::getline(input, magic) ||
         (magic != "SFPC_SAVE_V1" && magic != "SFPC_SAVE_V2" &&
-         magic != "SFPC_SAVE_V3" && magic != "SFPC_SAVE_V4")) {
+         magic != "SFPC_SAVE_V3" && magic != "SFPC_SAVE_V4" &&
+         magic != "SFPC_SAVE_V5")) {
         return std::nullopt;
     }
     const auto version_two_or_newer = magic != "SFPC_SAVE_V1";
     const auto version_three_or_newer =
-        magic == "SFPC_SAVE_V3" || magic == "SFPC_SAVE_V4";
-    const auto version_four = magic == "SFPC_SAVE_V4";
+        magic == "SFPC_SAVE_V3" || magic == "SFPC_SAVE_V4" ||
+        magic == "SFPC_SAVE_V5";
+    const auto version_four_or_newer =
+        magic == "SFPC_SAVE_V4" || magic == "SFPC_SAVE_V5";
+    const auto version_five = magic == "SFPC_SAVE_V5";
 
     TitleSaveSlots slots{};
     for (std::size_t expected = 0; expected < slots.size(); ++expected) {
@@ -431,13 +505,17 @@ std::optional<TitleSaveSlots> parseTitleSaveSlots(std::string_view bytes) {
         unsigned int pending_eol{};
         std::uint32_t pending_eol_mission{};
         unsigned int has_carry{};
+        unsigned int difficulty{};
         if (!(input >> index >> occupied >> mission_index) ||
             (version_two_or_newer && !(input >> campaign_complete)) ||
             (version_three_or_newer &&
              !(input >> pending_eol >> pending_eol_mission)) ||
-            (version_four && !(input >> has_carry)) ||
+            (version_four_or_newer && !(input >> has_carry)) ||
+            (version_five && !(input >> difficulty)) ||
             index != expected || occupied > 1U || campaign_complete > 1U ||
             pending_eol > 1U || has_carry > 1U ||
+            difficulty >
+                static_cast<unsigned>(CampaignDifficulty::agent) ||
             (!pending_eol && pending_eol_mission != 0U)) {
             return std::nullopt;
         }
@@ -471,7 +549,8 @@ std::optional<TitleSaveSlots> parseTitleSaveSlots(std::string_view bytes) {
             pending_eol != 0U
                 ? std::optional<std::uint32_t>{pending_eol_mission}
                 : std::nullopt,
-            std::move(carry)};
+            std::move(carry),
+            static_cast<CampaignDifficulty>(difficulty)};
     }
     std::string trailing;
     if (input >> trailing) {

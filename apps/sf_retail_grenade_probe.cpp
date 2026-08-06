@@ -182,6 +182,26 @@ int run(const std::filesystem::path &cue, std::uint32_t mission_index) {
   if (gameplay.runtimeFaulted()) {
     return 9;
   }
+  auto quick_tap_projectile_seen = false;
+  for (std::uint32_t update = 0U; update < 120U; ++update) {
+    if (!step(gameplay, sf::game::GameplayInput{
+                            .aim = true,
+                            .fire_pressed = update == 0U,
+                            .fire_held = false,
+                        })) {
+      return 16;
+    }
+    const auto frame = gameplay.legacyPresentationFrame();
+    if (!frame || !frame->renderer) {
+      return 16;
+    }
+    quick_tap_projectile_seen =
+        quick_tap_projectile_seen ||
+        frame->renderer->state.thrown_projectile.has_value();
+  }
+  if (!quick_tap_projectile_seen) {
+    return 17;
+  }
   return preview_samples >= 24U && idle_preview_samples >= 4U &&
                  charge_preview_samples >= 12U && strength_grew &&
                  projectile_seen && projectile_moved_horizontally &&

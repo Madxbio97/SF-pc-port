@@ -8,10 +8,12 @@ namespace sf::game {
 CampaignProgress::CampaignProgress(
     std::optional<std::size_t> save_slot, std::uint32_t mission_index,
     std::uint32_t maximum_unlocked_mission, bool opening_movie_handled,
+    CampaignDifficulty difficulty,
     std::optional<std::uint32_t> pending_eol_mission) noexcept
     : save_slot_(save_slot), mission_index_(mission_index),
       maximum_unlocked_mission_(maximum_unlocked_mission),
       opening_movie_handled_(opening_movie_handled),
+      difficulty_(difficulty),
       pending_eol_mission_(pending_eol_mission) {}
 
 CampaignSaveResult
@@ -74,18 +76,22 @@ CampaignSaveMenu::update(const CampaignSaveInput &input,
 
 std::optional<CampaignProgress>
 CampaignProgress::startUnsaved(std::uint32_t mission_index,
-                               bool opening_movie_already_played) noexcept {
-  if (mission_index >= missionCatalog().size()) {
+                               bool opening_movie_already_played,
+                               CampaignDifficulty difficulty) noexcept {
+  if (mission_index >= missionCatalog().size() ||
+      !validCampaignDifficulty(difficulty)) {
     return std::nullopt;
   }
   return CampaignProgress{std::nullopt, mission_index, mission_index,
-                          opening_movie_already_played};
+                          opening_movie_already_played, difficulty};
 }
 
 std::optional<CampaignProgress>
 CampaignProgress::startNew(TitleSaveSlots &slots, std::uint32_t mission_index,
-                           bool opening_movie_already_played) noexcept {
-  if (mission_index >= missionCatalog().size()) {
+                           bool opening_movie_already_played,
+                           CampaignDifficulty difficulty) noexcept {
+  if (mission_index >= missionCatalog().size() ||
+      !validCampaignDifficulty(difficulty)) {
     return std::nullopt;
   }
   const auto empty = std::ranges::find_if(
@@ -95,19 +101,22 @@ CampaignProgress::startNew(TitleSaveSlots &slots, std::uint32_t mission_index,
   }
   const auto save_slot = static_cast<std::size_t>(empty - slots.begin());
   return startNewInSlot(slots, save_slot, mission_index,
-                        opening_movie_already_played);
+                        opening_movie_already_played, difficulty);
 }
 
 std::optional<CampaignProgress>
 CampaignProgress::startNewInSlot(TitleSaveSlots &slots, std::size_t save_slot,
                                  std::uint32_t mission_index,
-                                 bool opening_movie_already_played) noexcept {
-  if (save_slot >= slots.size() || mission_index >= missionCatalog().size()) {
+                                 bool opening_movie_already_played,
+                                 CampaignDifficulty difficulty) noexcept {
+  if (save_slot >= slots.size() || mission_index >= missionCatalog().size() ||
+      !validCampaignDifficulty(difficulty)) {
     return std::nullopt;
   }
-  slots[save_slot] = TitleSaveSlot{true, mission_index, false};
+  slots[save_slot] = TitleSaveSlot{true, mission_index, false, std::nullopt,
+                                   std::nullopt, difficulty};
   return CampaignProgress{save_slot, mission_index, mission_index,
-                          opening_movie_already_played};
+                          opening_movie_already_played, difficulty};
 }
 
 std::optional<CampaignProgress>
@@ -128,6 +137,7 @@ CampaignProgress::resume(const TitleSaveSlots &slots,
   // title overlay.
   return CampaignProgress{save_slot, slot.mission_index, slot.mission_index,
                           slot.pending_eol_mission.has_value(),
+                          slot.difficulty,
                           slot.pending_eol_mission};
 }
 
@@ -157,7 +167,7 @@ bool CampaignProgress::stageMissionCompletionInSlot(
   }
   save_slot_ = save_slot;
   slots[save_slot] = TitleSaveSlot{true, mission_index_, false, mission_index_,
-                                   std::move(carry)};
+                                   std::move(carry), difficulty_};
   pending_eol_mission_ = mission_index_;
   opening_movie_handled_ = true;
   return true;
@@ -172,6 +182,7 @@ CampaignProgress::completeMission(TitleSaveSlots &slots) noexcept {
   const auto &saved = slots[*save_slot_];
   if (!saved.occupied || saved.campaign_complete ||
       saved.mission_index != mission_index_ ||
+      saved.difficulty != difficulty_ ||
       saved.pending_eol_mission != pending_eol_mission_) {
     return CampaignAdvance::invalid;
   }
@@ -181,13 +192,15 @@ CampaignProgress::completeMission(TitleSaveSlots &slots) noexcept {
   const auto result = advance();
   if (result == CampaignAdvance::campaign_complete) {
     slots[*save_slot_] = TitleSaveSlot{true, completed_mission, true,
-                                       std::nullopt, std::nullopt};
+                                       std::nullopt, std::nullopt,
+                                       difficulty_};
   } else if (result == CampaignAdvance::next_mission) {
     slots[*save_slot_] = TitleSaveSlot{
         true, mission_index_, false, std::nullopt,
         campaignMissionsShareCarry(completed_mission, mission_index_)
             ? saved_carry
-            : std::nullopt};
+            : std::nullopt,
+        difficulty_};
   }
   return result;
 }

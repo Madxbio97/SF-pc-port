@@ -76,6 +76,7 @@ struct WorldCalloutAnchor {
 };
 
 struct RenderPresentationSnapshot {
+  std::uint64_t capture_serial{};
   std::uint64_t guest_frame{};
   // The mission player is intentionally excluded from GameplaySession::objects
   // and therefore has no entry in legacyGuestSlotsBySceneObject().  Preserve
@@ -109,11 +110,13 @@ struct RenderPresentationSnapshot {
   std::vector<game::LegacyVertexLightBridgeState> vertex_lights;
   std::span<const game::LegacyWorldSectionColorsBridgeState>
       world_vertex_colors;
+  std::vector<game::LegacyWorldDecalBridgeState> world_decals;
   std::vector<game::SceneObject> objects;
   std::optional<game::SceneObject> legacy_player;
   game::PlayerState player;
   std::int32_t player_model_heading{};
   std::vector<game::GameplayProjectile> projectiles;
+  std::uint32_t dropped_item_floor_owner_mask{};
   std::vector<game::LegacyDroppedItemBridgeState> dropped_items;
   std::vector<game::LegacyGuestSpriteBridgeState> guest_sprites;
   std::vector<game::LegacyGuestLineBridgeState> guest_lines;
@@ -137,12 +140,14 @@ game::DynamicLightFrame active_dynamic_lights;
 game::DynamicLightFrame active_baked_world_dynamic_lights;
 game::DynamicLightFrame active_dynamic_shadow_lights;
 game::DynamicLightPoint active_dynamic_light_observer;
-std::vector<game::RetailVertexLightState> active_retail_vertex_lights;
+std::vector<game::PreparedRetailVertexLight> active_retail_vertex_lights;
 std::int32_t active_retail_light_projection{320};
 bool active_retail_nightvision{};
 
 void captureRenderPresentation(const game::GameplaySession &gameplay,
-                               RenderPresentationSnapshot &result) {
+                               RenderPresentationSnapshot &result,
+                               std::uint64_t capture_serial) {
+  result.capture_serial = capture_serial;
   result.guest_frame = 0U;
   result.player_guest_slot = -1;
   result.camera = gameplay.camera();
@@ -167,12 +172,14 @@ void captureRenderPresentation(const game::GameplaySession &gameplay,
   result.flashlight_enabled = false;
   result.vertex_lights.clear();
   result.world_vertex_colors = gameplay.legacyWorldVertexColors();
+  result.world_decals.clear();
   result.objects.assign(gameplay.objects().begin(), gameplay.objects().end());
   result.legacy_player.reset();
   result.player = gameplay.player();
   result.player_model_heading = gameplay.playerModelHeading();
   result.projectiles.assign(gameplay.projectiles().begin(),
                             gameplay.projectiles().end());
+  result.dropped_item_floor_owner_mask = 0U;
   result.dropped_items.clear();
   result.guest_sprites.clear();
   result.guest_lines.clear();
@@ -204,6 +211,9 @@ void captureRenderPresentation(const game::GameplaySession &gameplay,
     result.scrim = frame->renderer->state.scrim;
     result.flashlight_enabled = frame->renderer->state.flashlight_enabled;
     result.vertex_lights = frame->renderer->state.vertex_lights;
+    result.world_decals = frame->renderer->state.world_decals;
+    result.dropped_item_floor_owner_mask =
+        frame->renderer->state.dropped_item_floor_owner_mask;
     result.dropped_items = frame->renderer->state.dropped_items;
     result.guest_sprites = frame->renderer->state.guest_sprites;
     result.guest_lines = frame->renderer->state.guest_lines;
@@ -290,6 +300,11 @@ void applyRetailEnvironment(
     SetDQA(0);
     SetDQB(0);
   }
+  GR_SetSceneFogParameters(
+      retail_environment_active ? 1 : 0, environment.fog_color.red,
+      environment.fog_color.green, environment.fog_color.blue,
+      environment.fog_dqa, environment.fog_dqb, projection,
+      environment.effectiveTerrainDepthCue());
 }
 
 long retailGteDepthCue(double camera_z) {
@@ -355,6 +370,15 @@ void depthCuePrimitive(POLY_GT4 &primitive,
 assets::MissionTransform
 interpolateTransform(const assets::MissionTransform &previous,
                      const assets::MissionTransform &current, double amount) {
+  if (amount <= 0.0) {
+    return previous;
+  }
+  if (amount >= 1.0 ||
+      (previous.rotation == current.rotation && previous.x == current.x &&
+       previous.y == current.y && previous.z == current.z)) {
+    return current;
+  }
+
   auto result = current;
   for (std::size_t index = 0; index < result.rotation.size(); ++index) {
     result.rotation[index] = static_cast<std::int16_t>(std::clamp<long>(
@@ -398,13 +422,14 @@ bool samePresentationObject(const game::SceneObject &previous,
          maximum_interpolated_displacement * maximum_interpolated_displacement;
 }
 
-game::SceneObject interpolateObject(const game::SceneObject &previous,
-                                    const game::SceneObject &current,
-                                    double amount) {
+void interpolateObjectPose(const game::SceneObject &previous,
+                           const game::SceneObject &current, double amount,
+                           game::SceneObject &result) {
+  // result is seeded from current once per capture. Between captures only the
+  // display-rate pose changes, so avoid another full object copy.
   if (!samePresentationObject(previous, current)) {
-    return current;
+    return;
   }
-  auto result = current;
   result.transform =
       interpolateTransform(previous.transform, current.transform, amount);
   for (std::size_t index = 0; index < current.legacy_hmd_bone_count; ++index) {
@@ -412,7 +437,6 @@ game::SceneObject interpolateObject(const game::SceneObject &previous,
         interpolateTransform(previous.legacy_hmd_bones[index],
                              current.legacy_hmd_bones[index], amount);
   }
-  return result;
 }
 
 std::int32_t interpolateHeading(std::int32_t previous, std::int32_t current,
@@ -476,7 +500,15 @@ void interpolateRenderPresentation(const RenderPresentationSnapshot &previous,
   const auto component = [amount](double from, double to) {
     return std::lerp(from, to, amount);
   };
-  const auto guest_buffers_changed = result.guest_frame != current.guest_frame;
+  const auto capture_changed =
+      result.capture_serial != current.capture_serial;
+  const auto object_source_changed =
+      capture_changed ||
+      result.objects.size() != current.objects.size() ||
+      result.legacy_player.has_value() != current.legacy_player.has_value();
+  const auto guest_buffers_changed =
+      capture_changed || result.guest_frame != current.guest_frame;
+  result.capture_serial = current.capture_serial;
   result.guest_frame = current.guest_frame;
   result.player_guest_slot = current.player_guest_slot;
   result.camera = current.camera;
@@ -543,8 +575,10 @@ void interpolateRenderPresentation(const RenderPresentationSnapshot &previous,
   result.retail_virus_scanner_overlay = current.retail_virus_scanner_overlay;
   result.grenade_trajectory = current.grenade_trajectory;
   result.flashlight_enabled = current.flashlight_enabled;
-  result.objects.assign(current.objects.begin(), current.objects.end());
-  result.legacy_player = current.legacy_player;
+  if (object_source_changed) {
+    result.objects.assign(current.objects.begin(), current.objects.end());
+    result.legacy_player = current.legacy_player;
+  }
   result.player = current.player;
   result.player_model_heading = current.player_model_heading;
   result.projectiles.assign(current.projectiles.begin(),
@@ -554,6 +588,9 @@ void interpolateRenderPresentation(const RenderPresentationSnapshot &previous,
                                               result.vertex_lights);
   if (guest_buffers_changed) {
     result.world_vertex_colors = current.world_vertex_colors;
+    result.world_decals = current.world_decals;
+    result.dropped_item_floor_owner_mask =
+        current.dropped_item_floor_owner_mask;
     result.dropped_items = current.dropped_items;
     // These lists are already projected by the retail frame builder and are
     // immutable until the next 20 Hz guest tick. Retaining them avoids
@@ -578,12 +615,13 @@ void interpolateRenderPresentation(const RenderPresentationSnapshot &previous,
   const auto shared_objects =
       std::min(previous.objects.size(), current.objects.size());
   for (std::size_t index = 0; index < shared_objects; ++index) {
-    result.objects[index] = interpolateObject(previous.objects[index],
-                                              current.objects[index], amount);
+    interpolateObjectPose(previous.objects[index], current.objects[index],
+                          amount, result.objects[index]);
   }
-  if (previous.legacy_player && current.legacy_player) {
-    result.legacy_player = interpolateObject(*previous.legacy_player,
-                                             *current.legacy_player, amount);
+  if (previous.legacy_player && current.legacy_player &&
+      result.legacy_player) {
+    interpolateObjectPose(*previous.legacy_player, *current.legacy_player,
+                          amount, *result.legacy_player);
   }
   result.player.x = component(previous.player.x, current.player.x);
   result.player.y = component(previous.player.y, current.player.y);

@@ -16,8 +16,17 @@ struct GmdVertex {
     std::int16_t z{};
 };
 
+struct GmdNormal {
+    std::int8_t x{};
+    std::int8_t y{};
+    std::int8_t z{};
+};
+
 struct GmdTriangle {
     std::array<std::uint8_t, 3> vertex_indices{};
+    // Retail GMD word 3 assigns an authored normal to every triangle corner.
+    // These indices are independent from the compact vertex indices.
+    std::array<std::uint8_t, 3> normal_indices{};
     std::array<EmdUv, 3> uv{};
     std::uint16_t clut{};
     std::uint16_t texture_page{};
@@ -35,6 +44,7 @@ public:
     [[nodiscard]] static GmdModel parse(std::span<const std::byte> bytes);
 
     [[nodiscard]] const std::vector<GmdVertex>& vertices() const noexcept { return vertices_; }
+    [[nodiscard]] const std::vector<GmdNormal>& normals() const noexcept { return normals_; }
     [[nodiscard]] const std::vector<GmdTriangle>& triangles() const noexcept { return triangles_; }
     [[nodiscard]] const EmdBounds& bounds() const noexcept { return bounds_; }
     [[nodiscard]] std::uint32_t texturePageMask() const noexcept { return texture_page_mask_; }
@@ -53,12 +63,14 @@ public:
 private:
     GmdModel(
         std::vector<GmdVertex> vertices,
+        std::vector<GmdNormal> normals,
         std::vector<GmdTriangle> triangles,
         EmdBounds bounds,
         std::uint32_t texture_page_mask,
         std::uint32_t renderable_texture_page_mask);
 
     std::vector<GmdVertex> vertices_;
+    std::vector<GmdNormal> normals_;
     std::vector<GmdTriangle> triangles_;
     EmdBounds bounds_;
     std::uint32_t texture_page_mask_{};

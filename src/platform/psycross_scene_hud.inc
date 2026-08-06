@@ -178,8 +178,7 @@ void drawHudSpriteAtResident(const assets::TimImage &image,
 
 void drawHudSprite(const assets::TimImage &image, int x, int y,
                    std::uint8_t brightness = 128U, bool raw_texture = false,
-                   bool semi_transparent = false,
-                   int blend_material = 0) {
+                   bool semi_transparent = false, int blend_material = 0) {
   drawHudSpriteAtResident(image, hudResidentX(image.pixels().x),
                           image.pixels().y, x, y, brightness, raw_texture,
                           semi_transparent, blend_material);
@@ -751,14 +750,89 @@ struct WorldCalloutRevealState final {
   Vector3 point{};
 };
 
+struct ProjectedHudAnchor final {
+  double x{};
+  double y{};
+  double view_depth{};
+};
+
 struct GameplayHudScratch final {
   std::vector<std::optional<GameplayMessageLayout>> message_layouts;
   std::vector<std::uint8_t> retail_scope_messages;
   std::vector<WorldCalloutRevealState> world_callout_reveals;
   std::vector<std::size_t> status_indices;
   double reticle_reveal{1.0};
+  double reticle_x{};
+  double reticle_y{};
+  double reticle_scale{1.0};
+  double reticle_velocity_x{};
+  double reticle_velocity_y{};
+  double reticle_scale_velocity{};
+  std::optional<std::uint16_t> reticle_target;
+  std::uint8_t reticle_mode{};
+  bool reticle_follow_initialized{};
   bool reticle_was_visible{};
 };
+
+void advanceReticleSpring(double &value, double &velocity, double target,
+                          double angular_frequency,
+                          double presentation_delta_seconds) noexcept {
+  const auto delta = std::clamp(presentation_delta_seconds, 0.0, 1.0 / 15.0);
+  if (delta <= 0.0) {
+    return;
+  }
+  const auto displacement = value - target;
+  const auto decay = std::exp(-angular_frequency * delta);
+  const auto impulse = (velocity + angular_frequency * displacement) * delta;
+  value = target + (displacement + impulse) * decay;
+  velocity = (velocity - angular_frequency * impulse) * decay;
+}
+
+void updateReticleFollow(GameplayHudScratch &scratch,
+                         std::optional<std::uint16_t> target,
+                         const ProjectedHudAnchor &projected,
+                         double target_scale, bool snap_to_anchor,
+                         double presentation_delta_seconds) noexcept {
+  const auto discontinuity =
+      scratch.reticle_follow_initialized &&
+      std::hypot(scratch.reticle_x - projected.x,
+                 scratch.reticle_y - projected.y) > 160.0;
+  if (snap_to_anchor || !scratch.reticle_follow_initialized ||
+      scratch.reticle_target != target || discontinuity) {
+    scratch.reticle_x = projected.x;
+    scratch.reticle_y = projected.y;
+    scratch.reticle_scale = target_scale;
+    scratch.reticle_velocity_x = 0.0;
+    scratch.reticle_velocity_y = 0.0;
+    scratch.reticle_scale_velocity = 0.0;
+    scratch.reticle_target = target;
+    scratch.reticle_follow_initialized = true;
+    return;
+  }
+
+  const auto previous_x = scratch.reticle_x;
+  const auto previous_y = scratch.reticle_y;
+  advanceReticleSpring(scratch.reticle_x, scratch.reticle_velocity_x,
+                       projected.x, 10.0, presentation_delta_seconds);
+  advanceReticleSpring(scratch.reticle_y, scratch.reticle_velocity_y,
+                       projected.y, 10.0, presentation_delta_seconds);
+  advanceReticleSpring(scratch.reticle_scale, scratch.reticle_scale_velocity,
+                       target_scale, 18.0, presentation_delta_seconds);
+
+  constexpr auto maximum_speed = 240.0;
+  const auto delta = std::clamp(presentation_delta_seconds, 0.0, 1.0 / 15.0);
+  const auto step_x = scratch.reticle_x - previous_x;
+  const auto step_y = scratch.reticle_y - previous_y;
+  const auto step_length = std::hypot(step_x, step_y);
+  const auto maximum_step = maximum_speed * delta;
+  if (maximum_step > 0.0 && step_length > maximum_step) {
+    const auto amount = maximum_step / step_length;
+    scratch.reticle_x = previous_x + step_x * amount;
+    scratch.reticle_y = previous_y + step_y * amount;
+    scratch.reticle_velocity_x *= amount;
+    scratch.reticle_velocity_y *= amount;
+  }
+}
 
 std::size_t originalHudLineCount(std::string_view text) noexcept {
   return text.empty()
@@ -769,7 +843,8 @@ std::size_t originalHudLineCount(std::string_view text) noexcept {
 std::optional<GameplayMessageLayout>
 buildGameplayMessageLayout(const game::LegacyUiMessageBridgeState &message,
                            int offset_x, int offset_y,
-                           const KeyboardMouseBindings &bindings) {
+                           const KeyboardMouseBindings &bindings,
+                           game::CampaignDifficulty difficulty) {
   if (message.glyphs.empty()) {
     return std::nullopt;
   }
@@ -802,6 +877,14 @@ buildGameplayMessageLayout(const game::LegacyUiMessageBridgeState &message,
   if (!resolve(message.text, false) &&
       !resolve(reconstructOriginalHudText(message.glyphs), true)) {
     return std::nullopt;
+  }
+  // Agent reuses the retail hard-mode flag for its AI behaviour, so the guest
+  // emits the original Hard notification. Replace only its presentation text;
+  // the guest-authored type-on, colour, backdrop and lifetime remain intact.
+  const auto difficulty_presentation =
+      game::campaignDifficultyGameplayPresentation(source, difficulty);
+  if (difficulty_presentation != source) {
+    presented = game::localizeTextCopy(difficulty_presentation);
   }
   // The retail contact template uses printf's first %s for the controller
   // icon. Preserve the second, already-authored contact name, but convert the
@@ -838,14 +921,17 @@ buildGameplayMessageLayout(const game::LegacyUiMessageBridgeState &message,
 
   if (russian_language) {
     // Native Russian notifications share one readable 8-pixel font size.
-    // Long prose wraps inside a screen-safe column instead of shrinking into
-    // an inconsistent, blurry one-line substitute.
+    // Long prose wraps inside a screen-safe maximum, while short status
+    // messages keep a backing sized to their actual widest rendered line.
     constexpr int horizontal_margin = 16;
     constexpr int text_width = screen_width - horizontal_margin * 2;
     layout.wrapped_text = game::originalHudWrapText(presented, text_width);
-    layout.available_width = static_cast<float>(text_width);
+    const auto horizontal = gameplayMessageHorizontalLayout(
+        screen_width, horizontal_margin,
+        originalHudMaximumLineWidth(layout.wrapped_text));
+    layout.available_width = static_cast<float>(horizontal.width);
     layout.scale = 1.0F;
-    layout.left = static_cast<float>(horizontal_margin);
+    layout.left = static_cast<float>(horizontal.left);
   } else {
     // English wording already fits the authored packet. Preserve its origin
     // and footprint while replacing only the number of glyphs the guest has
@@ -1093,6 +1179,178 @@ void drawOriginalStatusScale(int offset_x, int offset_y, double reveal_phase) {
   }
 }
 
+std::optional<game::AgentMissionHudSample>
+agentNpcHealthSample(const game::GameplaySession &gameplay,
+                     std::uint16_t source, std::uint32_t class_id) {
+  const auto &objects = gameplay.objects();
+  for (std::size_t index = 0U;
+       index < objects.size() &&
+       index <=
+           static_cast<std::size_t>(std::numeric_limits<std::uint16_t>::max());
+       ++index) {
+    const auto &object = objects[index];
+    if (object.source_index != source || object.class_id != class_id) {
+      continue;
+    }
+    const auto scene = static_cast<std::uint16_t>(index);
+    const auto *npc = gameplay.npcState(scene);
+    if (npc != nullptr && npc->source_index == source &&
+        npc->maximum_health != 0U) {
+      return game::AgentMissionHudSample{npc->health, npc->maximum_health};
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<game::AgentMissionHudSample>
+agentNpcRouteProgressSample(const game::GameplaySession &gameplay,
+                            std::uint16_t source, std::uint32_t class_id) {
+  const auto &objects = gameplay.objects();
+  for (std::size_t index = 0U;
+       index < objects.size() &&
+       index <=
+           static_cast<std::size_t>(std::numeric_limits<std::uint16_t>::max());
+       ++index) {
+    const auto &object = objects[index];
+    if (object.source_index != source || object.class_id != class_id) {
+      continue;
+    }
+    const auto scene = static_cast<std::uint16_t>(index);
+    const auto *npc = gameplay.npcState(scene);
+    if (npc == nullptr || !npc->active || npc->source_index != source) {
+      return std::nullopt;
+    }
+    return game::makeAgentMissionRouteProgressSample(
+        std::span<const game::NpcPatrolPoint>{npc->patrol_points},
+        game::AgentMissionHudRoutePoint{npc->home_x, npc->home_y, npc->home_z},
+        game::AgentMissionHudRoutePoint{npc->x, npc->y, npc->z});
+  }
+  return std::nullopt;
+}
+
+std::optional<game::AgentMissionHudSample>
+agentGirdeuxTankDamageSample(const game::GameplaySession &gameplay) {
+  constexpr auto girdeux_source = std::uint16_t{9U};
+  constexpr auto girdeux_class = std::uint32_t{0x3cU};
+  constexpr auto girdeux_health = std::uint32_t{100U};
+  const auto &objects = gameplay.objects();
+  for (std::size_t index = 0U;
+       index < objects.size() &&
+       index <=
+           static_cast<std::size_t>(std::numeric_limits<std::uint16_t>::max());
+       ++index) {
+    const auto &object = objects[index];
+    if (object.source_index != girdeux_source ||
+        object.class_id != girdeux_class) {
+      continue;
+    }
+    const auto scene = static_cast<std::uint16_t>(index);
+    if (!gameplay.legacyDedicatedActorPresentation(scene)) {
+      return std::nullopt;
+    }
+    const auto health =
+        std::min<std::uint32_t>(gameplay.objectHealth(scene), girdeux_health);
+    return game::AgentMissionHudSample{girdeux_health - health, girdeux_health};
+  }
+  return std::nullopt;
+}
+
+game::AgentMissionHudState
+agentMissionHudState(const game::GameplaySession &gameplay) {
+  game::AgentMissionHudState state;
+  switch (gameplay.missionIndex()) {
+  case 1U:
+    state.bomb_technician_health = agentNpcHealthSample(gameplay, 209U, 0x35U);
+    break;
+  case 2U:
+    state.aramov_escape = agentNpcRouteProgressSample(gameplay, 13U, 0x02U);
+    break;
+  case 4U:
+    if (const auto detonation = gameplay.agentPark2BombDetonationPercent()) {
+      state.bomb_detonation = game::AgentMissionHudSample{*detonation, 100U};
+    }
+    state.girdeux_tank_damage = agentGirdeuxTankDamageSample(gameplay);
+    break;
+  case 5U:
+    state.suspicion =
+        game::AgentMissionHudSample{gameplay.hud().dangerBar(), 100U};
+    break;
+  case 6U:
+    state.phagan_health = agentNpcHealthSample(gameplay, 183U, 0x4cU);
+    state.aramov_health = agentNpcHealthSample(gameplay, 153U, 0x01U);
+    break;
+  default:
+    break;
+  }
+  return state;
+}
+
+std::array<std::uint8_t, 3U>
+agentMissionHudFillColor(game::AgentMissionHudTone tone) noexcept {
+  switch (tone) {
+  case game::AgentMissionHudTone::friendly:
+    return {100U, 255U, 100U};
+  case game::AgentMissionHudTone::warning:
+    return {255U, 190U, 80U};
+  case game::AgentMissionHudTone::critical:
+    return {255U, 100U, 100U};
+  case game::AgentMissionHudTone::neutral:
+    return {150U, 150U, 255U};
+  }
+  return {150U, 150U, 255U};
+}
+
+void drawAgentMissionHudMeter(const HudTextureAtlas &textures,
+                              const game::AgentMissionHudMeter &meter,
+                              std::size_t row, int offset_x, int offset_y) {
+  constexpr auto frame_red = std::uint8_t{107U};
+  constexpr auto frame_green = std::uint8_t{126U};
+  constexpr auto frame_blue = std::uint8_t{231U};
+  constexpr auto right_margin = 14;
+  constexpr auto bar_width = 100;
+  constexpr auto row_height = 15;
+  const auto label_y = 18 + static_cast<int>(row) * row_height;
+  const auto bar_y = 26 + static_cast<int>(row) * row_height;
+
+  const auto label =
+      game::localizeTextCopy(game::agentMissionHudLabel(meter.kind));
+  const auto value = std::to_string(meter.percent);
+  constexpr auto percent_width = 4;
+  const auto value_width = game::originalHudTextWidth(value) + percent_width;
+  const auto right = screen_width - right_margin + offset_x;
+  const auto label_x =
+      right - value_width - 4 - game::originalHudTextWidth(label);
+  const auto value_x = right - value_width;
+
+  drawOriginalHudTextSolid(textures, label, label_x, label_y + offset_y);
+  drawOriginalHudTextSolid(textures, value, value_x, label_y + offset_y);
+
+  // FONTA has no registered percent glyph. Keep the counter in the native HUD
+  // font and complete the compact 3x5 sign with the same immediate primitive.
+  const auto percent_x = right - 3;
+  const auto percent_y = label_y + 1 + offset_y;
+  drawSolidRect(percent_x, percent_y, 1, 1, frame_red, frame_green, frame_blue);
+  drawSolidRect(percent_x + 2, percent_y + 4, 1, 1, frame_red, frame_green,
+                frame_blue);
+  drawSolidRect(percent_x + 2, percent_y, 1, 1, frame_red, frame_green,
+                frame_blue);
+  drawSolidRect(percent_x + 1, percent_y + 2, 1, 1, frame_red, frame_green,
+                frame_blue);
+  drawSolidRect(percent_x, percent_y + 4, 1, 1, frame_red, frame_green,
+                frame_blue);
+
+  const auto bar_x = right - bar_width;
+  drawSolidRect(bar_x - 1, bar_y + offset_y, 1, 5, frame_red, frame_green,
+                frame_blue);
+  drawSolidRect(bar_x - 1, bar_y + 5 + offset_y, bar_width + 1, 1, frame_red,
+                frame_green, frame_blue);
+  if (meter.percent != 0U) {
+    const auto color = agentMissionHudFillColor(meter.tone);
+    drawSolidRect(bar_x, bar_y + offset_y, static_cast<int>(meter.percent), 4,
+                  color[0], color[1], color[2]);
+  }
+}
+
 void drawOriginalRadar(const game::GameplaySession &gameplay,
                        const game::OriginalRadarGeometry &geometry,
                        std::int32_t heading, int offset_x, int offset_y) {
@@ -1292,14 +1550,15 @@ void drawOriginalRadar(const game::GameplaySession &gameplay,
 }
 
 void drawOriginalAimReticle(int center_x, int center_y, bool head_target,
-                            double reveal) {
+                            double reveal, double scale = 1.0) {
   constexpr auto red = std::uint8_t{64U};
   constexpr auto green = std::uint8_t{255U};
   constexpr auto blue = std::uint8_t{64U};
-  const auto geometry = game::originalAimReticleGeometry(head_target);
+  const auto geometry =
+      game::scaledOriginalAimReticleGeometry(head_target, scale);
   const auto eased_reveal = std::clamp(reveal, 0.0, 1.0);
-  const auto ray_slide =
-      static_cast<int>(std::lround((1.0 - eased_reveal * eased_reveal) * 12.0));
+  const auto ray_slide = static_cast<int>(
+      std::lround((1.0 - eased_reveal * eased_reveal) * 12.0 * scale));
   const auto left = center_x - geometry.half_width;
   const auto right = center_x + geometry.half_width;
   const auto top = center_y - geometry.half_height;
@@ -1734,6 +1993,7 @@ void drawGameplayHud(const HudTextureAtlas &textures,
                      double presented_weapon_switch_frames,
                      double presentation_delta_seconds, int offset_x,
                      int offset_y, double visibility, double normal_hud_phase,
+                     game::CampaignDifficulty difficulty,
                      GameplayHudScratch &scratch) {
   const auto &hud = gameplay.hud();
   const auto &definition = hud.inventory().currentDefinition();
@@ -1746,14 +2006,10 @@ void drawGameplayHud(const HudTextureAtlas &textures,
   const auto radar_offset_y = offset_y;
   const auto weapon_offset_x = offset_x;
   const auto weapon_offset_y = offset_y;
-  const auto message_offset_y =
-      offset_y + static_cast<int>(std::lround(
-                     80.0 - sf::platform::retailHudInterpolatedExtent(
-                                retail_hud_phase, 80)));
   const auto target_locked = gameplay.targetLocked();
   const auto project_anchor =
       [&camera, offset_x,
-       offset_y](const Vector3 &anchor) -> std::optional<std::pair<int, int>> {
+       offset_y](const Vector3 &anchor) -> std::optional<ProjectedHudAnchor> {
     const auto rows = viewBasis(camera);
     const auto delta = Vector3{
         anchor.x - camera.x,
@@ -1781,8 +2037,7 @@ void drawGameplayHud(const HudTextureAtlas &textures,
         projected_y > static_cast<double>(std::numeric_limits<int>::max())) {
       return std::nullopt;
     }
-    return std::pair{static_cast<int>(std::lround(projected_x)),
-                     static_cast<int>(std::lround(projected_y))};
+    return ProjectedHudAnchor{projected_x, projected_y, view_z};
   };
 
   // HUD is a depth-free native 384x240 pass. Finish any queued world/full-
@@ -1831,6 +2086,16 @@ void drawGameplayHud(const HudTextureAtlas &textures,
                                48 + top_offset_y);
       drawOriginalStatusBar(56, hud.displayedTargetBar(), hud.targetReveal(),
                             100U, 255U, 100U, offset_x, top_offset_y);
+    }
+
+    if (difficulty == game::CampaignDifficulty::agent) {
+      const auto meters = game::makeAgentMissionHudMeters(
+          gameplay.missionIndex(), agentMissionHudState(gameplay));
+      std::size_t row = 0U;
+      for (const auto &meter : meters.entries()) {
+        drawAgentMissionHudMeter(textures, meter, row++, offset_x,
+                                 top_offset_y);
+      }
     }
 
     drawOriginalStatusScale(offset_x, top_offset_y, retail_hud_phase);
@@ -1901,8 +2166,8 @@ void drawGameplayHud(const HudTextureAtlas &textures,
     }
   }
   const auto weapon = hud.inventory().current();
-  const auto thrown = weapon == game::WeaponId::fragmentation_grenade ||
-                      weapon == game::WeaponId::gas_grenade;
+  const auto grenade_weapon = weapon == game::WeaponId::fragmentation_grenade ||
+                              weapon == game::WeaponId::gas_grenade;
   const auto scoped =
       first_person_aim && (weapon == game::WeaponId::nightvision_rifle ||
                            weapon == game::WeaponId::sniper_rifle);
@@ -1911,11 +2176,14 @@ void drawGameplayHud(const HudTextureAtlas &textures,
   const auto authored_optic = scoped || scanner_optic;
   const auto retail_optic_text =
       first_person_aim && usesRetailEnglishOpticText(weapon);
-  const auto reticle_requested =
-      (first_person_aim || target_locked) && !thrown && !authored_optic;
+  const auto reticle_owner = game::aimReticleOwner(
+      first_person_aim, target_locked, grenade_weapon, authored_optic);
+  const auto reticle_requested = reticle_owner == game::AimReticleOwner::host;
+  const auto instant_target_lock = target_locked && !first_person_aim;
   if (reticle_requested != scratch.reticle_was_visible) {
     scratch.reticle_was_visible = reticle_requested;
-    scratch.reticle_reveal = reticle_requested ? 0.0 : 1.0;
+    scratch.reticle_reveal =
+        reticle_requested && !instant_target_lock ? 0.0 : 1.0;
   }
   if (reticle_requested) {
     constexpr double reticle_reveal_seconds = 0.14;
@@ -1924,7 +2192,21 @@ void drawGameplayHud(const HudTextureAtlas &textures,
                           std::max(0.0, presentation_delta_seconds) /
                               reticle_reveal_seconds);
   }
-  if ((first_person_aim || target_locked) && !thrown) {
+  const auto reset_reticle_follow = [&scratch] {
+    scratch.reticle_follow_initialized = false;
+    scratch.reticle_target.reset();
+    scratch.reticle_velocity_x = 0.0;
+    scratch.reticle_velocity_y = 0.0;
+    scratch.reticle_scale_velocity = 0.0;
+  };
+  const auto reticle_mode = static_cast<std::uint8_t>(first_person_aim ? 1U
+                                                      : target_locked  ? 2U
+                                                                       : 0U);
+  if (!reticle_requested || scratch.reticle_mode != reticle_mode) {
+    reset_reticle_follow();
+    scratch.reticle_mode = reticle_mode;
+  }
+  if (reticle_requested || authored_optic) {
     if (scoped) {
       drawOriginalScope(textures, weapon, aim_heading,
                         gameplay.headshotTargeted(), offset_x, offset_y);
@@ -1936,33 +2218,60 @@ void drawGameplayHud(const HudTextureAtlas &textures,
     DrawSync(0);
     GR_SetBlendMode(BM_NONE);
     GR_EnableDepth(0);
-    if (!authored_optic) {
+    if (reticle_requested) {
       auto center_x = screen_width / 2 + offset_x;
       auto center_y = screen_height / 2 + offset_y;
-      auto reticle_visible = first_person_aim;
+      const auto default_reticle_scale =
+          game::originalAimReticleScale(camera.projection, 0.0);
+      auto reticle_scale = default_reticle_scale;
+      auto reticle_visible = false;
+      auto resolved = std::optional<ProjectedHudAnchor>{};
+      auto target_scale = default_reticle_scale;
+
       if (first_person_aim) {
+        auto depth_source = std::optional<ProjectedHudAnchor>{};
+        if (const auto &retail_point = gameplay.retailAimPoint()) {
+          depth_source = project_anchor(Vector3{
+              static_cast<double>(retail_point->x),
+              -static_cast<double>(retail_point->y),
+              static_cast<double>(retail_point->z),
+          });
+        }
+        if (!depth_source && target_anchor) {
+          depth_source = project_anchor(*target_anchor);
+        }
         center_y += static_cast<int>(
             std::lround(gameplay.manualAimReticleVerticalOffset()));
-      }
-      // First-person sight is owned exclusively by the host look stream and
-      // must remain screen-centred while Gabe moves.  A chase-mode lock may
-      // follow the projected actor anchor, but reusing that 20 Hz anchor in
-      // first person makes held W/A/S/D visibly jump the reticle.
-      if (!first_person_aim && target_locked) {
-        reticle_visible = false;
-        if (target_anchor) {
-          // Follow the animated HMD Head/Chest part. A fixed world height
-          // drifts when the mission transform scales actors.
-          if (const auto projected = project_anchor(*target_anchor)) {
-            center_x = projected->first;
-            center_y = projected->second;
-            reticle_visible = true;
-          }
+        resolved = ProjectedHudAnchor{
+            static_cast<double>(center_x), static_cast<double>(center_y),
+            depth_source ? depth_source->view_depth : 0.0};
+        if (depth_source) {
+          target_scale = game::originalAimReticleScale(
+              camera.projection, depth_source->view_depth);
+        }
+      } else if (target_locked && target_anchor) {
+        resolved = project_anchor(*target_anchor);
+        if (resolved) {
+          target_scale = game::originalAimReticleScale(camera.projection,
+                                                       resolved->view_depth);
         }
       }
-      if (reticle_visible) {
+
+      if (resolved) {
+        updateReticleFollow(scratch, gameplay.aimTarget(), *resolved,
+                            target_scale, instant_target_lock,
+                            presentation_delta_seconds);
+        center_x = static_cast<int>(std::lround(scratch.reticle_x));
+        center_y = static_cast<int>(std::lround(scratch.reticle_y));
+        reticle_scale = scratch.reticle_scale;
+        reticle_visible = true;
+      }
+      if (!reticle_visible) {
+        reset_reticle_follow();
+      } else {
         drawOriginalAimReticle(center_x, center_y, gameplay.headshotTargeted(),
-                               scratch.reticle_reveal * hud_visibility);
+                               scratch.reticle_reveal * hud_visibility,
+                               reticle_scale);
         if (gameplay.headshotTargeted()) {
           const auto callout = std::ranges::find_if(
               world_callouts, [](const WorldCalloutAnchor &candidate) {
@@ -1981,8 +2290,8 @@ void drawGameplayHud(const HudTextureAtlas &textures,
       auto center_y = screen_height / 2 + offset_y;
       if (target_anchor) {
         if (const auto projected = project_anchor(*target_anchor)) {
-          center_x = projected->first;
-          center_y = projected->second;
+          center_x = static_cast<int>(std::lround(projected->x));
+          center_y = static_cast<int>(std::lround(projected->y));
         }
       }
       const auto callout = std::ranges::find_if(
@@ -2036,7 +2345,8 @@ void drawGameplayHud(const HudTextureAtlas &textures,
         state.text, static_cast<std::size_t>(state.visible_glyphs));
     if (const auto projected = project_anchor(state.point)) {
       drawOriginalWorldCallout(
-          textures, visible_text, projected->first, projected->second,
+          textures, visible_text, static_cast<int>(std::lround(projected->x)),
+          static_cast<int>(std::lround(projected->y)),
           game::worldCalloutBrightness(state.opacity * hud_visibility));
     }
   }
@@ -2073,10 +2383,13 @@ void drawGameplayHud(const HudTextureAtlas &textures,
             retail_optic_text, game::russianLanguageActive(), message.channel,
             message.backdrop.has_value(), message.glyphs.size());
     retail_scope_messages.push_back(retail_scope_message);
+    // The guest packet already contains its authored type-on, slide and fade
+    // position. Applying the normal-HUD transition here would animate it a
+    // second time when a skipped radio call restores the HUD.
     message_layouts.push_back(
         scope_message ? std::nullopt
-                      : buildGameplayMessageLayout(message, offset_x,
-                                                   message_offset_y, bindings));
+                      : buildGameplayMessageLayout(message, offset_x, offset_y,
+                                                   bindings, difficulty));
   }
   const auto russian_language = game::russianLanguageActive();
   if (russian_language) {
@@ -2085,9 +2398,9 @@ void drawGameplayHud(const HudTextureAtlas &textures,
 
   auto localized_status_backdrop = false;
   if (russian_language && status_backdrop != messages.end()) {
-    localized_status_backdrop = drawStatusBackdrop(messages, message_layouts,
-                                                   *status_backdrop->backdrop,
-                                                   offset_x, message_offset_y);
+    localized_status_backdrop =
+        drawStatusBackdrop(messages, message_layouts,
+                           *status_backdrop->backdrop, offset_x, offset_y);
   }
   for (const auto &message : messages) {
     if (!message.backdrop ||
@@ -2095,10 +2408,10 @@ void drawGameplayHud(const HudTextureAtlas &textures,
          message.channel == game::LegacyUiMessageChannel::status)) {
       continue;
     }
-    drawRetailUiBackdrop(*message.backdrop, offset_x, message_offset_y);
+    drawRetailUiBackdrop(*message.backdrop, offset_x, offset_y);
   }
   if (const auto &timer = gameplay.legacyUiTimer()) {
-    drawRetailUiGlyphs(textures, timer->glyphs, offset_x, message_offset_y);
+    drawRetailUiGlyphs(textures, timer->glyphs, offset_x, offset_y);
   }
   for (auto index = std::size_t{}; index < messages.size(); ++index) {
     const auto &message = messages[index];
@@ -2111,8 +2424,8 @@ void drawGameplayHud(const HudTextureAtlas &textures,
     } else if (message_layouts[index]) {
       drawGameplayMessage(textures, message, *message_layouts[index]);
     } else if (!drawBoundKeyboardMousePrompt(textures, message, bindings,
-                                             offset_x, message_offset_y)) {
-      drawRetailUiGlyphs(textures, message.glyphs, offset_x, message_offset_y);
+                                             offset_x, offset_y)) {
+      drawRetailUiGlyphs(textures, message.glyphs, offset_x, offset_y);
     }
   }
 

@@ -75,7 +75,8 @@ std::uint16_t
 PsyCrossMissionStart::run(const game::MissionPackage &mission, PADRAW &pad,
                           std::uint16_t previous_buttons,
                           const KeyboardMouseBindings &bindings,
-                          std::optional<game::CampaignCarryState> carry) {
+                          std::optional<game::CampaignCarryState> carry,
+                          bool initial_agent_difficulty) {
   // The retail briefing is also the level-loading boundary. Remove the STR
   // framebuffer and its texture-page residue before presenting it; the
   // scene viewer uploads a fresh mission working set after confirmation.
@@ -85,8 +86,10 @@ PsyCrossMissionStart::run(const game::MissionPackage &mission, PADRAW &pad,
   PsyCrossRetailBriefing retail_briefing{mission, bindings};
   preloaded_gameplay_.reset();
   preloaded_audio_ = std::make_unique<PsyCrossAudioOutput>();
-  auto preload = std::async(std::launch::async, [&mission, carry] {
-    auto gameplay = std::make_unique<game::GameplaySession>(mission);
+  auto preload = std::async(std::launch::async, [&mission, carry,
+                                                 initial_agent_difficulty] {
+    auto gameplay = std::make_unique<game::GameplaySession>(
+        mission, initial_agent_difficulty);
     if (carry && !gameplay->applyCampaignCarryState(*carry)) {
       throw core::Error{core::ErrorCode::invalid_format,
                         "Campaign carry could not be applied to retail RAM"};

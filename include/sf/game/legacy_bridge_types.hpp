@@ -1,6 +1,8 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -45,6 +47,8 @@ struct LegacyNativePoint {
 
 inline constexpr std::size_t legacy_inventory_weapon_count = 26U;
 inline constexpr std::size_t legacy_weapon_events_per_frame = 16U;
+inline constexpr std::size_t legacy_weapon_impacts_per_event = 16U;
+inline constexpr std::size_t legacy_world_decal_capacity = 0x3cU;
 inline constexpr std::size_t legacy_effect_particle_capacity = 160U;
 
 // SPFX family identity is part of the guest/native presentation contract, so
@@ -111,6 +115,18 @@ legacyWeaponEventUsesFirstPerson(std::uint32_t aim_mode) noexcept {
   return aim_mode == 2U || aim_mode == 3U;
 }
 
+// One exact call to retail FUN_8006784c. Unlike the continuously sampled aim
+// globals, these values are observed only after the weapon collision has been
+// accepted, so position is the point actually used by the guest impact path.
+struct LegacyWeaponImpactBridgeState {
+  LegacyNativePoint position;
+  LegacyNativePoint vector;
+  std::int16_t target_slot{-1};
+  std::int16_t effect_kind{};
+  std::uint32_t hit_result{};
+  bool world{};
+};
+
 // One accepted retail weapon/use boundary. Damage, ammunition, projectiles
 // and mission callbacks have already remained guest-owned; this immutable
 // edge carries only the data needed to present that exact action natively.
@@ -122,6 +138,9 @@ struct LegacyWeaponEventBridgeState {
   std::uint32_t hit_result{};
   LegacyNativePoint origin;
   LegacyNativePoint endpoint;
+  std::array<LegacyWeaponImpactBridgeState,
+             legacy_weapon_impacts_per_event> impacts{};
+  std::uint8_t impact_count{};
   bool first_person{};
   bool enabled{};
 };
@@ -181,6 +200,7 @@ struct LegacyPadBridgeState {
 
 inline constexpr std::size_t legacy_actor_bone_count = 15U;
 inline constexpr std::size_t legacy_tracked_target_count = 6U;
+inline constexpr std::size_t legacy_hmd_wound_vertex_capacity = 10U;
 
 struct LegacyNativeMatrix {
   std::array<std::int16_t, 9U> rotation{};
@@ -215,6 +235,12 @@ struct LegacyObjectBridgeState {
   // 0x1000 is the maximum white NCDT result.
   std::array<std::int16_t, 3U> hmd_back_color_q12{0x1000, 0x1000, 0x1000};
   bool hmd_back_color_valid{};
+  // FUN_800cbcb8 keeps exact HMD normal pointers in the display's wound
+  // record. The immutable bridge resolves them to the matching global HMD
+  // vertex ordinals; their lifetime remains entirely guest-owned.
+  std::array<std::uint16_t, legacy_hmd_wound_vertex_capacity>
+      hmd_wound_vertices{};
+  std::uint8_t hmd_wound_vertex_count{};
   std::uint32_t motion_controller{};
   std::uint32_t presentation_controller{};
   std::uint32_t target_controller{};
@@ -457,6 +483,9 @@ struct LegacyGuestRawPacketBridgeState {
   std::uint8_t opcode{};
   std::array<std::uint32_t, legacy_guest_raw_packet_words> words{};
   std::int16_t effect_particle{-1};
+  std::int16_t effect_controller{-1};
+  std::int16_t taser_segment_index{-1};
+  std::uint16_t taser_segment_count{};
   bool effect_world_position_valid{};
   LegacyNativePoint effect_position;
 };
@@ -524,6 +553,26 @@ inline constexpr std::array<LegacyGuestRawPacketAddressRange, 4U>
     const LegacyGuestRawPacketBridgeState &packet) noexcept {
   return packet.effect_particle >= 0 && packet.effect_world_position_valid;
 }
+
+inline constexpr std::uint32_t legacy_retail_offscreen_endpoint =
+    0x04000400U;
+
+[[nodiscard]] constexpr bool legacyGuestRawPacketIsRetailTaserConductor(
+    const LegacyGuestRawPacketBridgeState &packet) noexcept {
+  return packet.effect_controller >= 0 && packet.taser_segment_index >= 0 &&
+         packet.taser_segment_count != 0U && packet.word_count == 4U &&
+         (packet.opcode & 0xfdU) == 0x50U;
+}
+
+[[nodiscard]] constexpr bool legacyGuestRawPacketHasProjectedTaserSegment(
+    const LegacyGuestRawPacketBridgeState &packet) noexcept {
+  return legacyGuestRawPacketIsRetailTaserConductor(packet) &&
+         packet.words[1] != legacy_retail_offscreen_endpoint &&
+         packet.words[3] != legacy_retail_offscreen_endpoint;
+}
+
+static_assert(!legacyGuestRawPacketIsRetailTaserConductor(
+    LegacyGuestRawPacketBridgeState{}));
 
 [[nodiscard]] constexpr bool legacyGuestCameraItemVisibleWithNativeFirstPerson(
     bool first_person_aim, bool uses_world_depth) noexcept {
@@ -852,6 +901,20 @@ struct LegacyWorldSectionColorsBridgeState {
              const LegacyWorldSectionColorsBridgeState &) = default;
 };
 
+// One active entry in retail's FUN_800ccdd0 circular decal pool.
+// Vertices are already stored in renderer coordinates (guest Y was negated
+// by the builder); material words retain POLY_FT4 UV/clut/tpage packing.
+struct LegacyWorldDecalBridgeState {
+  std::array<LegacyNativePoint, 4U> vertices{};
+  std::array<std::uint32_t, 4U> material_words{};
+  std::int32_t owner{};
+  std::uint8_t slot{};
+
+  [[nodiscard]] friend bool
+  operator==(const LegacyWorldDecalBridgeState &,
+             const LegacyWorldDecalBridgeState &) = default;
+};
+
 // FUN_80045f84 detaches an enemy's carried item into this fixed 30-slot
 // retail pool.  Weapons retain their native inventory id; 0x80 is the
 // separately-authored armour pickup.
@@ -859,10 +922,10 @@ struct LegacyDroppedItemBridgeState {
   std::uint8_t slot{};
   std::uint16_t room{};
   std::uint16_t item{};
-  // FUN_80045f84 moves the display into the fixed pickup MATRIX pool. Type
-  // 0x11 is a camera-facing pickup sprite, but retail links it through the
-  // primary world list so its OT depth is shared with Gabe and the level.
-  // Preserve the complete transform used to project and sort that sprite.
+  // FUN_80045f84 moves the display into the fixed pickup MATRIX pool. The
+  // 0x11 byte controls GMD lighting; FUN_800c84f4 keeps the model on the
+  // primary world list, separate from its GsSPRITE list. Preserve the full
+  // transform used by FUN_800cde88/FUN_800cf0e4 to submit its GT3 geometry.
   LegacyNativeMatrix transform;
 
   [[nodiscard]] friend bool
@@ -908,6 +971,10 @@ struct LegacyGameplayBridgeState {
   std::vector<std::uint16_t> active_world_models;
   std::vector<std::uint16_t> resident_world_models;
   bool target_lock_active{};
+  // FUN_8002ff6c/FUN_8003a7fc write the exact retail first-person ray result.
+  // A zero DAT_8011665c miss byte makes this point authoritative.
+  LegacyNativePoint aim_target;
+  bool aim_target_valid{};
   LegacyNativePoint virus_scanner_target;
   std::int32_t virus_scanner_target_slot{-1};
   bool virus_scanner_target_valid{};
@@ -917,6 +984,7 @@ struct LegacyGameplayBridgeState {
   bool flashlight_enabled{};
   std::vector<LegacyVertexLightBridgeState> vertex_lights;
   std::vector<LegacyWorldSectionColorsBridgeState> world_vertex_colors;
+  std::vector<LegacyWorldDecalBridgeState> world_decals;
   // FUN_8004d278 raises 1 while launching the conductor, its callback raises
   // 2 while the target is being shocked, and FUN_8004d0cc raises 3 on stop.
   std::uint16_t taser_conductor_phase{};
@@ -932,7 +1000,15 @@ struct LegacyGameplayBridgeState {
   std::array<std::int16_t, legacy_tracked_target_count> tracked_slots{};
   std::uint16_t dynamic_first_slot{};
   std::vector<LegacyObjectBridgeState> objects;
+  // Low 30 bits mirror the retail detached-item owner array. A set bit means
+  // the slot still names a valid floor room even if its descriptor/MATRIX is
+  // between allocator stores and cannot be published on this capture.
+  std::uint32_t dropped_item_floor_owner_mask{};
   std::vector<LegacyDroppedItemBridgeState> dropped_items;
+  // FUN_80025dfc accepts grenade Square-down only while DAT_80127d98 is
+  // non-zero, then clears the byte before latching the charge clock. Expose
+  // that gate so the host can queue a click until retail is ready.
+  bool grenade_input_ready{};
   std::optional<LegacyGrenadeTrajectoryBridgeState> grenade_trajectory;
   std::optional<LegacyThrownProjectileBridgeState> thrown_projectile;
   std::optional<LegacyThrownProjectileBridgeState> enemy_thrown_projectile;

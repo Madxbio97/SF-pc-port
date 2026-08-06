@@ -42,8 +42,22 @@ struct FireParticle {
   std::uint8_t blue{128U};
 };
 
+constexpr std::uint64_t world_decal_lifetime_ticks = 5U * 20U;
+constexpr double world_decal_surface_bias = 1.0;
+
+struct WorldDecalPresentationCacheEntry {
+  std::optional<game::LegacyWorldDecalBridgeState> source;
+  std::uint64_t born_tick{};
+  bool expired{};
+};
+
 struct WeaponEffectsScratch {
   std::vector<FireParticle> legacy_particles;
+  std::array<WorldDecalPresentationCacheEntry,
+             game::legacy_world_decal_capacity>
+      world_decals{};
+  std::uint64_t world_decal_last_tick{};
+  bool world_decal_tick_initialized{};
 };
 
 struct FireEmitterState {
@@ -581,6 +595,11 @@ void renderRetailCombatParticles(
       submitStats(stats, depth, projected);
     } else if (particle.kind ==
                game::LegacyCombatParticleKind::blood_impact_triangle) {
+      if (particle.attached_slot >= 0) {
+        // Actor mode9 supplies the exact polygon-selection point above; it is
+        // not an additional camera-facing blood triangle.
+        continue;
+      }
       const auto radius =
           static_cast<double>(particle.scale_byte) * screen_to_world;
       const std::array angles{
@@ -688,6 +707,165 @@ void renderEffectSpriteInPlane(Vector3 centre, double half_width,
   submitStats(stats, depth, projected);
 }
 
+void renderRetailWorldDecals(
+    std::span<const game::LegacyWorldDecalBridgeState> observed_decals,
+    std::uint64_t tick, WeaponEffectsScratch &scratch,
+    const CombatEffectTextureAtlas &effect_textures, bool nightvision,
+    const MATRIX &view, std::vector<OT_TAG> &ordering_table, PrimitiveBuffer &primitives,
+    RenderStats &stats) {
+  constexpr std::array<std::size_t, 4U> retail_vertex_order{0U, 1U, 3U, 2U};
+  if (scratch.world_decal_tick_initialized &&
+      tick < scratch.world_decal_last_tick) {
+    scratch.world_decals = {};
+  }
+  scratch.world_decal_tick_initialized = true;
+  scratch.world_decal_last_tick = tick;
+
+  std::array<bool, game::legacy_world_decal_capacity> observed_slots{};
+  for (const auto &decal : observed_decals) {
+    if (decal.slot >= scratch.world_decals.size()) {
+      continue;
+    }
+    observed_slots[decal.slot] = true;
+    auto &entry = scratch.world_decals[decal.slot];
+    if (!entry.source || *entry.source != decal) {
+      entry.source = decal;
+      entry.born_tick = tick;
+      entry.expired = false;
+    } else if (tick >= entry.born_tick &&
+               tick - entry.born_tick >= world_decal_lifetime_ticks) {
+      entry.expired = true;
+    }
+  }
+  for (std::size_t slot = 0U; slot < scratch.world_decals.size(); ++slot) {
+    if (!observed_slots[slot]) {
+      scratch.world_decals[slot] = {};
+    }
+  }
+
+  for (const auto &entry : scratch.world_decals) {
+    if (!entry.source || entry.expired) {
+      continue;
+    }
+    const auto &decal = *entry.source;
+    const auto sprite = effect_textures.bulletMark(decal.material_words);
+    const std::array<std::pair<double, double>, 4U> uv{{
+        {sprite.minimum_u, sprite.minimum_v},
+        {sprite.maximum_u, sprite.minimum_v},
+        {sprite.minimum_u, sprite.maximum_v},
+        {sprite.maximum_u, sprite.maximum_v},
+    }};
+    const auto &normal_origin = decal.vertices[0];
+    const auto &normal_first = decal.vertices[1];
+    const auto &normal_second = decal.vertices[3];
+    const auto first_edge = Vector3{
+        static_cast<double>(normal_first.x - normal_origin.x),
+        static_cast<double>(normal_first.y - normal_origin.y),
+        static_cast<double>(normal_first.z - normal_origin.z),
+    };
+    const auto second_edge = Vector3{
+        static_cast<double>(normal_second.x - normal_origin.x),
+        static_cast<double>(normal_second.y - normal_origin.y),
+        static_cast<double>(normal_second.z - normal_origin.z),
+    };
+    auto normal = Vector3{
+        first_edge.y * second_edge.z - first_edge.z * second_edge.y,
+        first_edge.z * second_edge.x - first_edge.x * second_edge.z,
+        first_edge.x * second_edge.y - first_edge.y * second_edge.x,
+    };
+    const auto normal_length = std::sqrt(
+        normal.x * normal.x + normal.y * normal.y + normal.z * normal.z);
+    if (!std::isfinite(normal_length) || normal_length <= 0.000001) {
+      continue;
+    }
+    normal = {normal.x / normal_length, normal.y / normal_length,
+              normal.z / normal_length};
+    const auto centre = Vector3{
+        (static_cast<double>(decal.vertices[0].x) +
+         static_cast<double>(decal.vertices[1].x) +
+         static_cast<double>(decal.vertices[2].x) +
+         static_cast<double>(decal.vertices[3].x)) *
+            0.25,
+        (static_cast<double>(decal.vertices[0].y) +
+         static_cast<double>(decal.vertices[1].y) +
+         static_cast<double>(decal.vertices[2].y) +
+         static_cast<double>(decal.vertices[3].y)) *
+            0.25,
+        (static_cast<double>(decal.vertices[0].z) +
+         static_cast<double>(decal.vertices[1].z) +
+         static_cast<double>(decal.vertices[2].z) +
+         static_cast<double>(decal.vertices[3].z)) *
+            0.25,
+    };
+    const auto positive_depth = preciseCameraDepth(
+        view, centre.x + normal.x, centre.y + normal.y,
+        centre.z + normal.z);
+    const auto negative_depth = preciseCameraDepth(
+        view, centre.x - normal.x, centre.y - normal.y,
+        centre.z - normal.z);
+    if (positive_depth > negative_depth) {
+      normal = {-normal.x, -normal.y, -normal.z};
+    }
+    const auto biased_centre_depth =
+        std::min(positive_depth, negative_depth);
+    if (!std::isfinite(biased_centre_depth) ||
+        biased_centre_depth <= active_near_clip_depth) {
+      continue;
+    }
+    std::array<SVECTOR, 4U> vertices{};
+    for (std::size_t corner = 0U; corner < vertices.size(); ++corner) {
+      const auto &source = decal.vertices[retail_vertex_order[corner]];
+      vertices[corner] = makeVertex(
+          static_cast<double>(source.x) + normal.x * world_decal_surface_bias,
+          static_cast<double>(source.y) + normal.y * world_decal_surface_bias,
+          static_cast<double>(source.z) + normal.z * world_decal_surface_bias);
+    }
+    long xy0{};
+    long xy1{};
+    long xy2{};
+    long xy3{};
+    long depth_cue{};
+    long flags{};
+    const auto depth =
+        RotTransPers3(&vertices[0], &vertices[1], &vertices[2], &xy0, &xy1,
+                      &xy2, &depth_cue, &flags);
+    if (depth <= 0) {
+      continue;
+    }
+    const auto ordering_depth = depth - 0x32L;
+    if (ordering_depth >= 0x1001L) {
+      continue;
+    }
+    int packed_xy3{};
+    static_cast<void>(RotTransPers(&vertices[3], &packed_xy3, &depth_cue, &flags));
+    xy3 = static_cast<long>(packed_xy3);
+    auto &primitive = primitives.world_decals.emplace_back();
+    setPolyFT4(&primitive);
+    setSemiTrans(&primitive, 1);
+    setRGB0(&primitive, nightvision ? 0U : 40U, 40U,
+            nightvision ? 0U : 40U);
+    setUV4(&primitive, static_cast<std::uint8_t>(uv[0].first),
+           static_cast<std::uint8_t>(uv[0].second),
+           static_cast<std::uint8_t>(uv[1].first),
+           static_cast<std::uint8_t>(uv[1].second),
+           static_cast<std::uint8_t>(uv[2].first),
+           static_cast<std::uint8_t>(uv[2].second),
+           static_cast<std::uint8_t>(uv[3].first),
+           static_cast<std::uint8_t>(uv[3].second));
+    primitive.clut = sprite.clut;
+    primitive.tpage = sprite.texture_page;
+    setProjected(&primitive.x0, xy0);
+    setProjected(&primitive.x1, xy1);
+    setProjected(&primitive.x2, xy2);
+    setProjected(&primitive.x3, xy3);
+    const auto ordering_index = std::clamp(
+        ordering_depth, 1L, static_cast<long>(ordering_table_size - 1));
+    addPrim(&ordering_table[static_cast<std::size_t>(ordering_index)], &primitive);
+    const std::array projected{xy0, xy1, xy2, xy3};
+    submitStats(stats, depth, projected);
+  }
+}
+
 void renderEffectSprite(Vector3 centre, double half_width, double half_height,
                         const EffectSpritePlacement &sprite,
                         const game::CameraState &camera,
@@ -743,6 +921,7 @@ void renderWeaponEffects(
     std::span<const game::LegacyMuzzleFlashPresentationState>
         retail_muzzle_flashes,
     std::span<const game::GameplayEffect> native_muzzle_flashes,
+    std::span<const game::LegacyWorldDecalBridgeState> world_decals,
     std::span<const game::LegacyLineParticleBridgeState> retail_lines,
     std::span<const game::LegacyCombatParticleBridgeState> combat_particles,
     const FireTexturePlacement &fire_texture_placement,
@@ -759,64 +938,16 @@ void renderWeaponEffects(
       game::legacyGuestEffectsAuthoritative(
           presentation.guest_camera_lists_captured,
           gameplay.legacyEffectParticlesAuthoritative());
+
+  renderRetailWorldDecals(world_decals, tick, scratch, effect_textures,
+                          presentation.environment.nightvision_enabled,
+                          view, ordering_table, primitives, stats);
   if (!presentation.guest_camera_lists_captured) {
     // Render modes 0/2 are already present as exact raw camera-list packets.
     // This reconstruction remains only for non-retail/fallback presentation.
     renderRetailCombatParticles(gameplay, combat_particles, presentation,
                                 ordering_table, primitives, stats);
   }
-  if (const auto taser_target = gameplay.taserTarget()) {
-    const auto *target = gameplay.npcState(*taser_target);
-    if (target == nullptr) {
-      // A killed/despawned target breaks both the conductor and arc.
-    } else {
-      auto tether_origin = game::GameplayEffect{};
-      tether_origin.x = player.x;
-      tether_origin.y = player.y - 245.0;
-      tether_origin.z = player.z;
-      tether_origin.attachment = game::GameplayEffectAttachment::player_muzzle;
-      const auto start = attachedEffectCentre(gameplay, actor_animations,
-                                              presentation, tether_origin);
-      auto tether_target = game::GameplayEffect{};
-      tether_target.attachment = game::GameplayEffectAttachment::npc_body;
-      tether_target.owner_object = *taser_target;
-      tether_target.attachment_offset_y = -190.0;
-      const auto end = attachedEffectCentre(gameplay, actor_animations,
-                                            presentation, tether_target);
-      auto previous_wire = start;
-      auto previous_arc = start;
-      constexpr std::size_t segment_count = 12U;
-      const auto basis = viewBasis(presentation_camera);
-      for (std::size_t segment = 1U; segment <= segment_count; ++segment) {
-        const auto amount =
-            static_cast<double>(segment) / static_cast<double>(segment_count);
-        const auto wire_point = Vector3{
-            std::lerp(start.x, end.x, amount),
-            std::lerp(start.y, end.y, amount),
-            std::lerp(start.z, end.z, amount),
-        };
-        const auto jitter =
-            segment == segment_count
-                ? 0.0
-                : std::sin(static_cast<double>(tick * 5U + segment * 11U)) *
-                      18.0;
-        const auto arc_point = Vector3{
-            wire_point.x + basis[0].x * jitter,
-            wire_point.y + basis[0].y * jitter,
-            wire_point.z + basis[0].z * jitter,
-        };
-        renderEffectLine(
-            previous_wire, wire_point, VertexColor{104U, 104U, 96U},
-            VertexColor{184U, 176U, 144U}, ordering_table, primitives, stats);
-        renderEffectLine(previous_arc, arc_point, VertexColor{180U, 220U, 255U},
-                         VertexColor{80U, 140U, 255U}, ordering_table,
-                         primitives, stats);
-        previous_wire = wire_point;
-        previous_arc = arc_point;
-      }
-    }
-  }
-
   // Reproject semantic LINE_G2 particles through the native/interpolated
   // camera. Their matching 20 Hz raw packets are suppressed below, otherwise
   // rain splashes and weapon trails slide over walls as screen-space overlays.
@@ -1213,12 +1344,13 @@ void renderWeaponEffects(
   }
 }
 
-void renderEmdObject(
-    const assets::EmdScene &scene, const game::SceneObject &object,
-    unsigned int texture_bank, const MATRIX &view,
-    std::vector<OT_TAG> &ordering_table, PrimitiveBuffer &primitives,
-    RenderStats &stats, bool retail_scrim = false,
-    bool force_semi_transparent = false) {
+void renderEmdObject(const assets::EmdScene &scene,
+                     const game::SceneObject &object, unsigned int texture_bank,
+                     const MATRIX &view, std::vector<OT_TAG> &ordering_table,
+                     PrimitiveBuffer &primitives, RenderStats &stats,
+                     bool retail_scrim = false,
+                     bool force_semi_transparent = false,
+                     long depth_cue_floor = 0L) {
   const auto reverse_winding = reversesWinding(object.transform);
   for (auto section_index = std::size_t{};
        section_index < scene.sections().size(); ++section_index) {
@@ -1275,11 +1407,15 @@ void renderEmdObject(
           submitClippedTriangle(first_triangle, material, false,
                                 reverse_winding, view, ordering_table,
                                 primitives.objects, stats, worldOrderingDepth,
-                                false, !retail_scrim);
+                                false,
+                                !retail_scrim && !force_semi_transparent,
+                                depth_cue_floor);
           submitClippedTriangle(second_triangle, material, false,
                                 reverse_winding, view, ordering_table,
                                 primitives.objects, stats, worldOrderingDepth,
-                                false, !retail_scrim);
+                                false,
+                                !retail_scrim && !force_semi_transparent,
+                                depth_cue_floor);
           continue;
         }
         depth = RotTransPers4(&v0, &v1, &v2, &v3, &xy0, &xy1, &xy2, &xy3,
@@ -1301,12 +1437,16 @@ void renderEmdObject(
         setProjected(&primitive.x1, xy1);
         setProjected(&primitive.x2, xy2);
         setProjected(&primitive.x3, xy3);
-        if (!retail_scrim) {
+        if (!retail_scrim && !force_semi_transparent) {
           depthCuePrimitive(primitive,
-                            {retailObjectDepthCue(cameraDepth(view, v0)),
-                             retailObjectDepthCue(cameraDepth(view, v1)),
-                             retailObjectDepthCue(cameraDepth(view, v2)),
-                             retailObjectDepthCue(cameraDepth(view, v3))});
+                            {std::max(depth_cue_floor,
+                                      retailObjectDepthCue(cameraDepth(view, v0))),
+                             std::max(depth_cue_floor,
+                                      retailObjectDepthCue(cameraDepth(view, v1))),
+                             std::max(depth_cue_floor,
+                                      retailObjectDepthCue(cameraDepth(view, v2))),
+                             std::max(depth_cue_floor,
+                                      retailObjectDepthCue(cameraDepth(view, v3)))});
         }
         addPrim(&ordering_table[std::clamp(depth, 1, ordering_table_size - 1)],
                 &primitive);
@@ -1332,7 +1472,8 @@ void renderEmdObject(
                                static_cast<std::uint8_t>(texture_bank),
                                texture_source_page},
               false, reverse_winding, view, ordering_table, primitives.objects,
-              stats, worldOrderingDepth, false, !retail_scrim);
+              stats, worldOrderingDepth, false,
+              !retail_scrim && !force_semi_transparent, depth_cue_floor);
           continue;
         }
         depth =
@@ -1353,11 +1494,14 @@ void renderEmdObject(
         setProjected(&primitive.x0, xy0);
         setProjected(&primitive.x1, xy1);
         setProjected(&primitive.x2, xy2);
-        if (!retail_scrim) {
+        if (!retail_scrim && !force_semi_transparent) {
           depthCuePrimitive(primitive,
-                            {retailObjectDepthCue(cameraDepth(view, v0)),
-                             retailObjectDepthCue(cameraDepth(view, v1)),
-                             retailObjectDepthCue(cameraDepth(view, v2))});
+                            {std::max(depth_cue_floor,
+                                      retailObjectDepthCue(cameraDepth(view, v0))),
+                             std::max(depth_cue_floor,
+                                      retailObjectDepthCue(cameraDepth(view, v1))),
+                             std::max(depth_cue_floor,
+                                      retailObjectDepthCue(cameraDepth(view, v2)))});
         }
         addPrim(&ordering_table[std::clamp(depth, 1, ordering_table_size - 1)],
                 &primitive);

@@ -624,6 +624,11 @@ drawPauseWeaponIcon(const HudTextureAtlas &textures, std::uint32_t item,
     return std::nullopt;
   }
   const auto weapon = static_cast<game::WeaponId>(item);
+  // CHNGUN is vehicle-only retail equipment with no inventory icon. Its
+  // dedicated TIM exists solely to keep the generic floor-drop bridge visible.
+  if (weapon == game::WeaponId::chopper_gun) {
+    return std::nullopt;
+  }
   const auto layers =
       game::droppedItemIconLayers(static_cast<std::uint16_t>(weapon));
   if (layers.empty()) {

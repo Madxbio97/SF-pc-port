@@ -132,10 +132,32 @@ struct OriginalAimReticleGeometry {
              const OriginalAimReticleGeometry &) = default;
 };
 
+enum class AimReticleOwner : std::uint8_t { none, host };
+
+[[nodiscard]] constexpr AimReticleOwner
+aimReticleOwner(bool first_person_aim, bool target_locked, bool grenade_weapon,
+                bool authored_optic) noexcept {
+  // Grenades own the first-person trajectory marker, but R1 chase lock still
+  // uses the standard target box while a grenade is equipped.
+  if (authored_optic || (first_person_aim && grenade_weapon) ||
+      (!first_person_aim && !target_locked)) {
+    return AimReticleOwner::none;
+  }
+  return AimReticleOwner::host;
+}
+
 // FUN_80041830 builds the target box and its four centre rays from the
 // projected body/head bounds.  These are the native 384x240 retail extents.
 [[nodiscard]] OriginalAimReticleGeometry
 originalAimReticleGeometry(bool head_target) noexcept;
+
+// The unified host sight follows the PS1 perspective law: the same target
+// occupies a smaller box with increasing camera-space depth. At H=320 its
+// calibrated scale is 0.8 at the 3072-unit reference depth.
+[[nodiscard]] double originalAimReticleScale(std::int32_t projection,
+                                             double view_depth) noexcept;
+[[nodiscard]] OriginalAimReticleGeometry
+scaledOriginalAimReticleGeometry(bool head_target, double scale) noexcept;
 
 struct OriginalHeadshotCalloutGeometry {
   int start_x{};
@@ -180,19 +202,11 @@ originalRadarPresentationGeometry(double reveal_phase) noexcept;
 
 [[nodiscard]] const WeaponDefinition *tryWeaponDefinition(WeaponId id) noexcept;
 [[nodiscard]] const WeaponDefinition &weaponDefinition(WeaponId id);
-// Floor pickups normally reuse the active HUD icon group. A handful of
-// retail item slots deliberately select empty group zero even though their
-// authored INTRFACE sprites are present; expose those pickup-only layers
-// without changing the authoritative inventory HUD table.
+// Every visible floor pickup is a camera-facing sprite. Weapons and utility
+// items reuse their authored INTRFACE groups; armour uses a deterministic
+// VEST.GMD-derived TIM bake. Retail GMD bounds are size metadata only.
 [[nodiscard]] std::span<const std::string_view>
 droppedItemIconLayers(std::uint16_t item) noexcept;
-
-// Small floor pickups use the same authored HUD art as inventory entries,
-// but retail presents them at roughly half the size of long guns. Keep that
-// category policy out of the renderer so armour and both grenade variants
-// cannot accidentally inherit the rifle scale again.
-inline constexpr double compact_dropped_item_scale = 0.48;
-[[nodiscard]] double droppedItemPresentationScale(std::uint16_t item) noexcept;
 
 // World-attached interaction labels survive briefly after their retail TEXT
 // object leaves the active list. The opacity transition is expressed in

@@ -71,14 +71,20 @@ class CampaignProgress final {
 public:
   [[nodiscard]] static std::optional<CampaignProgress>
   startUnsaved(std::uint32_t mission_index,
-               bool opening_movie_already_played) noexcept;
+               bool opening_movie_already_played,
+               CampaignDifficulty difficulty =
+                   CampaignDifficulty::original) noexcept;
   [[nodiscard]] static std::optional<CampaignProgress>
   startNew(TitleSaveSlots &slots, std::uint32_t mission_index,
-           bool opening_movie_already_played) noexcept;
+           bool opening_movie_already_played,
+           CampaignDifficulty difficulty =
+               CampaignDifficulty::original) noexcept;
   [[nodiscard]] static std::optional<CampaignProgress>
   startNewInSlot(TitleSaveSlots &slots, std::size_t save_slot,
                  std::uint32_t mission_index,
-                 bool opening_movie_already_played) noexcept;
+                 bool opening_movie_already_played,
+                 CampaignDifficulty difficulty =
+                     CampaignDifficulty::original) noexcept;
   [[nodiscard]] static std::optional<CampaignProgress>
   resume(const TitleSaveSlots &slots, std::size_t save_slot) noexcept;
 
@@ -90,6 +96,9 @@ public:
   }
   [[nodiscard]] std::uint32_t maximumUnlockedMission() const noexcept {
     return maximum_unlocked_mission_;
+  }
+  [[nodiscard]] CampaignDifficulty difficulty() const noexcept {
+    return difficulty_;
   }
   [[nodiscard]] bool active() const noexcept { return active_; }
   [[nodiscard]] bool
@@ -125,6 +134,7 @@ private:
   CampaignProgress(
       std::optional<std::size_t> save_slot, std::uint32_t mission_index,
       std::uint32_t maximum_unlocked_mission, bool opening_movie_handled,
+      CampaignDifficulty difficulty,
       std::optional<std::uint32_t> pending_eol_mission = std::nullopt) noexcept;
 
   [[nodiscard]] CampaignAdvance advance() noexcept;
@@ -133,6 +143,7 @@ private:
   std::uint32_t mission_index_{};
   std::uint32_t maximum_unlocked_mission_{};
   bool opening_movie_handled_{};
+  CampaignDifficulty difficulty_{CampaignDifficulty::original};
   std::optional<std::uint32_t> pending_eol_mission_;
   bool active_{true};
 };

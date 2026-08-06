@@ -12,6 +12,20 @@ option(SF_BUILD_TESTS "Build unit tests" ON)
 option(SF_ENABLE_PSYCROSS "Build the optional PsyCross platform backend" OFF)
 option(SF_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ON)
 option(SF_PARALLEL_COMPILE "Compile independent sources in parallel" ON)
+option(SF_ENABLE_RELEASE_IPO "Enable interprocedural optimization in Release builds" ON)
+
+if(SF_ENABLE_RELEASE_IPO)
+    include(CheckIPOSupported)
+    check_ipo_supported(
+        RESULT SF_RELEASE_IPO_SUPPORTED
+        OUTPUT SF_RELEASE_IPO_ERROR
+        LANGUAGES CXX)
+    if(SF_RELEASE_IPO_SUPPORTED)
+        set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
+    else()
+        message(WARNING "Release IPO is unavailable: ${SF_RELEASE_IPO_ERROR}")
+    endif()
+endif()
 set(SF_PSYCROSS_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/external/PsyCross" CACHE PATH
     "Path to a PsyCross checkout")
 set(SF_SUPPORTED_ROM_CUE "" CACHE FILEPATH

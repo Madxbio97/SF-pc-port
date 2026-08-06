@@ -67,15 +67,25 @@ EmdUv decodeUv(std::uint16_t packed) {
     };
 }
 
+GmdVertex decodePackedVector(std::uint32_t packed) {
+    return GmdVertex{
+        unpackSigned(packed, 0, 10),
+        unpackSigned(packed, 10, 10),
+        unpackSigned(packed, 20, 12),
+    };
+}
+
 } // namespace
 
 GmdModel::GmdModel(
     std::vector<GmdVertex> vertices,
+    std::vector<GmdNormal> normals,
     std::vector<GmdTriangle> triangles,
     EmdBounds bounds,
     std::uint32_t texture_page_mask,
     std::uint32_t renderable_texture_page_mask)
     : vertices_(std::move(vertices)),
+      normals_(std::move(normals)),
       triangles_(std::move(triangles)),
       bounds_(bounds),
       texture_page_mask_(texture_page_mask),
@@ -98,7 +108,8 @@ GmdModel GmdModel::parse(std::span<const std::byte> bytes) {
     }
     const auto vertex_count = (normal_offset - vertex_offset) / sizeof(std::uint32_t);
     if (vertex_count == 0 || vertex_count > 256U) {
-        throw core::Error{core::ErrorCode::invalid_format, "Invalid GMD vertex count"};
+        throw core::Error{core::ErrorCode::invalid_format,
+                          "Invalid GMD vertex count"};
     }
 
     const EmdBounds bounds{
@@ -119,15 +130,12 @@ GmdModel GmdModel::parse(std::span<const std::byte> bytes) {
     vertices.reserve(vertex_count);
     for (std::size_t index = 0; index < vertex_count; ++index) {
         const auto packed = readLe32(bytes, vertex_offset + index * sizeof(std::uint32_t));
-        vertices.push_back(GmdVertex{
-            unpackSigned(packed, 0, 10),
-            unpackSigned(packed, 10, 10),
-            unpackSigned(packed, 20, 12),
-        });
+        vertices.push_back(decodePackedVector(packed));
     }
 
     std::vector<GmdTriangle> triangles;
     triangles.reserve(triangle_count);
+    std::size_t normal_count{};
     std::uint32_t texture_page_mask{};
     std::uint32_t renderable_texture_page_mask{};
     for (std::size_t index = 0; index < triangle_count; ++index) {
@@ -135,12 +143,26 @@ GmdModel GmdModel::parse(std::span<const std::byte> bytes) {
         const auto word0 = readLe32(bytes, offset);
         const auto word1 = readLe32(bytes, offset + 4U);
         const auto word2 = readLe32(bytes, offset + 8U);
+        const auto word3 = readLe32(bytes, offset + 12U);
+        if ((word3 & 0xff000000U) != 0U) {
+            throw core::Error{core::ErrorCode::invalid_format,
+                              "Invalid GMD normal-index padding"};
+        }
         GmdTriangle triangle;
         triangle.vertex_indices = {
             static_cast<std::uint8_t>(word2),
             static_cast<std::uint8_t>(word2 >> 8U),
             static_cast<std::uint8_t>(word2 >> 16U),
         };
+        triangle.normal_indices = {
+            static_cast<std::uint8_t>(word3),
+            static_cast<std::uint8_t>(word3 >> 8U),
+            static_cast<std::uint8_t>(word3 >> 16U),
+        };
+        for (const auto normal_index : triangle.normal_indices) {
+            normal_count =
+                std::max(normal_count, static_cast<std::size_t>(normal_index) + 1U);
+        }
         if (std::ranges::any_of(triangle.vertex_indices, [vertex_count](std::uint8_t value) {
                 return value >= vertex_count;
             })) {
@@ -168,8 +190,35 @@ GmdModel GmdModel::parse(std::span<const std::byte> bytes) {
         }
         triangles.push_back(triangle);
     }
-    return GmdModel{std::move(vertices), std::move(triangles), bounds,
-                    texture_page_mask, renderable_texture_page_mask};
+
+    // GMD does not store a normal count. Triangle word 3 is authoritative;
+    // some HOG entries retain unrelated bytes after the referenced table.
+    if (normal_count == 0U ||
+        normal_count > (bytes.size() - normal_offset) /
+                           sizeof(std::uint32_t)) {
+        throw core::Error{core::ErrorCode::invalid_format,
+                          "GMD normal index is out of range"};
+    }
+    std::vector<GmdNormal> normals;
+    normals.reserve(normal_count);
+    for (std::size_t index = 0; index < normal_count; ++index) {
+        const auto offset = normal_offset + index * sizeof(std::uint32_t);
+        if (bytes[offset + 3U] != std::byte{}) {
+            throw core::Error{core::ErrorCode::invalid_format,
+                              "Invalid GMD normal padding"};
+        }
+        normals.push_back(GmdNormal{
+            static_cast<std::int8_t>(
+                std::to_integer<std::uint8_t>(bytes[offset])),
+            static_cast<std::int8_t>(
+                std::to_integer<std::uint8_t>(bytes[offset + 1U])),
+            static_cast<std::int8_t>(
+                std::to_integer<std::uint8_t>(bytes[offset + 2U])),
+        });
+    }
+    return GmdModel{std::move(vertices), std::move(normals),
+                    std::move(triangles), bounds, texture_page_mask,
+                    renderable_texture_page_mask};
 }
 
 } // namespace sf::assets

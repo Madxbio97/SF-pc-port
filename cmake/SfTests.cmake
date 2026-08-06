@@ -22,6 +22,10 @@ if(SF_BUILD_TESTS)
         LIBRARIES sf::game)
     sf_add_unit_test(sf_combat_ai_tests tests/combat_ai_tests.cpp
         LIBRARIES sf::game)
+    sf_add_unit_test(sf_agent_mission_hud_tests tests/agent_mission_hud_tests.cpp
+        LIBRARIES sf::game)
+    sf_add_unit_test(sf_agent_late_mission_rules_tests
+        tests/agent_late_mission_rules_tests.cpp)
     sf_add_unit_test(sf_dynamic_lighting_tests tests/dynamic_lighting_tests.cpp
         LIBRARIES sf::game)
     sf_add_unit_test(sf_player_input_tests tests/player_input_tests.cpp

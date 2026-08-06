@@ -22,12 +22,11 @@ public:
     PsyCrossMissionStart();
     ~PsyCrossMissionStart();
 
-    [[nodiscard]] std::uint16_t run(
-        const game::MissionPackage& mission,
-        PADRAW& pad,
-        std::uint16_t previous_buttons,
-        const KeyboardMouseBindings& bindings,
-        std::optional<game::CampaignCarryState> carry = std::nullopt);
+    [[nodiscard]] std::uint16_t
+    run(const game::MissionPackage &mission, PADRAW &pad,
+        std::uint16_t previous_buttons, const KeyboardMouseBindings &bindings,
+        std::optional<game::CampaignCarryState> carry = std::nullopt,
+        bool initial_agent_difficulty = false);
 
     [[nodiscard]] std::unique_ptr<game::GameplaySession>
     takePreloadedGameplay() noexcept;

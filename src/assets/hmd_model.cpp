@@ -215,13 +215,15 @@ HmdModel HmdModel::parse(std::span<const std::byte> bytes) {
         }
         part.declared_vertex_count = readLe16(bytes, cursor + 0x34U);
         part.declared_normal_count = readLe16(bytes, cursor + 0x36U);
-        if (part.declared_vertex_count > vertex_count || part.declared_normal_count > normal_count) {
+        if (part.declared_vertex_count > vertex_count ||
+            part.declared_normal_count > normal_count ||
+            part.declared_vertex_count > normal_count) {
             throw core::Error{core::ErrorCode::invalid_format, "Invalid HMD declared vertex counts"};
         }
         if (vertices.size() > std::numeric_limits<std::uint16_t>::max() -
                 part.declared_vertex_count ||
             normals.size() > std::numeric_limits<std::uint32_t>::max() -
-                part.declared_normal_count ||
+                part.declared_vertex_count ||
             vertices.size() > std::numeric_limits<std::uint32_t>::max() -
                 part.declared_vertex_count) {
             throw core::Error{core::ErrorCode::invalid_format, "HMD vertex table is too large"};
@@ -234,7 +236,10 @@ HmdModel HmdModel::parse(std::span<const std::byte> bytes) {
         part.vertex_count = part.declared_vertex_count;
         part.padded_vertex_count = static_cast<std::uint32_t>(vertex_count);
         part.first_normal = static_cast<std::uint32_t>(normals.size());
-        part.normal_count = part.declared_normal_count;
+        // Retail NCDT and wound records index the part's normal table with
+        // the authored vertex ordinal. Header +0x36 is metadata, not the
+        // usable search bound: retain one authored normal per live vertex.
+        part.normal_count = part.declared_vertex_count;
         part.padded_normal_count = static_cast<std::uint32_t>(normal_count);
 
         const auto vertices_offset = cursor + part_header_size;
@@ -248,8 +253,8 @@ HmdModel HmdModel::parse(std::span<const std::byte> bytes) {
             vertices.push_back(readVertex(bytes, vertices_offset + index * vertex_size));
             vertex_parts.push_back(static_cast<std::uint16_t>(part_index));
         }
-        normals.reserve(normals.size() + part.declared_normal_count);
-        for (std::size_t index = 0; index < part.declared_normal_count; ++index) {
+        normals.reserve(normals.size() + part.normal_count);
+        for (std::size_t index = 0; index < part.normal_count; ++index) {
             normals.push_back(readVertex(bytes, normals_offset + index * vertex_size));
         }
         parts.push_back(std::move(part));

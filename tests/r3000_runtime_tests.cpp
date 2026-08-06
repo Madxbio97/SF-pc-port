@@ -1,3 +1,5 @@
+#include "sf/game/agent_mission_rules.hpp"
+#include "sf/game/agent_mission_timer.hpp"
 #include "sf/game/legacy_first_mission_runtime.hpp"
 #include "sf/game/legacy_gameplay_vm.hpp"
 #include "sf/game/legacy_virtual_cd.hpp"
@@ -1844,48 +1846,626 @@ void testLegacyGameplayVmBoundary() {
       encodeR(31U, 0U, 0U, 0U, 0x08U),
       0U,
   };
+  constexpr std::uint32_t agent_accuracy_boundary = 0x80020500U;
+  constexpr std::array agent_accuracy_words{
+      encodeR(4U, 8U, 0U, 0U, 0x18U),
+      encodeR(4U, 0U, 2U, 0U, 0x21U),
+      encodeR(31U, 0U, 0U, 0U, 0x08U),
+      0U,
+  };
+  constexpr std::uint32_t agent_target_memory_entry = 0x80020520U;
+  constexpr std::array agent_target_memory_words{
+      encodeR(4U, 0U, 2U, 0U, 0x21U),
+      encodeI(0x0bU, 2U, 2U, 40U),
+      encodeR(31U, 0U, 0U, 0U, 0x08U),
+      0U,
+  };
+  constexpr std::uint32_t kravitch_post_shot_entry = 0x80020530U;
+  constexpr std::array kravitch_post_shot_words{
+      0xa243004cU,
+      encodeR(31U, 0U, 0U, 0U, 0x08U),
+      0U,
+  };
   require(vm.loadOverlay(close_aim_caller,
                          instructionBytes(close_aim_caller_words)) &&
               vm.loadOverlay(close_aim_callee,
-                             instructionBytes(close_aim_callee_words)),
+                             instructionBytes(close_aim_callee_words)) &&
+              vm.loadOverlay(agent_accuracy_boundary,
+                             instructionBytes(agent_accuracy_words)) &&
+              vm.loadOverlay(agent_target_memory_entry,
+                             instructionBytes(agent_target_memory_words)) &&
+              vm.loadOverlay(kravitch_post_shot_entry,
+                             instructionBytes(kravitch_post_shot_words)),
           "Could not load the close enemy-aim fixture");
-  auto close_aim_profile = sf::game::syphonFilterUsaV11EnemyCloseAimProfile();
-  close_aim_profile.boundary = close_aim_caller + 0x20U;
-  close_aim_profile.instruction = encodeJ(0x03U, close_aim_callee);
-  constexpr std::uint32_t shooter = 0x801fd000U;
-  constexpr std::uint32_t shooter_instance = 0x801fd100U;
-  constexpr std::uint32_t shooter_matrix = 0x801fd200U;
+  constexpr auto retail_enemy_aim_profile =
+      sf::game::syphonFilterUsaV11AgentEnemyAimProfile();
+  static_assert(
+      retail_enemy_aim_profile.agent_target_memory_boundary == 0x800622a4U &&
+      retail_enemy_aim_profile.agent_target_memory_instruction == 0x2c420028U &&
+      retail_enemy_aim_profile.retail_target_memory_frames == 40U &&
+      retail_enemy_aim_profile.agent_target_memory_frames == 80U &&
+      retail_enemy_aim_profile.flashlight_target_memory_frames == 100U &&
+      retail_enemy_aim_profile.kravitch_post_shot_boundary == 0x800633c8U &&
+      retail_enemy_aim_profile.kravitch_post_shot_instruction ==
+          0xa243004cU);
+  auto enemy_aim_profile = retail_enemy_aim_profile;
+  enemy_aim_profile.agent_accuracy_boundary = agent_accuracy_boundary;
+  enemy_aim_profile.agent_accuracy_instruction = agent_accuracy_words[0];
+  enemy_aim_profile.agent_target_memory_boundary =
+      agent_target_memory_entry + 4U;
+  enemy_aim_profile.agent_target_memory_instruction =
+      agent_target_memory_words[1];
   constexpr std::uint32_t lagged_target = 0x801fd300U;
-  require(vm.runtime().write32(shooter + 8U, shooter_instance) &&
-              vm.runtime().write32(shooter_instance + 0x0cU, shooter_matrix) &&
-              vm.runtime().write32(shooter_matrix + 0x14U, 100U) &&
-              vm.runtime().write32(shooter_matrix + 0x1cU, 100U) &&
-              vm.runtime().write32(lagged_target, 0x1234U),
+  constexpr std::uint32_t memory_actor = 0x801fd380U;
+  constexpr std::uint32_t memory_target = 0x801fd3c0U;
+  constexpr std::uint32_t memory_player = 0x801fd400U;
+  constexpr std::uint32_t memory_player_pointer = 0x801fd440U;
+  constexpr std::uint32_t memory_ai = 0x801fd460U;
+  constexpr std::uint32_t memory_mission = 0x801fd4b0U;
+  constexpr std::uint32_t memory_flashlight_source = 0x801fd4c0U;
+  constexpr std::uint32_t memory_light_list = 0x801fd4c4U;
+  // Low byte zero guards the historical bug that treated the full node
+  // handle as a byte-sized boolean.
+  constexpr std::uint32_t memory_flashlight_node = 0x801fd600U;
+  constexpr std::uint32_t memory_other_light_node = 0x801fd620U;
+  constexpr std::uint32_t memory_other_light_source = 0x801fd4d0U;
+  enemy_aim_profile.player_pointer = memory_player_pointer;
+  enemy_aim_profile.mission_index = memory_mission;
+  enemy_aim_profile.flashlight_source = memory_flashlight_source;
+  enemy_aim_profile.dynamic_light_list = memory_light_list;
+  constexpr std::uint32_t kravitch_records_pointer = 0x801fd4e0U;
+  constexpr std::uint32_t kravitch_count = 0x801fd4e4U;
+  constexpr std::uint32_t kravitch_definitions_pointer = 0x801fd4e8U;
+  constexpr std::uint32_t kravitch_definition_count = 0x801fd4ecU;
+  constexpr std::uint32_t kravitch_records = 0x801e0000U;
+  constexpr std::uint32_t kravitch_record =
+      kravitch_records + 174U * 0x4cU;
+  constexpr std::uint32_t kravitch_instance = 0x801e4000U;
+  constexpr std::uint32_t kravitch_ai = 0x801e4100U;
+  constexpr std::uint32_t kravitch_target = 0x801e4200U;
+  constexpr std::uint32_t kravitch_health = 0x801e4300U;
+  constexpr std::uint32_t kravitch_definitions = 0x801e5000U;
+  constexpr std::uint32_t kravitch_handler_table = 0x801e6000U;
+  enemy_aim_profile.kravitch_post_shot_boundary = kravitch_post_shot_entry;
+  enemy_aim_profile.kravitch_post_shot_instruction =
+      kravitch_post_shot_words[0];
+  enemy_aim_profile.object_records_pointer = kravitch_records_pointer;
+  enemy_aim_profile.object_count = kravitch_count;
+  enemy_aim_profile.object_definitions_pointer =
+      kravitch_definitions_pointer;
+  enemy_aim_profile.object_definition_count = kravitch_definition_count;
+  enemy_aim_profile.object_handler_table = kravitch_handler_table;
+  require(vm.runtime().write32(lagged_target, 0x1234U) &&
+              vm.runtime().write32(memory_actor + 0x14U, memory_target) &&
+              vm.runtime().write32(memory_actor + 0x1cU, memory_ai) &&
+              vm.runtime().write8(memory_ai + 0x47U, 0x4fU) &&
+              vm.runtime().write16(memory_target, 7U) &&
+              vm.runtime().write16(memory_player + 2U, 7U) &&
+              vm.runtime().write32(memory_player_pointer, memory_player) &&
+              vm.runtime().write16(memory_mission, 17U) &&
+              vm.runtime().write32(memory_flashlight_source, 0U) &&
+              vm.runtime().write32(memory_light_list, 0U) &&
+              vm.runtime().write32(kravitch_records_pointer,
+                                   kravitch_records) &&
+              vm.runtime().write32(kravitch_count, 200U) &&
+              vm.runtime().write32(kravitch_definitions_pointer,
+                                   kravitch_definitions) &&
+              vm.runtime().write32(kravitch_definition_count, 64U) &&
+              vm.runtime().write32(kravitch_record, 53U) &&
+              vm.runtime().write16(kravitch_record + 0x24U, 0xc107U) &&
+              vm.runtime().write32(kravitch_record + 0x34U,
+                                   kravitch_instance) &&
+              vm.runtime().write16(kravitch_definitions + 53U * 0x14U, 1U) &&
+              vm.runtime().write32(kravitch_handler_table + 4U,
+                                   legacy_common_npc_handler) &&
+              vm.runtime().write16(kravitch_instance + 2U, 174U) &&
+              vm.runtime().write32(kravitch_instance + 0x14U,
+                                   kravitch_target) &&
+              vm.runtime().write32(kravitch_instance + 0x18U,
+                                   kravitch_health) &&
+              vm.runtime().write32(kravitch_instance + 0x1cU, kravitch_ai) &&
+              vm.runtime().write16(kravitch_target, 7U) &&
+              vm.runtime().write32(kravitch_target + 4U, 0U) &&
+              vm.runtime().write16(kravitch_health + 8U, 100U) &&
+              vm.runtime().write8(kravitch_ai + 0x48U, 2U) &&
+              vm.runtime().write8(kravitch_ai + 0x4aU, 0U),
           "Could not seed the close enemy-aim fixture");
-  vm.bindSyphonFilterUsaV11EnemyCloseAimHook(close_aim_profile);
+  vm.bindSyphonFilterUsaV11AgentEnemyAimHooks(enemy_aim_profile);
+  const auto invoke_kravitch_post_shot = [&](std::uint32_t cooldown,
+                                              std::uint32_t weapon = 7U) {
+    vm.runtime().setRegister(3U, cooldown);
+    vm.runtime().setRegister(16U, kravitch_instance);
+    vm.runtime().setRegister(17U, weapon);
+    vm.runtime().setRegister(18U, kravitch_ai);
+    return vm.invoke(kravitch_post_shot_entry, {});
+  };
+  const auto invoke_target_memory = [&](std::uint32_t age) {
+    vm.runtime().setRegister(16U, memory_actor);
+    return vm.invoke(agent_target_memory_entry, std::array{age});
+  };
+  constexpr std::uint32_t grenade_awareness_entry = 0x80020540U;
+  constexpr std::uint32_t grenade_alert_entry = 0x80020560U;
+  constexpr std::uint32_t grenade_alert_callback = 0x80020580U;
+  constexpr std::array grenade_awareness_words{
+      encodeR(4U, 0U, 2U, 0U, 0x21U),
+      encodeI(0x0aU, 2U, 2U, 0x0a00U),
+      encodeR(31U, 0U, 0U, 0U, 0x08U),
+      0U,
+  };
+  constexpr std::uint32_t grenade_danger_mask = 0x801fd500U;
+  constexpr std::array grenade_alert_words{
+      encodeI(0x0fU, 0U, 8U, 0x801fU), encodeI(0x0dU, 8U, 8U, 0xd500U),
+      encodeI(0x24U, 8U, 2U, 0U),      0U,
+      encodeI(0x0dU, 2U, 2U, 1U),      encodeI(0x28U, 8U, 2U, 0U),
+      encodeI(0x24U, 8U, 3U, 1U),      0U,
+      encodeI(0x09U, 3U, 3U, 1U),      encodeI(0x28U, 8U, 3U, 1U),
+      encodeR(31U, 0U, 0U, 0U, 0x08U), 0U,
+  };
+  constexpr std::uint32_t grenade_route_entry = 0x800205c0U;
+  constexpr std::array grenade_route_words{
+      encodeR(4U, 0U, 2U, 0U, 0x21U),
+      0U,
+      encodeR(31U, 0U, 0U, 0U, 0x08U),
+      0U,
+  };
+  constexpr std::uint32_t grenade_projectile_pointer = 0x801fda00U;
+  constexpr std::uint32_t grenade_projectile = 0x801fda20U;
+  constexpr std::uint32_t grenade_route_table = 0x801fdb00U;
+  constexpr std::uint32_t grenade_route_controller = 0x801fdc00U;
+  constexpr std::uint32_t grenade_route_stack = 0x801fc000U;
+  constexpr std::uint32_t tactical_actor = 0x801fdd00U;
+  constexpr std::uint32_t tactical_target = 0x801fdd40U;
+  constexpr std::uint32_t tactical_health = 0x801fdd80U;
+  constexpr std::uint32_t tactical_player = 0x801fddc0U;
+  constexpr std::uint32_t tactical_player_pointer = 0x801fdeb0U;
+  constexpr std::uint32_t tactical_records_pointer = 0x801fdeb4U;
+  constexpr std::uint32_t tactical_definition_count = 0x801fdeb8U;
+  constexpr std::uint32_t tactical_definitions_pointer = 0x801fdebcU;
+  constexpr std::uint32_t tactical_target_point = 0x801fdf00U;
+  constexpr std::uint32_t tactical_records = 0x801fe000U;
+  constexpr std::uint32_t tactical_definitions = 0x801fe400U;
+  constexpr std::uint32_t tactical_handler_table = 0x801fe800U;
+  require(vm.loadOverlay(grenade_awareness_entry,
+                         instructionBytes(grenade_awareness_words)) &&
+              vm.loadOverlay(grenade_alert_entry,
+                             instructionBytes(grenade_awareness_words)) &&
+              vm.loadOverlay(grenade_alert_callback,
+                             instructionBytes(grenade_alert_words)) &&
+              vm.loadOverlay(grenade_route_entry,
+                             instructionBytes(grenade_route_words)) &&
+              vm.runtime().write16(grenade_danger_mask, 0U),
+          "Could not load the Agent grenade-awareness fixture");
+  constexpr auto retail_grenade_awareness_profile =
+      sf::game::syphonFilterUsaV11AgentGrenadeAwarenessProfile();
+  static_assert(
+      retail_grenade_awareness_profile.boundaries[0] == 0x800592fcU &&
+      retail_grenade_awareness_profile.boundaries[1] == 0x800595f8U &&
+      retail_grenade_awareness_profile.alert_entry == 0x800591fcU &&
+      retail_grenade_awareness_profile.danger_mask == 0x8011691cU &&
+      retail_grenade_awareness_profile.player_projectile_pointer ==
+          0x801169d8U &&
+      retail_grenade_awareness_profile.instruction == 0x28420a00U &&
+      retail_grenade_awareness_profile.retail_distance == 0x0a00 &&
+      retail_grenade_awareness_profile.agent_distance == 0x1400 &&
+      retail_grenade_awareness_profile.route_return_boundary == 0x80059cc0U &&
+      retail_grenade_awareness_profile.route_return_instruction ==
+          0x8fbf009cU &&
+      retail_grenade_awareness_profile.retail_standoff_distance == 0x0780 &&
+      retail_grenade_awareness_profile.route_selection_return_address ==
+          0x80059df4U &&
+      retail_grenade_awareness_profile.common_npc_handler ==
+          legacy_common_npc_handler &&
+      retail_grenade_awareness_profile.shotgun_distance == 0x0500 &&
+      retail_grenade_awareness_profile.pistol_distance == 0x0700 &&
+      retail_grenade_awareness_profile.automatic_distance == 0x0900 &&
+      retail_grenade_awareness_profile.sniper_distance == 0x0c00 &&
+      retail_grenade_awareness_profile.tactical_distance_band == 0x0180 &&
+      retail_grenade_awareness_profile.tactical_minimum_improvement == 0x0100);
+  auto grenade_awareness_profile = retail_grenade_awareness_profile;
+  grenade_awareness_profile.boundaries = {
+      grenade_awareness_entry + 4U,
+      grenade_alert_entry + 4U,
+  };
+  grenade_awareness_profile.alert_entry = grenade_alert_callback;
+  grenade_awareness_profile.danger_mask = grenade_danger_mask;
+  grenade_awareness_profile.instruction = grenade_awareness_words[1];
+  grenade_awareness_profile.player_projectile_pointer =
+      grenade_projectile_pointer;
+  grenade_awareness_profile.route_return_boundary = grenade_route_entry + 4U;
+  grenade_awareness_profile.route_return_instruction = grenade_route_words[1];
+  grenade_awareness_profile.route_selection_return_address =
+      sf::psx::R3000Runtime::return_sentinel;
+  grenade_awareness_profile.player_pointer = tactical_player_pointer;
+  grenade_awareness_profile.object_records_pointer = tactical_records_pointer;
+  grenade_awareness_profile.object_definition_count = tactical_definition_count;
+  grenade_awareness_profile.object_definitions_pointer =
+      tactical_definitions_pointer;
+  grenade_awareness_profile.object_handler_table = tactical_handler_table;
+  vm.bindSyphonFilterUsaV11AgentGrenadeAwarenessHook(grenade_awareness_profile);
+  const auto seed_route_node = [&](std::uint8_t index, std::int16_t x,
+                                   std::int16_t z, std::uint16_t flags,
+                                   std::array<std::int8_t, 3U> neighbours) {
+    const auto address =
+        grenade_route_table + static_cast<std::uint32_t>(index) * 0x0cU;
+    if (!vm.runtime().write16(address, std::bit_cast<std::uint16_t>(x)) ||
+        !vm.runtime().write16(address + 2U, 0U) ||
+        !vm.runtime().write16(address + 4U, std::bit_cast<std::uint16_t>(z)) ||
+        !vm.runtime().write16(address + 6U, flags)) {
+      return false;
+    }
+    for (std::size_t neighbour = 0U; neighbour < neighbours.size();
+         ++neighbour) {
+      if (!vm.runtime().write8(
+              address + 8U + static_cast<std::uint32_t>(neighbour),
+              std::bit_cast<std::uint8_t>(neighbours[neighbour]))) {
+        return false;
+      }
+    }
+    return true;
+  };
+  require(
+      vm.runtime().write32(grenade_projectile_pointer, grenade_projectile) &&
+          vm.runtime().write8(grenade_projectile, 0U) &&
+          vm.runtime().write32(grenade_projectile + 0x0cU, 1000U) &&
+          vm.runtime().write32(grenade_projectile + 0x10U, 0U) &&
+          vm.runtime().write32(grenade_projectile + 0x14U, 0U) &&
+          vm.runtime().write8(grenade_route_controller + 0x43U, 0U) &&
+          vm.runtime().write8(grenade_route_controller + 0x44U, 0xffU) &&
+          vm.runtime().write32(grenade_route_controller + 0x20U, 0x200U) &&
+          vm.runtime().write8(grenade_route_controller + 0x41U, 0U) &&
+          vm.runtime().write8(grenade_route_controller + 0x47U, 0x4fU) &&
+          vm.runtime().write8(grenade_route_controller + 0x48U, 2U) &&
+          vm.runtime().write32(grenade_route_stack + 0x58U, tactical_actor) &&
+          vm.runtime().write32(grenade_route_stack + 0x60U,
+                               grenade_route_table) &&
+          vm.runtime().write16(tactical_actor + 2U, 1U) &&
+          vm.runtime().write32(tactical_actor + 0x14U, tactical_target) &&
+          vm.runtime().write32(tactical_actor + 0x18U, tactical_health) &&
+          vm.runtime().write32(tactical_actor + 0x1cU,
+                               grenade_route_controller) &&
+          vm.runtime().write16(tactical_target, 0U) &&
+          vm.runtime().write32(tactical_target + 4U, 0U) &&
+          vm.runtime().write16(tactical_health + 8U, 100U) &&
+          vm.runtime().write16(tactical_player + 2U, 0U) &&
+          vm.runtime().write32(tactical_player_pointer, tactical_player) &&
+          vm.runtime().write32(tactical_records_pointer, tactical_records) &&
+          vm.runtime().write32(tactical_definition_count, 1U) &&
+          vm.runtime().write32(tactical_definitions_pointer,
+                               tactical_definitions) &&
+          vm.runtime().write32(tactical_records + 0x4cU, 0U) &&
+          vm.runtime().write8(tactical_records + 0x4cU + 0x24U, 6U) &&
+          vm.runtime().write32(tactical_records + 0x4cU + 0x34U,
+                               tactical_actor) &&
+          vm.runtime().write16(tactical_definitions, 1U) &&
+          vm.runtime().write32(tactical_handler_table + 4U,
+                               legacy_common_npc_handler) &&
+          vm.runtime().write32(tactical_target_point, 3000U) &&
+          vm.runtime().write32(tactical_target_point + 4U, 0U) &&
+          vm.runtime().write32(tactical_target_point + 8U, 0U) &&
+          seed_route_node(0U, 0, 0, 0U, {1, 2, -1}) &&
+          seed_route_node(1U, 500, 0, 0U, {-1, -1, -1}) &&
+          seed_route_node(2U, -500, 0, 0U, {-1, -1, -1}),
+      "Could not seed the Agent grenade route-safety fixture");
+  const auto invoke_grenade_route = [&](std::uint32_t selected) {
+    vm.runtime().setRegister(29U, grenade_route_stack);
+    vm.runtime().setRegister(21U, 0x0780U);
+    vm.runtime().setRegister(22U, grenade_route_controller);
+    return vm.invoke(grenade_route_entry, std::array{selected});
+  };
+  const auto invoke_tactical_route = [&](std::uint32_t selected) {
+    vm.runtime().setRegister(20U, tactical_target_point);
+    vm.runtime().setRegister(21U, 0x02a0U);
+    vm.runtime().setRegister(22U, grenade_route_controller);
+    vm.runtime().setRegister(23U, 0U);
+    vm.runtime().setRegister(29U, grenade_route_stack);
+    return vm.invoke(grenade_route_entry, std::array{selected});
+  };
+  const auto retail_accuracy =
+      vm.invoke(agent_accuracy_boundary, std::array{10U});
+  const auto retail_target_memory = invoke_target_memory(60U);
+  const auto retail_grenade_awareness =
+      vm.invoke(grenade_awareness_entry, std::array{0x1200U});
+  const auto retail_grenade_alert =
+      vm.invoke(grenade_alert_entry, std::array{0x1200U});
+  sf::game::LegacyGameplayBridgeState grenade_state;
+  grenade_state.thrown_projectile = sf::game::LegacyThrownProjectileBridgeState{
+      .age = 1U,
+      .weapon = 19U,
+  };
+  std::uint8_t grenade_alert_calls{};
+  require(
+      vm.updateAgentGrenadeAwareness(grenade_state,
+                                     grenade_awareness_profile) &&
+          vm.runtime().read8(grenade_danger_mask + 1U, grenade_alert_calls) &&
+          grenade_alert_calls == 0U,
+      "Disabled Agent invoked the early retail grenade alert");
+  require(retail_accuracy.completed() && retail_accuracy.return_value == 10U,
+          "Disabled Agent accuracy hook changed the retail coefficient");
+  require(retail_target_memory.completed() &&
+              retail_target_memory.return_value == 0U,
+          "Disabled Agent widened retail target memory");
+  require(retail_grenade_awareness.completed() &&
+              retail_grenade_awareness.return_value == 0U &&
+              retail_grenade_alert.completed() &&
+              retail_grenade_alert.return_value == 0U,
+          "Disabled Agent grenade awareness exceeded the retail radius");
   vm.runtime().setRegister(29U, 0x801fc000U);
-  const auto close_aim =
-      vm.invoke(close_aim_caller, std::array{shooter, lagged_target - 0x10U});
-  require(close_aim.completed(), "Point-blank enemy aim did not complete");
-  require(vm.enemyCloseAimPatchCount() == 1U,
-          "Point-blank enemy aim hook did not patch the target");
-  require(close_aim.return_value == 500U,
-          "Point-blank enemy aim retained the lagged target");
+  const auto retail_occluded_aim =
+      vm.invoke(close_aim_caller, std::array{0U, lagged_target - 0x10U});
+  require(retail_occluded_aim.completed() &&
+              retail_occluded_aim.return_value == 0x1234U,
+          "Enemy aim bypassed retail's last-visible target");
+  require(vm.setAgentDifficulty(true),
+          "Could not enable Agent enemy-aim policy");
+  require(vm.runtime().write16(memory_mission, 0U),
+          "Could not select the Agent Kravitch mission fixture");
+  const auto accelerated_kravitch_shot = invoke_kravitch_post_shot(66U);
+  std::uint8_t kravitch_cooldown{};
+  std::uint8_t kravitch_decision_counter{};
+  require(accelerated_kravitch_shot.completed() &&
+              vm.runtime().read8(kravitch_ai + 0x4cU,
+                                 kravitch_cooldown) &&
+              vm.runtime().read8(kravitch_ai + 0x4aU,
+                                 kravitch_decision_counter) &&
+              kravitch_cooldown == 33U &&
+              kravitch_decision_counter == 0x28U &&
+              vm.runtime().write16(memory_mission, 17U),
+          "Agent Kravitch did not use the retail shotgun/reposition cadence");
+  const auto agent_target_memory = invoke_target_memory(60U);
+  const auto expired_agent_target_memory = invoke_target_memory(80U);
+  vm.runtime().setRegister(29U, 0x801fc000U);
+  const auto agent_tracking =
+      vm.invoke(close_aim_caller, std::array{0U, lagged_target - 0x10U});
+  const auto agent_accuracy =
+      vm.invoke(agent_accuracy_boundary, std::array{10U});
+  const auto agent_grenade_awareness =
+      vm.invoke(grenade_awareness_entry, std::array{0x1200U});
+  const auto agent_grenade_alert =
+      vm.invoke(grenade_alert_entry, std::array{0x1200U});
+  const auto beyond_agent_grenade_awareness =
+      vm.invoke(grenade_awareness_entry, std::array{0x1600U});
+  require(agent_target_memory.completed(),
+          "Agent target-memory baseline did not complete");
+  require(agent_target_memory.return_value == 1U,
+          "Agent target-memory baseline rejected age 60");
+  require(expired_agent_target_memory.completed(),
+          "Agent target-memory expiry did not complete");
+  require(expired_agent_target_memory.return_value == 0U,
+          "Agent target-memory baseline retained age 80");
+  require(
+      agent_tracking.completed() && agent_tracking.return_value == 0x1234U &&
+          agent_accuracy.completed() && agent_accuracy.return_value == 13U &&
+          agent_grenade_awareness.completed() &&
+          agent_grenade_awareness.return_value == 1U &&
+          agent_grenade_alert.completed() &&
+          agent_grenade_alert.return_value == 1U &&
+          beyond_agent_grenade_awareness.completed() &&
+          beyond_agent_grenade_awareness.return_value == 0U,
+      "Agent bypassed occlusion or lost its guarded aim modifiers");
 
-  require(vm.runtime().write32(shooter_matrix + 0x14U,
-                               std::bit_cast<std::uint32_t>(-1000)),
-          "Could not move the enemy outside close range");
-  vm.runtime().setRegister(29U, 0x801fc000U);
-  const auto distant_aim =
-      vm.invoke(close_aim_caller, std::array{shooter, lagged_target - 0x10U});
-  require(distant_aim.completed() && distant_aim.return_value == 0x1234U &&
-              vm.enemyCloseAimPatchCount() == 1U,
-          "Distant enemy aim lost the original tracking point");
-  require(vm.unbindHostCall(close_aim_profile.boundary),
-          "Could not remove the close enemy-aim hook");
+  require(vm.runtime().write16(memory_mission, 18U) &&
+              vm.runtime().write32(memory_flashlight_source,
+                                   memory_flashlight_node) &&
+              vm.runtime().write32(memory_light_list, memory_flashlight_node) &&
+              vm.runtime().write32(memory_flashlight_node,
+                                   memory_flashlight_source) &&
+              vm.runtime().write32(memory_flashlight_node + 8U, 0U),
+          "Could not seed the Tunnel Blackout flashlight list");
+  const auto flashlight_memory_start = invoke_target_memory(80U);
+  const auto flashlight_memory_last = invoke_target_memory(99U);
+  const auto flashlight_memory_expired = invoke_target_memory(100U);
+  std::uint32_t cached_target_after_flashlight{};
+  require(
+      flashlight_memory_start.completed() &&
+          flashlight_memory_start.return_value == 1U &&
+          flashlight_memory_last.completed() &&
+          flashlight_memory_last.return_value == 1U &&
+          flashlight_memory_expired.completed() &&
+          flashlight_memory_expired.return_value == 0U &&
+          vm.runtime().read32(lagged_target, cached_target_after_flashlight) &&
+          cached_target_after_flashlight == 0x1234U,
+      "Validated flashlight memory changed retail target state or bounds");
+
+  require(vm.runtime().write32(memory_other_light_source,
+                               memory_other_light_node) &&
+              vm.runtime().write32(memory_other_light_node,
+                                   memory_other_light_source) &&
+              vm.runtime().write32(memory_other_light_node + 8U, 0U) &&
+              vm.runtime().write32(memory_light_list, memory_other_light_node),
+          "Could not detach the flashlight from the active light list");
+  const auto detached_flashlight_memory = invoke_target_memory(80U);
+  require(detached_flashlight_memory.completed() &&
+              detached_flashlight_memory.return_value == 0U,
+          "A detached flashlight widened Agent target memory");
+
+  require(vm.runtime().write32(memory_light_list, memory_flashlight_node) &&
+              vm.runtime().write32(memory_flashlight_node + 8U,
+                                   memory_flashlight_node),
+          "Could not seed the malformed flashlight-list fixture");
+  const auto cyclic_flashlight_memory = invoke_target_memory(80U);
+  require(cyclic_flashlight_memory.completed() &&
+              cyclic_flashlight_memory.return_value == 0U &&
+              vm.runtime().write16(memory_mission, 17U) &&
+              vm.runtime().write32(memory_flashlight_source, 0U) &&
+              vm.runtime().write32(memory_light_list, 0U),
+          "A malformed flashlight list did not fail closed");
+  require(
+      vm.updateAgentGrenadeAwareness(grenade_state,
+                                     grenade_awareness_profile) &&
+          vm.updateAgentGrenadeAwareness(grenade_state,
+                                         grenade_awareness_profile) &&
+          vm.runtime().read8(grenade_danger_mask + 1U, grenade_alert_calls) &&
+          grenade_alert_calls == 1U,
+      "Agent did not issue exactly one early retail grenade alert");
+  const auto corrected_grenade_route = invoke_grenade_route(1U);
+  const auto preserved_safe_grenade_route = invoke_grenade_route(2U);
+  const auto escaped_grenade_hold = invoke_grenade_route(0U);
+  require(corrected_grenade_route.completed() &&
+              corrected_grenade_route.return_value == 2U &&
+              preserved_safe_grenade_route.completed() &&
+              preserved_safe_grenade_route.return_value == 2U &&
+              escaped_grenade_hold.completed() &&
+              escaped_grenade_hold.return_value == 2U,
+          "Agent retained a route edge toward the live grenade");
+  require(seed_route_node(2U, 250, 0, 0U, {-1, -1, -1}),
+          "Could not remove the safe Agent grenade route");
+  const auto stopped_grenade_route = invoke_grenade_route(1U);
+  require(stopped_grenade_route.completed() &&
+              stopped_grenade_route.return_value == 0U &&
+              seed_route_node(2U, -500, 0, 0U, {-1, -1, -1}),
+          "Agent did not hold position when every grenade route was unsafe");
+
+  require(vm.runtime().write8(grenade_danger_mask, 0U) &&
+              vm.runtime().write8(tactical_records + 0x4cU + 0x24U, 6U) &&
+              vm.runtime().write32(tactical_target_point, 3000U) &&
+              seed_route_node(0U, 0, 0, 0U, {1, 2, -1}) &&
+              seed_route_node(1U, 600, 0, 0U, {-1, -1, -1}) &&
+              seed_route_node(2U, -600, 0, 0U, {-1, -1, -1}),
+          "Could not seed Agent shotgun spacing");
+  const auto shotgun_spacing = invoke_tactical_route(2U);
+  require(shotgun_spacing.completed() && shotgun_spacing.return_value == 1U,
+          "Agent shotgun user did not close to its retail route band");
+
+  require(vm.runtime().write8(tactical_records + 0x4cU + 0x24U, 13U) &&
+              vm.runtime().write32(tactical_target_point, 1200U),
+          "Could not seed Agent sniper spacing");
+  const auto sniper_spacing = invoke_tactical_route(1U);
+  require(sniper_spacing.completed() && sniper_spacing.return_value == 2U,
+          "Agent sniper did not preserve long engagement distance");
+
+  require(vm.runtime().write32(tactical_target_point, 3000U) &&
+              seed_route_node(1U, 0, 500, 0U, {-1, -1, -1}) &&
+              seed_route_node(2U, 0, -500, 0U, {-1, -1, -1}),
+          "Could not seed Agent flank role");
+  const auto left_flank = invoke_tactical_route(2U);
+  require(left_flank.completed() && left_flank.return_value == 1U,
+          "Agent flank role did not select its authored side route");
+
+  const auto missing_retail_route =
+      invoke_tactical_route(std::numeric_limits<std::uint32_t>::max());
+  require(missing_retail_route.completed() &&
+              missing_retail_route.return_value ==
+                  std::numeric_limits<std::uint32_t>::max(),
+          "Agent replaced retail's no-route sentinel");
+  require(vm.runtime().write8(grenade_route_controller + 0x44U, 2U),
+          "Could not seed the retail previous-route sentinel");
+  const auto previous_retail_route = invoke_tactical_route(2U);
+  require(previous_retail_route.completed() &&
+              previous_retail_route.return_value == 2U &&
+              vm.runtime().write8(grenade_route_controller + 0x44U, 0xffU),
+          "Agent replaced retail's previous-route result");
+  require(seed_route_node(2U, 0, -500, 1U, {-1, -1, -1}),
+          "Could not seed an authored special route");
+  const auto special_retail_route = invoke_tactical_route(2U);
+  require(special_retail_route.completed() &&
+              special_retail_route.return_value == 2U &&
+              seed_route_node(2U, 0, -500, 0U, {-1, -1, -1}),
+          "Agent replaced retail's authored special route");
+
+  require(vm.runtime().write8(grenade_route_controller + 0x47U, 0U),
+          "Could not seed an allied retail route actor");
+  const auto allied_tactical_route = invoke_tactical_route(2U);
+  require(allied_tactical_route.completed() &&
+              allied_tactical_route.return_value == 2U &&
+              vm.runtime().write8(grenade_route_controller + 0x47U, 0x4fU),
+          "Agent tactical route policy modified an ally");
+  require(vm.runtime().write8(memory_ai + 0x47U, 0U),
+          "Could not seed allied target memory");
+  const auto allied_target_memory = invoke_target_memory(60U);
+  require(allied_target_memory.completed() &&
+              allied_target_memory.return_value == 0U &&
+              vm.runtime().write8(memory_ai + 0x47U, 0x4fU),
+          "Agent target-memory policy modified an ally");
+
+  require(vm.runtime().write16(memory_target, 8U),
+          "Could not change the Agent target-memory owner");
+  const auto unrelated_target_memory = invoke_target_memory(60U);
+  require(unrelated_target_memory.completed() &&
+              unrelated_target_memory.return_value == 0U &&
+              vm.runtime().write16(memory_target, 7U),
+          "Agent retained memory for a non-player target");
+  require(vm.runtime().write32(agent_target_memory_entry + 4U,
+                               encodeI(0x0bU, 2U, 2U, 20U)),
+          "Could not corrupt the Agent target-memory guard fixture");
+  const auto rejected_target_memory_guard = invoke_target_memory(60U);
+  require(rejected_target_memory_guard.completed() &&
+              rejected_target_memory_guard.return_value == 0U &&
+              vm.runtime().write32(agent_target_memory_entry + 4U,
+                                   agent_target_memory_words[1]),
+          "Agent target-memory guard did not fail closed");
+
+  require(vm.runtime().write32(grenade_route_entry + 4U, 0x24000000U),
+          "Could not corrupt the grenade route guard fixture");
+  const auto rejected_grenade_route_guard = invoke_grenade_route(1U);
+  require(rejected_grenade_route_guard.completed() &&
+              rejected_grenade_route_guard.return_value == 1U &&
+              vm.runtime().write32(grenade_route_entry + 4U,
+                                   grenade_route_words[1]),
+          "Agent grenade route guard did not fail closed on an unknown opcode");
+
+  require(vm.runtime().write32(agent_accuracy_boundary, 0U),
+          "Could not corrupt the Agent accuracy guard fixture");
+  const auto rejected_accuracy =
+      vm.invoke(agent_accuracy_boundary, std::array{10U});
+  require(rejected_accuracy.completed() &&
+              rejected_accuracy.return_value == 10U &&
+              vm.runtime().write32(agent_accuracy_boundary,
+                                   agent_accuracy_words[0]),
+          "Agent accuracy hook did not fail closed on an unknown opcode");
+
+  require(vm.setAgentDifficulty(false),
+          "Could not disable Agent enemy-aim policy");
+  require(vm.runtime().write16(memory_mission, 0U) &&
+              vm.runtime().write8(kravitch_ai + 0x4aU, 0U),
+          "Could not reset the disabled Kravitch cadence fixture");
+  const auto restored_kravitch_shot = invoke_kravitch_post_shot(66U);
+  require(restored_kravitch_shot.completed() &&
+              vm.runtime().read8(kravitch_ai + 0x4cU,
+                                 kravitch_cooldown) &&
+              vm.runtime().read8(kravitch_ai + 0x4aU,
+                                 kravitch_decision_counter) &&
+              kravitch_cooldown == 66U &&
+              kravitch_decision_counter == 0U &&
+              vm.runtime().write16(memory_mission, 17U),
+          "Disabling Agent did not restore Kravitch's retail cadence");
+  const auto restored_accuracy =
+      vm.invoke(agent_accuracy_boundary, std::array{10U});
+  const auto restored_target_memory = invoke_target_memory(60U);
+  const auto restored_grenade_awareness =
+      vm.invoke(grenade_awareness_entry, std::array{0x1200U});
+  const auto restored_grenade_alert =
+      vm.invoke(grenade_alert_entry, std::array{0x1200U});
+  const auto restored_grenade_route = invoke_grenade_route(1U);
+  require(vm.runtime().write8(tactical_records + 0x4cU + 0x24U, 6U) &&
+              vm.runtime().write32(tactical_target_point, 3000U) &&
+              seed_route_node(1U, 600, 0, 0U, {-1, -1, -1}) &&
+              seed_route_node(2U, -600, 0, 0U, {-1, -1, -1}),
+          "Could not restore the disabled Agent route fixture");
+  const auto restored_tactical_route = invoke_tactical_route(2U);
+  require(
+      restored_accuracy.completed() && restored_accuracy.return_value == 10U &&
+          restored_target_memory.completed() &&
+          restored_target_memory.return_value == 0U &&
+          restored_grenade_awareness.completed() &&
+          restored_grenade_awareness.return_value == 0U &&
+          restored_grenade_alert.completed() &&
+          restored_grenade_alert.return_value == 0U &&
+          restored_grenade_route.completed() &&
+          restored_grenade_route.return_value == 1U &&
+          restored_tactical_route.completed() &&
+          restored_tactical_route.return_value == 2U &&
+          vm.unbindHostCall(enemy_aim_profile.agent_accuracy_boundary) &&
+          vm.unbindHostCall(enemy_aim_profile.agent_target_memory_boundary) &&
+          vm.unbindHostCall(
+              enemy_aim_profile.kravitch_post_shot_boundary) &&
+          vm.unbindHostCall(grenade_awareness_profile.boundaries[0]) &&
+          vm.unbindHostCall(grenade_awareness_profile.boundaries[1]) &&
+          vm.unbindHostCall(grenade_awareness_profile.route_return_boundary),
+      "Disabling Agent did not restore retail enemy aim");
 
   constexpr auto retail_weapon_events =
       sf::game::syphonFilterUsaV11WeaponEventHookProfile();
+  static_assert(retail_weapon_events.impact_boundary == 0x8006784cU);
   static_assert(!sf::game::legacyWeaponEventUsesFirstPerson(0U) &&
                 !sf::game::legacyWeaponEventUsesFirstPerson(1U) &&
                 sf::game::legacyWeaponEventUsesFirstPerson(2U) &&
@@ -1901,6 +2481,18 @@ void testLegacyGameplayVmBoundary() {
                 retail_weapon_events.boundaries[0].delay_instruction ==
                     0x02402021U);
   auto weapon_event_profile = retail_weapon_events;
+  constexpr std::uint32_t weapon_impact_boundary = 0x80023500U;
+  constexpr std::array<std::uint32_t, 4U> weapon_impact_words{
+      encodeI(0x09U, 0U, 2U, 1U),
+      0x03e00008U,
+      0U,
+      0U,
+  };
+  const auto weapon_impact_bytes = instructionBytes(weapon_impact_words);
+  require(vm.runtime().loadBytes(weapon_impact_boundary, weapon_impact_bytes),
+          "Could not load the exact retail impact fixture");
+  weapon_event_profile.impact_boundary = weapon_impact_boundary;
+  weapon_event_profile.impact_instructions = weapon_impact_words;
   weapon_event_profile.boundaries[0] = {
       overlay_address,
       overlay_words[0],
@@ -1955,6 +2547,60 @@ void testLegacyGameplayVmBoundary() {
               shot_event.endpoint.y == -500 && shot_event.endpoint.z == 600,
           "Retail shot hook exported the wrong immutable event");
   vm.clearWeaponEvents();
+  require(vm.runtime().write32(weapon_hit_result, 0U) &&
+              vm.runtime().write16(weapon_aimed_slot, 0xffffU),
+          "Could not prepare retail world-hit weapon event");
+  const auto world_hit_weapon_event_result =
+      vm.invoke(overlay_address, std::array{weapon_player});
+  require(world_hit_weapon_event_result.completed() &&
+              vm.weaponEvents().size() == 1U &&
+              vm.weaponEvents().front().type ==
+                  sf::game::LegacyWeaponEventType::shot &&
+              vm.weaponEvents().front().hit_result == 0U &&
+              vm.weaponEvents().front().aimed_target_slot == -1,
+          "Retail world-hit shot with a zero HMD-part mask was lost");
+
+  constexpr std::uint32_t exact_impact_point = 0x801fd040U;
+  constexpr std::uint32_t exact_impact_vector = 0x801fd050U;
+  constexpr std::uint32_t impact_target_controller = 0x801fd060U;
+  require(vm.runtime().write32(exact_impact_point, 111U) &&
+              vm.runtime().write32(exact_impact_point + 4U,
+                                   std::bit_cast<std::uint32_t>(-222)) &&
+              vm.runtime().write32(exact_impact_point + 8U, 333U) &&
+              vm.runtime().write32(exact_impact_vector,
+                                   std::bit_cast<std::uint32_t>(-10)) &&
+              vm.runtime().write32(exact_impact_vector + 4U, 20U) &&
+              vm.runtime().write32(exact_impact_vector + 8U,
+                                   std::bit_cast<std::uint32_t>(-30)) &&
+              vm.runtime().write16(impact_target_controller + 2U, 9U),
+          "Could not prepare exact retail impact fixture");
+  const auto exact_world_impact =
+      vm.invoke(weapon_impact_boundary,
+                std::array<std::uint32_t, 5U>{7U, 0U, 1U, exact_impact_point,
+                                              exact_impact_vector});
+  require(exact_world_impact.completed() &&
+              vm.weaponEvents().front().impact_count == 1U &&
+              vm.weaponEvents().front().impacts[0].world &&
+              vm.weaponEvents().front().impacts[0].target_slot == -1 &&
+              vm.weaponEvents().front().impacts[0].position ==
+                  sf::game::LegacyNativePoint{111, -222, 333} &&
+              vm.weaponEvents().front().impacts[0].vector ==
+                  sf::game::LegacyNativePoint{-10, 20, -30},
+          "FUN_8006784c observer lost the exact world impact");
+  require(vm.runtime().write32(weapon_hit_result, 0x00006000U),
+          "Could not update the exact actor part mask");
+  const auto exact_actor_impact = vm.invoke(
+      weapon_impact_boundary,
+      std::array<std::uint32_t, 5U>{7U, impact_target_controller, 1U,
+                                    exact_impact_point, exact_impact_vector});
+  require(exact_actor_impact.completed() && vm.weaponEvents().size() == 1U &&
+              vm.weaponEvents().front().impact_count == 2U &&
+              !vm.weaponEvents().front().impacts[1].world &&
+              vm.weaponEvents().front().impacts[1].hit_result == 0x00006000U &&
+              vm.weaponEvents().front().impacts[1].target_slot == 9,
+          "Multiple retail impacts/pellets created more than one shot event "
+          "or confused an actor impact with the world");
+  vm.clearWeaponEvents();
 
   weapon_event_profile.boundaries[0].type =
       sf::game::LegacyWeaponEventType::c4_use;
@@ -1980,6 +2626,8 @@ void testLegacyGameplayVmBoundary() {
   for (const auto &boundary : weapon_event_profile.boundaries) {
     static_cast<void>(vm.unbindHostCall(boundary.address));
   }
+  require(vm.unbindHostCall(weapon_event_profile.impact_boundary),
+          "Could not remove the exact retail impact hook");
 
   constexpr std::uint32_t interrupt_host_call = 0x80021000U;
   constexpr std::array interrupt_handler_words{
@@ -2428,6 +3076,7 @@ void testLegacyGameplayVmBoundary() {
   bridge_profile.world_model_descriptors = 0x800320e4U;
   bridge_profile.world_model_count = 0x8003208cU;
   bridge_profile.world_visibility_bytes = 0x80032090U;
+  bridge_profile.world_decal_pool = 0x8004f000U;
   bridge_profile.active_terrain_depth_cue = 0x800320f0U;
   bridge_profile.terrain_depth_cue = 0x800320f4U;
   bridge_profile.renderer_display_flags = 0x800320f8U;
@@ -2435,6 +3084,7 @@ void testLegacyGameplayVmBoundary() {
   bridge_profile.screen_filter_descriptor = 0x8004a404U;
   bridge_profile.nightvision_clear_reference = 0x8004a40cU;
   bridge_profile.nightvision_clear_color = 0x8004a408U;
+  bridge_profile.player_hmd_wound_table = 0x8004c380U;
   bridge_profile.fade_step = 0x80032004U;
   bridge_profile.fade_current = 0x80032006U;
   bridge_profile.fade_callback = 0x80032008U;
@@ -2447,6 +3097,8 @@ void testLegacyGameplayVmBoundary() {
   bridge_profile.object_handler_table = 0x80032100U;
   bridge_profile.dynamic_first_slot = 0x80032038U;
   bridge_profile.target_lock_active = 0x8003203aU;
+  bridge_profile.aim_target = 0x8004a430U;
+  bridge_profile.aim_miss = 0x8004a43cU;
   bridge_profile.virus_scanner_target = 0x8004a420U;
   bridge_profile.virus_scanner_target_slot = 0x8004a42cU;
   bridge_profile.flashlight_enabled = 0x8004a2c0U;
@@ -2533,6 +3185,13 @@ void testLegacyGameplayVmBoundary() {
   constexpr std::uint32_t guest_world_payload = 0x8004b280U;
   constexpr std::uint32_t guest_world_section = 0x8004b400U;
   constexpr std::uint32_t guest_world_vertices = guest_world_section + 0x2cU;
+  constexpr std::uint32_t actor_hmd_model = 0x8004c000U;
+  constexpr std::uint32_t player_hmd_model = 0x8004c040U;
+  constexpr std::uint32_t wound_hmd_payload = 0x8004c100U;
+  constexpr std::uint32_t actor_wound_table = 0x8004c300U;
+  constexpr std::uint32_t actor_wound_records = 0x8004c340U;
+  constexpr std::uint32_t player_wound_table = 0x8004c380U;
+  constexpr std::uint32_t player_wound_records = 0x8004c3c0U;
   const std::uint32_t guest_raw =
       bridge_profile.effect_particle_pool + 0x68U + 0x28U;
   require(
@@ -2751,6 +3410,11 @@ void testLegacyGameplayVmBoundary() {
                                legacy_common_npc_handler) &&
           vm.runtime().write16(bridge_profile.dynamic_first_slot, 1U) &&
           vm.runtime().write8(bridge_profile.target_lock_active, 1U) &&
+          vm.runtime().write32(bridge_profile.aim_target, 2345U) &&
+          vm.runtime().write32(bridge_profile.aim_target + 4U,
+                               std::bit_cast<std::uint32_t>(-678)) &&
+          vm.runtime().write32(bridge_profile.aim_target + 8U, 901U) &&
+          vm.runtime().write8(bridge_profile.aim_miss, 0U) &&
           vm.runtime().write32(bridge_profile.virus_scanner_target, 1234U) &&
           vm.runtime().write32(bridge_profile.virus_scanner_target + 4U,
                                std::bit_cast<std::uint32_t>(-567)) &&
@@ -3349,6 +4013,42 @@ void testLegacyGameplayVmBoundary() {
               std::bit_cast<std::uint32_t>(std::int32_t{-2500})) &&
           vm.runtime().write32(enemy_projectile_matrix + 0x1cU, 3200U),
       "Could not seed the retail player/enemy in-flight grenade descriptors");
+  require(
+      vm.runtime().write32(actor_node + 0x10U, actor_hmd_model) &&
+          vm.runtime().write32(actor_hmd_model + 0x20U, wound_hmd_payload) &&
+          vm.runtime().write32(player_node + 0x10U, player_hmd_model) &&
+          vm.runtime().write32(player_hmd_model + 0x20U, wound_hmd_payload) &&
+          vm.runtime().write32(wound_hmd_payload, 0x48000000U) &&
+          vm.runtime().write32(wound_hmd_payload + 4U, 2U) &&
+          vm.runtime().write32(wound_hmd_payload + 8U, 4U) &&
+          vm.runtime().write32(wound_hmd_payload + 0x10U, actor_wound_table) &&
+          vm.runtime().write32(wound_hmd_payload + 0x14U, 0x11cU) &&
+          // Two three-vertex parts: normal bases are payload+0x90/+0x104.
+          vm.runtime().write32(wound_hmd_payload + 0x34U, 0x74U) &&
+          vm.runtime().write32(wound_hmd_payload + 0x3cU, 1U) &&
+          vm.runtime().write32(wound_hmd_payload + 0x40U, 1U) &&
+          vm.runtime().write16(wound_hmd_payload + 0x68U, 3U) &&
+          vm.runtime().write16(wound_hmd_payload + 0x6aU, 1U) &&
+          vm.runtime().write32(wound_hmd_payload + 0x74U, 0x90U) &&
+          vm.runtime().write32(wound_hmd_payload + 0xa8U, 0x74U) &&
+          vm.runtime().write32(wound_hmd_payload + 0xb0U, 1U) &&
+          vm.runtime().write32(wound_hmd_payload + 0xb4U, 1U) &&
+          vm.runtime().write16(wound_hmd_payload + 0xdcU, 3U) &&
+          vm.runtime().write16(wound_hmd_payload + 0xdeU, 1U) &&
+          vm.runtime().write32(wound_hmd_payload + 0xe8U, 0x104U) &&
+          vm.runtime().write32(actor_wound_table, 1U) &&
+          vm.runtime().write32(actor_wound_table + 4U, actor_wound_records) &&
+          vm.runtime().write32(actor_wound_records, actor_node) &&
+          vm.runtime().write32(actor_wound_records + 0x0cU, 1U) &&
+          vm.runtime().write32(actor_wound_records + 0x10U,
+                               wound_hmd_payload + 0x10cU) &&
+          vm.runtime().write32(player_wound_table, 1U) &&
+          vm.runtime().write32(player_wound_table + 4U, player_wound_records) &&
+          vm.runtime().write32(player_wound_records, player_node) &&
+          vm.runtime().write32(player_wound_records + 0x0cU, 1U) &&
+          vm.runtime().write32(player_wound_records + 0x10U,
+                               wound_hmd_payload + 0xa0U),
+      "Could not seed exact retail HMD wound tables");
   const auto bridge = vm.readBridgeState(bridge_profile);
   require(
       bridge && bridge->camera.eye.x == 100 && bridge->camera.eye.y == -200 &&
@@ -3418,6 +4118,9 @@ void testLegacyGameplayVmBoundary() {
           bridge->guest_raw_packets[0].opcode == 0x30U &&
           bridge->guest_raw_packets[0].ordering_depth == 0U &&
           bridge->guest_raw_packets[0].effect_particle == 1 &&
+          bridge->guest_raw_packets[0].effect_controller == 1 &&
+          bridge->guest_raw_packets[0].taser_segment_index == -1 &&
+          bridge->guest_raw_packets[0].taser_segment_count == 0U &&
           bridge->guest_raw_packets[0].effect_world_position_valid &&
           bridge->guest_raw_packets[0].effect_position.x == 4000 &&
           bridge->guest_raw_packets[0].effect_position.y == 5000 &&
@@ -3456,6 +4159,8 @@ void testLegacyGameplayVmBoundary() {
           bridge->player.position.z == 933 &&
           bridge->player.guest_rotation[2] == 4096 &&
           bridge->target_lock_active && bridge->taser_conductor_phase == 2U &&
+          bridge->aim_target_valid && bridge->aim_target.x == 2345 &&
+          bridge->aim_target.y == -678 && bridge->aim_target.z == 901 &&
           bridge->virus_scanner_target_valid &&
           bridge->virus_scanner_target.x == 1234 &&
           bridge->virus_scanner_target.y == -567 &&
@@ -3490,6 +4195,8 @@ void testLegacyGameplayVmBoundary() {
           bridge->objects[0].hmd_back_color_valid &&
           bridge->objects[0].hmd_back_color_q12 ==
               std::array<std::int16_t, 3U>{300, 400, 500} &&
+          bridge->objects[0].hmd_wound_vertex_count == 1U &&
+          bridge->objects[0].hmd_wound_vertices[0] == 4U &&
           !bridge->objects[0].ground_contact_valid &&
           bridge->objects[1].class_id == 1 &&
           bridge->objects[1].object_handler == 0U &&
@@ -3514,6 +4221,8 @@ void testLegacyGameplayVmBoundary() {
           bridge->objects[2].hmd_back_color_valid &&
           bridge->objects[2].hmd_back_color_q12 ==
               std::array<std::int16_t, 3U>{900, 1000, 1100} &&
+          bridge->objects[2].hmd_wound_vertex_count == 1U &&
+          bridge->objects[2].hmd_wound_vertices[0] == 2U &&
           bridge->expl_particles.size() == 4U &&
           bridge->expl_particles[0].pool_index == 0 &&
           bridge->expl_particles[0].controller == 0U &&
@@ -3541,6 +4250,25 @@ void testLegacyGameplayVmBoundary() {
           bridge->expl_particles[3].frame == 4U &&
           bridge->park2_flamethrower_ribbons.empty(),
       "Legacy typed gameplay bridge mismatch");
+
+  require(vm.runtime().write8(bridge_profile.aim_miss, 1U),
+          "Could not mark the retail aim ray as missed");
+  const auto missed_aim = vm.readBridgeState(bridge_profile);
+  require(missed_aim && !missed_aim->aim_target_valid &&
+              missed_aim->aim_target ==
+                  sf::game::LegacyNativePoint{2345, -678, 901},
+          "Retail aim miss did not invalidate the sampled aim point");
+  require(vm.runtime().write8(bridge_profile.aim_miss, 0U),
+          "Could not restore the retail aim ray fixture");
+
+  require(vm.runtime().write32(actor_wound_records + 0x0cU, 0U) &&
+              vm.runtime().write32(player_wound_records + 0x0cU, 0U),
+          "Could not clear guest-authored HMD wound records");
+  const auto cleared_hmd_wounds = vm.readBridgeState(bridge_profile);
+  require(cleared_hmd_wounds &&
+              cleared_hmd_wounds->objects[0].hmd_wound_vertex_count == 0U &&
+              cleared_hmd_wounds->objects[2].hmd_wound_vertex_count == 0U,
+          "HMD wound vertices outlived the guest record lifecycle");
 
   require(
       vm.runtime().write16(presentation_viewport +
@@ -5742,8 +6470,7 @@ void testLegacyGameplayVmBoundary() {
                               0U) &&
           vm.runtime().write32(mission_bridge_profile.weapon_menu_state, 0U) &&
           vm.runtime().write8(mission_bridge_profile.weapon_menu_dirty, 1U) &&
-          vm.runtime().write32(mission_bridge_profile.normal_hud_phase,
-                               6U) &&
+          vm.runtime().write32(mission_bridge_profile.normal_hud_phase, 6U) &&
           vm.runtime().write32(
               mission_bridge_profile.weapon_menu_controller_ready, 1U) &&
           vm.runtime().write32(mission_bridge_profile.weapon_menu_input_ready,
@@ -5958,11 +6685,10 @@ void testLegacyGameplayVmBoundary() {
   require(succeeded && succeeded->success && succeeded->terminal &&
               !succeeded->failure && !succeeded->failure_transition,
           "Retail mission success/failure latches are reversed");
-  require(
-      vm.runtime().write32(mission_bridge_profile.normal_hud_phase, 14U) &&
-          !vm.readMissionBridgeState(mission_bridge_profile) &&
-          vm.runtime().write32(mission_bridge_profile.normal_hud_phase, 6U),
-      "Mission bridge accepted a HUD phase outside retail -1..13");
+  require(vm.runtime().write32(mission_bridge_profile.normal_hud_phase, 14U) &&
+              !vm.readMissionBridgeState(mission_bridge_profile) &&
+              vm.runtime().write32(mission_bridge_profile.normal_hud_phase, 6U),
+          "Mission bridge accepted a HUD phase outside retail -1..13");
   require(
       vm.runtime().write32(mission_progress, 33U) &&
           !vm.readMissionBridgeState(mission_bridge_profile),
@@ -6222,6 +6948,1268 @@ void testLegacyGameplayVmBoundary() {
           "Retail SUBWAY source-30 MOVIE handoff was mistaken for INTRO");
 }
 
+void testLegacyGameplayVmAgentMissionTimers() {
+  constexpr std::array initial_words{
+      encodeR(31U, 0U, 0U, 0U, 0x08U),
+      0U,
+  };
+  const auto initial_code = instructionBytes(initial_words);
+  std::vector<std::byte> executable_bytes(2048U + initial_code.size());
+  constexpr std::string_view signature{"PS-X EXE"};
+  std::ranges::transform(signature, executable_bytes.begin(), [](char value) {
+    return static_cast<std::byte>(value);
+  });
+  writeLe32(executable_bytes, 0x10U, code_address);
+  writeLe32(executable_bytes, 0x18U, code_address);
+  writeLe32(executable_bytes, 0x1cU,
+            static_cast<std::uint32_t>(initial_code.size()));
+  std::ranges::copy(initial_code, executable_bytes.begin() + 2048);
+
+  const auto executable = sf::psx::Executable::parse(executable_bytes);
+  sf::game::LegacyGameplayVm vm{executable};
+  auto profile = sf::game::syphonFilterUsaV11NativeMissionBridgeProfile();
+  profile.mission_timer_handle = 0x801fe000U;
+  profile.mission_timer_remaining = 0x801fe004U;
+  constexpr std::uint32_t pending_seconds = 0x8011669cU;
+  constexpr std::uint32_t pending_callback = 0x801166a4U;
+  constexpr std::uint32_t active_callback = 0x80116698U;
+  constexpr std::uint32_t active_setter = 0x8004027cU;
+  auto setter_calls = std::uint32_t{};
+  auto setter_write_ok = true;
+  vm.bindHostCall(active_setter, [&](sf::game::LegacyHostCallContext &context) {
+    ++setter_calls;
+    setter_write_ok = context.write32(profile.mission_timer_remaining,
+                                      context.argument(0U)) &&
+                      setter_write_ok;
+    context.setReturnValue(0U);
+  });
+
+  const auto seed = [&](std::uint16_t handle, std::uint32_t seconds,
+                        std::uint32_t pending_expiry,
+                        std::uint32_t active_expiry, std::int32_t remaining) {
+    return vm.runtime().write16(profile.mission_timer_handle, handle) &&
+           vm.runtime().write32(pending_seconds, seconds) &&
+           vm.runtime().write32(pending_callback, pending_expiry) &&
+           vm.runtime().write32(active_callback, active_expiry) &&
+           vm.runtime().write32(profile.mission_timer_remaining,
+                                std::bit_cast<std::uint32_t>(remaining));
+  };
+  const auto read32 = [&](std::uint32_t address) {
+    auto value = std::uint32_t{};
+    require(vm.runtime().read32(address, value),
+            "Could not read Agent timer fixture memory");
+    return value;
+  };
+
+  require(seed(0xffffU, 180U, sf::game::agent_base_escape_timer_callback, 0U,
+               std::numeric_limits<std::int32_t>::max()) &&
+              vm.applyAgentMissionTimer(10U, profile) &&
+              read32(pending_seconds) == 180U && setter_calls == 0U,
+          "Disabled Agent mode changed a pending Base Escape timer");
+  require(vm.setAgentDifficulty(true), "Could not enable Agent timer fixture");
+  require(vm.applyAgentMissionTimer(19U, profile) &&
+              read32(pending_seconds) == 180U && setter_calls == 0U,
+          "An unproven Missile Silo timer rule was applied");
+
+  require(seed(0xffffU, 180U, 0x80146eb0U, 0U,
+               std::numeric_limits<std::int32_t>::max()) &&
+              vm.applyAgentMissionTimer(10U, profile) &&
+              read32(pending_seconds) == 180U,
+          "Base Escape accepted the wrong pending callback");
+  require(seed(0xffffU, 180U, sf::game::agent_base_escape_timer_callback, 0U,
+               std::numeric_limits<std::int32_t>::max()) &&
+              vm.applyAgentMissionTimer(10U, profile) &&
+              read32(pending_seconds) == 144U &&
+              vm.applyAgentMissionTimer(10U, profile) &&
+              read32(pending_seconds) == 144U && setter_calls == 0U,
+          "Base Escape pending seconds were not changed exactly once");
+
+  require(seed(0x0100U, 180U, sf::game::agent_base_escape_timer_callback,
+               sf::game::agent_base_escape_timer_callback, 3600) &&
+              vm.applyAgentMissionTimer(10U, profile) && setter_write_ok &&
+              read32(profile.mission_timer_remaining) == 2880U &&
+              setter_calls == 1U && vm.applyAgentMissionTimer(10U, profile) &&
+              setter_calls == 1U,
+          "Base Escape active ticks were not phase-preserving or idempotent");
+  require(seed(0x0100U, 180U, sf::game::agent_base_escape_timer_callback,
+               0x80146eb0U, 3600) &&
+              vm.applyAgentMissionTimer(10U, profile) &&
+              read32(profile.mission_timer_remaining) == 3600U &&
+              setter_calls == 1U,
+          "Base Escape accepted the wrong live callback");
+
+  require(seed(0xffffU, 900U, sf::game::agent_warehouse_76_timer_callback, 0U,
+               std::numeric_limits<std::int32_t>::max()) &&
+              vm.applyAgentMissionTimer(16U, profile) &&
+              read32(pending_seconds) == 720U,
+          "Warehouse 76 pending timer was not shortened to 12 minutes");
+  require(seed(0x0200U, 900U, sf::game::agent_warehouse_76_timer_callback,
+               sf::game::agent_warehouse_76_timer_callback, 18000) &&
+              vm.applyAgentMissionTimer(16U, profile) && setter_write_ok &&
+              read32(profile.mission_timer_remaining) == 14400U &&
+              setter_calls == 2U,
+          "Warehouse 76 active timer was not shortened to 12 minutes");
+
+  require(seed(0xffffU, 1200U, 0x80146a64U, 0U,
+               std::numeric_limits<std::int32_t>::max()) &&
+              vm.applyAgentWashingtonParkTimer(profile) &&
+              read32(pending_seconds) == 900U,
+          "Washington Park timer compatibility path regressed");
+  require(vm.setAgentDifficulty(false) &&
+              seed(0x0200U, 900U, sf::game::agent_warehouse_76_timer_callback,
+                   sf::game::agent_warehouse_76_timer_callback, 18000) &&
+              vm.applyAgentMissionTimer(16U, profile) &&
+              read32(profile.mission_timer_remaining) == 18000U &&
+              setter_calls == 2U,
+          "Disabling Agent did not restore timer pass-through");
+}
+
+void testLegacyGameplayVmAgentDamageHook() {
+  constexpr std::array initial_words{
+      encodeR(31U, 0U, 0U, 0U, 0x08U),
+      0U,
+  };
+  const auto initial_code = instructionBytes(initial_words);
+  std::vector<std::byte> executable_bytes(2048U + initial_code.size());
+  constexpr std::string_view signature{"PS-X EXE"};
+  std::ranges::transform(signature, executable_bytes.begin(), [](char value) {
+    return static_cast<std::byte>(value);
+  });
+  writeLe32(executable_bytes, 0x10U, code_address);
+  writeLe32(executable_bytes, 0x18U, code_address);
+  writeLe32(executable_bytes, 0x1cU,
+            static_cast<std::uint32_t>(initial_code.size()));
+  std::ranges::copy(initial_code, executable_bytes.begin() + 2048);
+
+  const auto executable = sf::psx::Executable::parse(executable_bytes);
+  sf::game::LegacyGameplayVm vm{executable};
+  auto profile = sf::game::syphonFilterUsaV11NativeMissionBridgeProfile();
+  static_assert(
+      sf::game::syphonFilterUsaV11NativeMissionBridgeProfile().damage_entry ==
+      0x80069cb0U);
+  constexpr std::uint32_t damage_entry = 0x80024000U;
+  constexpr std::uint32_t player_pointer = 0x801fe000U;
+  constexpr std::uint32_t player = 0x801fe100U;
+  constexpr std::int16_t player_slot = 7;
+  constexpr std::uint32_t object_records_pointer = 0x801fe010U;
+  constexpr std::uint32_t object_count = 0x801fe014U;
+  constexpr std::uint32_t gameplay_frame = 0x801fe018U;
+  constexpr std::uint32_t object_records = 0x801fc000U;
+  constexpr std::uint32_t object_record_stride = 0x4cU;
+  constexpr std::int16_t shooter_slot = 1;
+  constexpr std::uint32_t shooter_record =
+      object_records + object_record_stride;
+  constexpr std::uint32_t shooter_instance = 0x801fd000U;
+  constexpr std::uint32_t shooter_ai = 0x801fd100U;
+  constexpr std::int16_t source_slot = 2;
+  constexpr std::uint32_t source_record =
+      object_records + source_slot * object_record_stride;
+  constexpr std::uint32_t source_instance = 0x801fd300U;
+  constexpr std::int16_t second_shooter_slot = 3;
+  constexpr std::uint32_t second_shooter_record =
+      object_records + second_shooter_slot * object_record_stride;
+  constexpr std::uint32_t second_shooter_instance = 0x801fd400U;
+  constexpr std::uint32_t second_shooter_ai = 0x801fd500U;
+  constexpr std::uint32_t recycled_shooter_instance = 0x801fd600U;
+  constexpr std::uint32_t recycled_shooter_ai = 0x801fd700U;
+  profile.damage_entry = damage_entry;
+  profile.player_pointer = player_pointer;
+  profile.object_records_pointer = object_records_pointer;
+  profile.object_count = object_count;
+  profile.gameplay_frame = gameplay_frame;
+
+  // Return a3 after the entry instruction. The hook must patch the register
+  // and still retire this original guest instruction.
+  constexpr std::array damage_words{
+      encodeR(7U, 0U, 2U, 0U, 0x21U),
+      encodeR(31U, 0U, 0U, 0U, 0x08U),
+      0U,
+  };
+  require(
+      vm.loadOverlay(damage_entry, instructionBytes(damage_words)) &&
+          vm.runtime().write32(player_pointer, player) &&
+          vm.runtime().write16(player + 2U,
+                               std::bit_cast<std::uint16_t>(player_slot)) &&
+          vm.runtime().write32(object_records_pointer, object_records) &&
+          vm.runtime().write32(object_count, 8U) &&
+          vm.runtime().write32(gameplay_frame, 0U) &&
+          vm.runtime().write8(shooter_record + 0x24U, 1U) &&
+          vm.runtime().write32(shooter_record + 0x34U, shooter_instance) &&
+          vm.runtime().write16(shooter_instance + 2U,
+                               std::bit_cast<std::uint16_t>(shooter_slot)) &&
+          vm.runtime().write32(shooter_instance + 0x1cU, shooter_ai) &&
+          vm.runtime().write8(shooter_ai + 0x47U, 1U) &&
+          vm.runtime().write32(source_record + 0x34U, source_instance) &&
+          vm.runtime().write16(source_instance + 2U,
+                               std::bit_cast<std::uint16_t>(shooter_slot)) &&
+          vm.runtime().write8(second_shooter_record + 0x24U, 13U) &&
+          vm.runtime().write32(second_shooter_record + 0x34U,
+                               second_shooter_instance) &&
+          vm.runtime().write16(
+              second_shooter_instance + 2U,
+              std::bit_cast<std::uint16_t>(second_shooter_slot)) &&
+          vm.runtime().write32(second_shooter_instance + 0x1cU,
+                               second_shooter_ai) &&
+          vm.runtime().write8(second_shooter_ai + 0x47U, 0x4fU),
+      "Could not prepare the Agent damage hook fixture");
+  vm.bindAgentDifficultyDamageHook(profile);
+
+  const auto damage = [&vm, &profile](std::int16_t target, std::int16_t amount,
+                                      std::int16_t attacker = 1,
+                                      std::int16_t owner = 1,
+                                      std::int16_t type = 3) {
+    const sf::game::LegacyHostDamageEvent event{
+        .attacker_slot = attacker,
+        .owner_slot = owner,
+        .target_slot = target,
+        .damage = amount,
+        .damage_type = type,
+    };
+    return vm.queueHostDamage(event, profile);
+  };
+
+  const auto disabled = damage(player_slot, 5);
+  require(disabled.completed() && disabled.return_value == 5U &&
+              disabled.host_calls == 1U,
+          "Disabled Agent hook did not pass through retail damage");
+  require(vm.setAgentDifficulty(true),
+          "Could not enable Agent difficulty in the VM");
+
+  constexpr std::uint32_t mission_index_address = 0x80130c88U;
+  constexpr std::uint32_t spawn_boundary = 0x8005f468U;
+  constexpr std::array spawn_words{
+      0xac430024U,
+      encodeR(31U, 0U, 0U, 0U, 0x08U),
+      0U,
+  };
+  const auto seed_spawn_record =
+      [&vm, object_records](std::uint32_t slot, std::uint32_t definition,
+                            std::int32_t x, std::int32_t y, std::int32_t z) {
+        const auto record = object_records + slot * object_record_stride;
+        return vm.runtime().write32(record, definition) &&
+               vm.runtime().write32(record + 0x18U,
+                                    std::bit_cast<std::uint32_t>(x)) &&
+               vm.runtime().write32(record + 0x1cU,
+                                    std::bit_cast<std::uint32_t>(y)) &&
+               vm.runtime().write32(record + 0x20U,
+                                    std::bit_cast<std::uint32_t>(z));
+      };
+  vm.bindSyphonFilterUsaV11AgentMissionNpcSpawnHook(profile);
+  constexpr std::uint32_t kravitch_slot = 174U;
+  constexpr std::uint32_t kravitch_record =
+      object_records + kravitch_slot * object_record_stride;
+  require(vm.loadOverlay(spawn_boundary, instructionBytes(spawn_words)) &&
+              // Match the transformed live record seen at the retail spawn.
+              seed_spawn_record(kravitch_slot, 53U, -1495, -2140, 6679) &&
+              vm.runtime().write16(mission_index_address, 0U),
+          "Could not prepare the Agent Kravitch spawn fixture");
+  vm.runtime().setRegister(2U, kravitch_record);
+  vm.runtime().setRegister(3U, 0xc102U);
+  vm.runtime().setRegister(16U, kravitch_slot);
+  const auto kravitch_spawn = vm.invoke(spawn_boundary, {});
+  std::uint32_t kravitch_attributes{};
+  require(
+      kravitch_spawn.completed() &&
+          vm.runtime().read32(kravitch_record + 0x24U, kravitch_attributes) &&
+          kravitch_attributes == 0xc107U,
+      "Agent Kravitch did not receive the shotgun before retail spawn");
+
+  // Kravitch is a static SUBWAY actor. The exact FUN_8005805c entry must
+  // expose the shotgun before retail caches its stance and fire controller.
+  constexpr std::uint32_t retail_npc_initializer = 0x8005805cU;
+  constexpr std::uint32_t initializer_observer = 0x80058060U;
+  constexpr std::uint32_t kravitch_instance = 0x801fb800U;
+  constexpr std::array retail_npc_initializer_words{
+      0x27bdffc8U,
+      0xafb1002cU,
+  };
+  std::array<std::uint16_t, 2U> initializer_attributes{};
+  std::size_t initializer_calls{};
+  auto initializer_reads_ok = true;
+  vm.bindHostCall(initializer_observer,
+                  [&](sf::game::LegacyHostCallContext &context) {
+                    std::uint16_t attributes{};
+                    initializer_reads_ok =
+                        context.read16(kravitch_record + 0x24U, attributes) &&
+                        initializer_reads_ok;
+                    if (initializer_calls < initializer_attributes.size()) {
+                      initializer_attributes[initializer_calls] = attributes;
+                    }
+                    ++initializer_calls;
+                    context.setReturnValue(0U);
+                  });
+  require(
+      vm.loadOverlay(retail_npc_initializer,
+                     instructionBytes(retail_npc_initializer_words)) &&
+          seed_spawn_record(kravitch_slot, 53U, -1495, -2140, 6679) &&
+          vm.runtime().write32(object_count, 200U) &&
+          vm.runtime().write16(kravitch_record + 0x24U, 0xc102U) &&
+          vm.runtime().write32(kravitch_record + 0x34U, kravitch_instance) &&
+          vm.runtime().write16(kravitch_instance + 2U, kravitch_slot),
+      "Could not prepare the static Agent Kravitch init fixture");
+  const auto stack_before_initializer = vm.runtime().state().gpr[29U];
+  const std::array initializer_arguments{kravitch_instance};
+  const auto static_kravitch_init =
+      vm.invoke(retail_npc_initializer, initializer_arguments);
+  std::uint16_t static_kravitch_attributes{};
+  require(static_kravitch_init.completed() &&
+              static_kravitch_init.host_calls == 2U &&
+              initializer_reads_ok && initializer_calls == 1U &&
+              initializer_attributes[0] == 0xc107U &&
+              vm.runtime().state().gpr[29U] ==
+                  stack_before_initializer - 0x38U &&
+              vm.runtime().read16(kravitch_record + 0x24U,
+                                  static_kravitch_attributes) &&
+              static_kravitch_attributes == 0xc107U,
+          "Static Agent Kravitch reached retail init with a pistol profile");
+  vm.runtime().setRegister(29U, stack_before_initializer);
+
+  // A mismatched record owner must remain retail at the same function entry.
+  require(vm.runtime().write16(kravitch_record + 0x24U, 0xc102U) &&
+              vm.runtime().write32(kravitch_record + 0x34U,
+                                   kravitch_instance + 0x100U),
+          "Could not prepare the rejected static Kravitch fixture");
+  const auto rejected_static_init =
+      vm.invoke(retail_npc_initializer, initializer_arguments);
+  vm.runtime().setRegister(29U, stack_before_initializer);
+  require(rejected_static_init.completed() && initializer_reads_ok &&
+              initializer_calls == 2U &&
+              initializer_attributes[1] == 0xc102U &&
+              vm.runtime().read16(kravitch_record + 0x24U,
+                                  static_kravitch_attributes) &&
+              static_kravitch_attributes == 0xc102U &&
+              vm.runtime().write32(kravitch_record + 0x34U,
+                                   kravitch_instance),
+          "Static Kravitch pre-init hook accepted a mismatched owner");
+
+  constexpr std::uint32_t kravitch_definitions = 0x801fa000U;
+  std::uint16_t maintained_kravitch_attributes{};
+  require(vm.runtime().write32(profile.object_count, 200U) &&
+              vm.runtime().write32(profile.object_definitions_pointer,
+                                   kravitch_definitions) &&
+              vm.runtime().write32(profile.object_definition_count, 64U) &&
+              vm.runtime().write16(kravitch_definitions +
+                                       53U * static_cast<std::uint32_t>(0x14U),
+                                   1U) &&
+              vm.runtime().write32(profile.object_handler_table + 4U,
+                                   legacy_common_npc_handler) &&
+              vm.runtime().write16(kravitch_record + 0x24U, 0xc102U) &&
+              vm.applyAgentMissionNpcOverrides(0U, true, profile) &&
+              vm.runtime().read16(kravitch_record + 0x24U,
+                                  maintained_kravitch_attributes) &&
+              maintained_kravitch_attributes == 0xc107U &&
+              vm.applyAgentMissionNpcOverrides(0U, false, profile) &&
+              vm.runtime().read16(kravitch_record + 0x24U,
+                                  maintained_kravitch_attributes) &&
+              maintained_kravitch_attributes == 0xc102U,
+          "Kravitch's maintained Agent weapon was not reversible");
+
+  require(vm.runtime().write16(kravitch_record + 0x24U, 0xc109U) &&
+              vm.applyAgentMissionNpcOverrides(0U, true, profile) &&
+              vm.runtime().read16(kravitch_record + 0x24U,
+                                  maintained_kravitch_attributes) &&
+              maintained_kravitch_attributes == 0xc107U &&
+              vm.applyAgentMissionNpcOverrides(0U, false, profile) &&
+              vm.runtime().read16(kravitch_record + 0x24U,
+                                  maintained_kravitch_attributes) &&
+              maintained_kravitch_attributes == 0xc102U,
+          "Kravitch's legacy Agent M-16 state was not migrated");
+
+  require(seed_spawn_record(kravitch_slot, 53U, -1494, -2140, 6679) &&
+              vm.runtime().write16(kravitch_record + 0x24U, 0xc102U) &&
+              vm.applyAgentMissionNpcOverrides(0U, true, profile) &&
+              vm.runtime().read16(kravitch_record + 0x24U,
+                                  maintained_kravitch_attributes) &&
+              maintained_kravitch_attributes == 0xc102U &&
+              seed_spawn_record(kravitch_slot, 53U, -1495, -2140, 6679),
+          "Kravitch maintenance accepted a neighbouring live position");
+
+  constexpr std::uint32_t marcos_slot = 48U;
+  constexpr std::uint32_t marcos_record =
+      object_records + marcos_slot * object_record_stride;
+  require(seed_spawn_record(marcos_slot, 11U, 5802, 0, 15845) &&
+              vm.runtime().write16(mission_index_address, 3U),
+          "Could not prepare the Agent Marcos spawn fixture");
+  vm.runtime().setRegister(2U, marcos_record);
+  vm.runtime().setRegister(3U, 0x4104U);
+  vm.runtime().setRegister(16U, marcos_slot);
+  const auto marcos_spawn = vm.invoke(spawn_boundary, {});
+  std::uint32_t marcos_attributes{};
+  require(marcos_spawn.completed() &&
+              vm.runtime().read32(marcos_record + 0x24U, marcos_attributes) &&
+              marcos_attributes == 0x5104U,
+          "Agent Marcos did not retain his .45 plus ordinary-frag flag");
+
+  vm.runtime().setRegister(2U, marcos_record);
+  vm.runtime().setRegister(3U, 0x6114U);
+  vm.runtime().setRegister(16U, marcos_slot);
+  const auto migrated_marcos_spawn = vm.invoke(spawn_boundary, {});
+  require(migrated_marcos_spawn.completed() &&
+              vm.runtime().read32(marcos_record + 0x24U, marcos_attributes) &&
+              marcos_attributes == 0x5113U,
+          "Agent Marcos retained a transient gas projectile after spawn");
+
+  constexpr std::uint32_t marcos_definitions = 0x801fb000U;
+  constexpr std::uint32_t marcos_instance = 0x801fb800U;
+  constexpr std::uint32_t marcos_ai = 0x801fb900U;
+  std::uint16_t maintained_marcos_attributes{};
+  std::uint8_t marcos_grenade_counter{};
+  require(seed_spawn_record(marcos_slot, 11U, 5825, 0, 15855) &&
+              vm.runtime().write32(profile.object_count, 64U) &&
+              vm.runtime().write32(profile.object_definitions_pointer,
+                                   marcos_definitions) &&
+              vm.runtime().write32(profile.object_definition_count, 16U) &&
+              vm.runtime().write16(marcos_definitions + 11U * 0x14U, 1U) &&
+              vm.runtime().write32(profile.object_handler_table + 4U,
+                                   legacy_common_npc_handler) &&
+              vm.runtime().write32(marcos_record + 0x34U, marcos_instance) &&
+              vm.runtime().write16(marcos_instance + 2U, marcos_slot) &&
+              vm.runtime().write32(marcos_instance + 0x1cU, marcos_ai) &&
+              vm.runtime().write8(marcos_ai + 0x4aU, 0U) &&
+              vm.runtime().write16(marcos_record + 0x24U, 0x4104U) &&
+              vm.applyAgentMissionNpcOverrides(3U, true, profile) &&
+              vm.runtime().read16(marcos_record + 0x24U,
+                                  maintained_marcos_attributes) &&
+              vm.runtime().read8(marcos_ai + 0x4aU, marcos_grenade_counter) &&
+              maintained_marcos_attributes == 0x5104U &&
+              marcos_grenade_counter == 0x24U &&
+              vm.applyAgentMissionNpcOverrides(3U, false, profile) &&
+              vm.runtime().read16(marcos_record + 0x24U,
+                                  maintained_marcos_attributes) &&
+              maintained_marcos_attributes == 0x4104U,
+          "Marcos's maintained Agent weapon was not reversible");
+
+  require(seed_spawn_record(marcos_slot, 11U, 5824, 0, 15855) &&
+              vm.runtime().write16(marcos_record + 0x24U, 0x4104U) &&
+              vm.runtime().write8(marcos_ai + 0x4aU, 0U) &&
+              vm.applyAgentMissionNpcOverrides(3U, true, profile) &&
+              vm.runtime().read16(marcos_record + 0x24U,
+                                  maintained_marcos_attributes) &&
+              vm.runtime().read8(marcos_ai + 0x4aU, marcos_grenade_counter) &&
+              maintained_marcos_attributes == 0x4104U &&
+              marcos_grenade_counter == 0U &&
+              seed_spawn_record(marcos_slot, 11U, 5825, 0, 15855),
+          "Marcos maintenance accepted a neighbouring live position");
+
+  require(vm.runtime().write8(marcos_ai + 0x4aU, 0U) &&
+              vm.runtime().write16(marcos_record + 0x24U, 0x6114U) &&
+              vm.applyAgentMissionNpcOverrides(3U, true, profile),
+          "Could not maintain the live Agent Marcos grenade override");
+  require(
+      vm.runtime().read16(marcos_record + 0x24U,
+                          maintained_marcos_attributes) &&
+          vm.runtime().read8(marcos_ai + 0x4aU, marcos_grenade_counter) &&
+          maintained_marcos_attributes == 0x5113U &&
+          marcos_grenade_counter == 0x24U,
+      "Agent Marcos maintenance kept gas or missed the faster frag cadence");
+
+  constexpr std::uint32_t elite_guard_slot = 20U;
+  constexpr std::uint32_t elite_guard_definition = 5U;
+  constexpr std::uint32_t elite_guard_record =
+      object_records + elite_guard_slot * object_record_stride;
+  constexpr std::uint32_t elite_guard_instance = 0x801fba00U;
+  constexpr std::uint32_t elite_guard_health = 0x801fbb00U;
+  constexpr std::uint32_t elite_guard_ai = 0x801fbc00U;
+  constexpr std::uint16_t elite_guard_attributes = 0x1006U;
+  require(
+      vm.runtime().write32(elite_guard_record, elite_guard_definition) &&
+          vm.runtime().write16(elite_guard_record + 0x24U,
+                               elite_guard_attributes) &&
+          vm.runtime().write32(elite_guard_record + 0x34U,
+                               elite_guard_instance) &&
+          vm.runtime().write16(elite_guard_instance + 2U, elite_guard_slot) &&
+          vm.runtime().write32(elite_guard_instance + 0x18U,
+                               elite_guard_health) &&
+          vm.runtime().write32(elite_guard_instance + 0x1cU, elite_guard_ai) &&
+          vm.runtime().write16(elite_guard_health + 8U, 100U) &&
+          vm.runtime().write8(elite_guard_ai + 0x4aU, 0U) &&
+          vm.runtime().write16(
+              marcos_definitions + elite_guard_definition * 0x14U, 1U) &&
+          vm.applyAgentMissionNpcOverrides(15U, true, profile),
+      "Could not maintain the live Agent elite-guard cadence");
+  std::uint8_t elite_guard_counter{};
+  std::uint16_t preserved_elite_guard_attributes{};
+  require(vm.runtime().read8(elite_guard_ai + 0x4aU, elite_guard_counter) &&
+              elite_guard_counter == 0x0cU &&
+              vm.runtime().read16(elite_guard_record + 0x24U,
+                                  preserved_elite_guard_attributes) &&
+              preserved_elite_guard_attributes == elite_guard_attributes,
+          "Elite-guard cadence changed weapon attributes or missed its floor");
+
+  require(vm.runtime().write8(elite_guard_ai + 0x4aU, 0U) &&
+              vm.runtime().write16(elite_guard_record + 0x24U, 0x3006U) &&
+              vm.applyAgentMissionNpcOverrides(15U, true, profile) &&
+              vm.runtime().read8(elite_guard_ai + 0x4aU, elite_guard_counter) &&
+              elite_guard_counter == 0U &&
+              vm.runtime().write16(elite_guard_record + 0x24U,
+                                   elite_guard_attributes) &&
+              vm.runtime().write16(elite_guard_health + 8U, 0U) &&
+              vm.applyAgentMissionNpcOverrides(15U, true, profile) &&
+              vm.runtime().read8(elite_guard_ai + 0x4aU, elite_guard_counter) &&
+              elite_guard_counter == 0U &&
+              vm.runtime().write16(elite_guard_health + 8U, 100U) &&
+              vm.applyAgentMissionNpcOverrides(15U, false, profile) &&
+              vm.runtime().read8(elite_guard_ai + 0x4aU, elite_guard_counter) &&
+              elite_guard_counter == 0U,
+          "Elite-guard cadence leaked to gas, dead, or disabled actors");
+
+  constexpr auto gabrek = sf::game::agent_gabrek_identity;
+  constexpr std::uint32_t gabrek_record =
+      object_records + gabrek.slot * object_record_stride;
+  require(seed_spawn_record(gabrek.slot, gabrek.definition,
+                            gabrek.authored_x + 1, gabrek.authored_y,
+                            gabrek.authored_z) &&
+              vm.runtime().write16(mission_index_address, gabrek.mission),
+          "Could not prepare the guarded Agent Gabrek spawn fixture");
+  vm.runtime().setRegister(2U, gabrek_record);
+  vm.runtime().setRegister(3U, gabrek.retail_attributes);
+  vm.runtime().setRegister(16U, gabrek.slot);
+  const auto rejected_gabrek_spawn = vm.invoke(spawn_boundary, {});
+  std::uint32_t gabrek_attributes{};
+  require(rejected_gabrek_spawn.completed() &&
+              vm.runtime().read32(gabrek_record + 0x24U, gabrek_attributes) &&
+              gabrek_attributes == gabrek.retail_attributes,
+          "Agent Gabrek spawn accepted a mismatched authored position");
+
+  require(seed_spawn_record(gabrek.slot, gabrek.definition, gabrek.authored_x,
+                            gabrek.authored_y, gabrek.authored_z),
+          "Could not restore the exact Agent Gabrek identity");
+  vm.runtime().setRegister(2U, gabrek_record);
+  vm.runtime().setRegister(3U, gabrek.retail_attributes);
+  vm.runtime().setRegister(16U, gabrek.slot);
+  const auto gabrek_spawn = vm.invoke(spawn_boundary, {});
+  require(gabrek_spawn.completed() &&
+              vm.runtime().read32(gabrek_record + 0x24U, gabrek_attributes) &&
+              gabrek_attributes == 0xd109U,
+          "Exact Agent Gabrek did not receive the M-16 plus frag grenades");
+
+  constexpr sf::game::LegacyNativePoint gabrek_live_position{-817, 0, -7044};
+  require(seed_spawn_record(gabrek.slot, gabrek.definition,
+                            gabrek_live_position.x, gabrek_live_position.y,
+                            gabrek_live_position.z) &&
+              vm.runtime().write16(gabrek_record + 0x24U,
+                                   gabrek.retail_attributes) &&
+              vm.runtime().write32(profile.object_count, 200U) &&
+              vm.runtime().write32(profile.object_definition_count, 64U) &&
+              vm.runtime().write16(
+                  marcos_definitions + gabrek.definition * 0x14U, 1U) &&
+              vm.applyAgentMissionNpcOverrides(gabrek.mission, true, profile),
+          "Could not apply Gabrek's maintained Agent attributes");
+  std::uint16_t maintained_gabrek_attributes{};
+  require(vm.runtime().read16(gabrek_record + 0x24U,
+                              maintained_gabrek_attributes) &&
+              maintained_gabrek_attributes == 0xd109U &&
+              vm.applyAgentMissionNpcOverrides(gabrek.mission, false,
+                                               profile) &&
+              vm.runtime().read16(gabrek_record + 0x24U,
+                                  maintained_gabrek_attributes) &&
+              maintained_gabrek_attributes == gabrek.retail_attributes,
+          "Gabrek's maintained Agent-only attributes were not reversible");
+
+  require(seed_spawn_record(gabrek.slot, gabrek.definition,
+                            gabrek_live_position.x + 1,
+                            gabrek_live_position.y,
+                            gabrek_live_position.z) &&
+              vm.runtime().write16(gabrek_record + 0x24U,
+                                   gabrek.retail_attributes) &&
+              vm.applyAgentMissionNpcOverrides(gabrek.mission, true,
+                                               profile) &&
+              vm.runtime().read16(gabrek_record + 0x24U,
+                                  maintained_gabrek_attributes) &&
+              maintained_gabrek_attributes == gabrek.retail_attributes &&
+              seed_spawn_record(gabrek.slot, gabrek.definition,
+                                gabrek_live_position.x,
+                                gabrek_live_position.y,
+                                gabrek_live_position.z),
+          "Gabrek maintenance accepted a neighbouring live position");
+
+  require(vm.runtime().write16(marcos_definitions + 28U * 0x14U, 1U) &&
+              vm.runtime().write16(mission_index_address, 12U),
+          "Could not prepare the Agent chapel-guard definitions");
+  for (const auto &identity : sf::game::agent_chapel_guard_identities) {
+    const auto record = object_records + identity.slot * object_record_stride;
+    require(seed_spawn_record(identity.slot, identity.definition,
+                              identity.authored_x, identity.authored_y,
+                              identity.authored_z),
+            "Could not seed an exact chapel-guard identity");
+    vm.runtime().setRegister(2U, record);
+    vm.runtime().setRegister(3U, identity.retail_attributes);
+    vm.runtime().setRegister(16U, identity.slot);
+    const auto spawn = vm.invoke(spawn_boundary, {});
+    std::uint32_t attributes{};
+    require(spawn.completed() &&
+                vm.runtime().read32(record + 0x24U, attributes) &&
+                attributes == sf::game::agentChapelGuardAttributes(
+                                  identity.retail_attributes,
+                                  identity.retail_attributes, true),
+            "An exact Agent chapel guard did not receive a shotgun");
+  }
+
+  const auto &guarded_chapel_identity =
+      sf::game::agent_chapel_guard_identities.back();
+  const auto guarded_chapel_record =
+      object_records + guarded_chapel_identity.slot * object_record_stride;
+  require(seed_spawn_record(guarded_chapel_identity.slot,
+                            guarded_chapel_identity.definition,
+                            guarded_chapel_identity.authored_x,
+                            guarded_chapel_identity.authored_y,
+                            guarded_chapel_identity.authored_z + 1),
+          "Could not corrupt the chapel-guard identity fixture");
+  vm.runtime().setRegister(2U, guarded_chapel_record);
+  vm.runtime().setRegister(3U, guarded_chapel_identity.retail_attributes);
+  vm.runtime().setRegister(16U, guarded_chapel_identity.slot);
+  const auto rejected_chapel_spawn = vm.invoke(spawn_boundary, {});
+  std::uint32_t guarded_chapel_attributes{};
+  require(rejected_chapel_spawn.completed() &&
+              vm.runtime().read32(guarded_chapel_record + 0x24U,
+                                  guarded_chapel_attributes) &&
+              guarded_chapel_attributes ==
+                  guarded_chapel_identity.retail_attributes,
+          "Agent chapel spawn accepted a mismatched authored position");
+
+  constexpr std::array<std::uint32_t, 3U> chapel_instances{
+      0x801f9000U, 0x801f9040U, 0x801f9080U};
+  constexpr std::array<sf::game::LegacyNativePoint, 3U>
+      chapel_live_positions{
+          sf::game::LegacyNativePoint{21528, -18, 0},
+          sf::game::LegacyNativePoint{-3368, -3079, -6424},
+          sf::game::LegacyNativePoint{21528, -18, 0},
+      };
+  for (std::size_t index = 0U;
+       index < sf::game::agent_chapel_guard_identities.size(); ++index) {
+    const auto &identity = sf::game::agent_chapel_guard_identities[index];
+    const auto record = object_records + identity.slot * object_record_stride;
+    require(seed_spawn_record(identity.slot, identity.definition,
+                              chapel_live_positions[index].x,
+                              chapel_live_positions[index].y,
+                              chapel_live_positions[index].z) &&
+                vm.runtime().write16(record + 0x24U,
+                                     identity.retail_attributes) &&
+                vm.runtime().write32(record + 0x34U,
+                                     chapel_instances[index]) &&
+                vm.runtime().write16(chapel_instances[index] + 2U,
+                                     identity.slot),
+            "Could not seed a live chapel-guard identity");
+  }
+  require(vm.applyAgentMissionNpcOverrides(12U, true, profile),
+          "Could not maintain the exact Agent chapel guards");
+  for (const auto &identity : sf::game::agent_chapel_guard_identities) {
+    const auto record = object_records + identity.slot * object_record_stride;
+    std::uint16_t attributes{};
+    require(vm.runtime().read16(record + 0x24U, attributes) &&
+                attributes == sf::game::agentChapelGuardAttributes(
+                                  identity.retail_attributes,
+                                  identity.retail_attributes, true),
+            "Maintained Agent chapel guard lost its shotgun");
+  }
+  require(vm.applyAgentMissionNpcOverrides(12U, false, profile),
+          "Could not restore the chapel guards' retail weapons");
+  for (const auto &identity : sf::game::agent_chapel_guard_identities) {
+    const auto record = object_records + identity.slot * object_record_stride;
+    std::uint16_t attributes{};
+    require(vm.runtime().read16(record + 0x24U, attributes) &&
+                attributes == identity.retail_attributes,
+            "Disabling Agent did not restore a chapel guard's weapon");
+  }
+
+  const auto rejected_chapel_instance = chapel_instances.front();
+  const auto &rejected_chapel_identity =
+      sf::game::agent_chapel_guard_identities.front();
+  const auto rejected_chapel_record =
+      object_records + rejected_chapel_identity.slot * object_record_stride;
+  std::uint16_t rejected_chapel_attributes{};
+  require(vm.runtime().write16(rejected_chapel_record + 0x24U,
+                               rejected_chapel_identity.retail_attributes) &&
+              vm.runtime().write16(rejected_chapel_instance + 2U,
+                                   rejected_chapel_identity.slot + 1U) &&
+              vm.applyAgentMissionNpcOverrides(12U, true, profile) &&
+              vm.runtime().read16(rejected_chapel_record + 0x24U,
+                                  rejected_chapel_attributes) &&
+              rejected_chapel_attributes ==
+                  rejected_chapel_identity.retail_attributes &&
+              vm.runtime().write16(rejected_chapel_instance + 2U,
+                                   rejected_chapel_identity.slot),
+          "Chapel maintenance accepted an instance owned by another slot");
+
+  constexpr std::uint32_t aramov_boundary = 0x8007157cU;
+  constexpr std::array aramov_boundary_words{
+      0x0c01bf12U,
+      0x02002021U,
+  };
+  constexpr std::uint32_t aramov_records_pointer = 0x80115cccU;
+  constexpr std::uint32_t aramov_count_address = 0x80116a5cU;
+  constexpr std::uint32_t aramov_definitions_pointer = 0x80116b98U;
+  constexpr std::uint32_t aramov_definition_count = 0x80116b14U;
+  constexpr std::uint32_t aramov_records = 0x801e0000U;
+  constexpr std::uint32_t aramov_definitions = 0x801e8000U;
+  constexpr std::uint32_t aramov_slot = 13U;
+  constexpr std::uint32_t aramov_record =
+      aramov_records + aramov_slot * object_record_stride;
+  constexpr std::uint32_t aramov_instance = 0x801f8000U;
+  constexpr std::uint32_t aramov_motion = 0x801f8100U;
+  constexpr std::uint32_t aramov_definition = 6U;
+  require(vm.loadOverlay(aramov_boundary,
+                         instructionBytes(aramov_boundary_words)) &&
+              vm.runtime().write16(mission_index_address, 2U) &&
+              vm.runtime().write32(aramov_records_pointer, aramov_records) &&
+              vm.runtime().write32(aramov_count_address, 66U) &&
+              vm.runtime().write32(aramov_definitions_pointer,
+                                   aramov_definitions) &&
+              vm.runtime().write32(aramov_definition_count, 16U) &&
+              vm.runtime().write32(aramov_record, aramov_definition) &&
+              vm.runtime().write32(aramov_record + 0x18U,
+                                   std::bit_cast<std::uint32_t>(-2749)) &&
+              vm.runtime().write32(aramov_record + 0x1cU, 10U) &&
+              vm.runtime().write32(aramov_record + 0x20U, 9958U) &&
+              vm.runtime().write16(aramov_record + 0x24U, 0x4302U) &&
+              vm.runtime().write32(aramov_record + 0x34U, aramov_instance) &&
+              vm.runtime().write16(aramov_definitions +
+                                       aramov_definition *
+                                           static_cast<std::uint32_t>(0x14U),
+                                   2U) &&
+              vm.runtime().write16(aramov_instance + 2U, aramov_slot) &&
+              vm.runtime().write32(aramov_instance + 0x0cU, aramov_motion) &&
+              vm.runtime().write32(aramov_motion + 0x50U, 120U) &&
+              vm.runtime().write32(
+                  aramov_motion + 0x58U,
+                  std::bit_cast<std::uint32_t>(std::int32_t{-120})),
+          "Could not prepare the Agent Aramov locomotion fixture");
+  vm.runtime().setRegister(16U, aramov_instance);
+  const auto aramov_step = vm.invoke(aramov_boundary, {}, 1U);
+  std::uint32_t aramov_delta_x{};
+  std::uint32_t aramov_delta_z{};
+  require(aramov_step.host_calls == 1U &&
+              vm.runtime().read32(aramov_motion + 0x50U, aramov_delta_x) &&
+              vm.runtime().read32(aramov_motion + 0x58U, aramov_delta_z) &&
+              std::bit_cast<std::int32_t>(aramov_delta_x) == 150 &&
+              std::bit_cast<std::int32_t>(aramov_delta_z) == -150,
+          "Agent Aramov final horizontal locomotion was not scaled");
+
+  const auto rounded = damage(player_slot, 5);
+  const auto enemy = damage(8, 5);
+  const auto zero = damage(player_slot, 0);
+  const auto negative = damage(player_slot, -1);
+  const auto saturated =
+      damage(player_slot, std::numeric_limits<std::int16_t>::max());
+  require(rounded.completed() && rounded.return_value == 7U &&
+              rounded.host_calls == 1U && enemy.completed() &&
+              enemy.return_value == 5U && zero.completed() &&
+              zero.return_value == 0U && negative.completed() &&
+              negative.return_value ==
+                  std::numeric_limits<std::uint32_t>::max() &&
+              saturated.completed() &&
+              saturated.return_value ==
+                  static_cast<std::uint32_t>(
+                      std::numeric_limits<std::int16_t>::max()),
+          "Agent damage scaling, targeting, or saturation mismatch");
+
+  constexpr std::int16_t ballistic_damage_type = 0x0892;
+  constexpr std::int16_t direct_sniper_damage_type = 0x000f;
+  sf::game::LegacyGameplayBridgeState threat_state;
+  threat_state.objects.resize(8U);
+  threat_state.tracked_slots.fill(-1);
+  auto &threat_shooter = threat_state.objects[shooter_slot];
+  threat_shooter.slot = shooter_slot;
+  threat_shooter.class_id = 1;
+  threat_shooter.object_handler = legacy_common_npc_handler;
+  threat_shooter.health = 100;
+  threat_shooter.instance = shooter_instance;
+  threat_shooter.target_controller = 0x801fd200U;
+  threat_shooter.ai_controller = shooter_ai;
+  threat_shooter.resident = true;
+  threat_shooter.simulated = true;
+  threat_shooter.ai_flags = 0x200U;
+  threat_shooter.has_target = true;
+  threat_shooter.target_slot = player_slot;
+  threat_shooter.ai_archetype = 0x4fU;
+  threat_shooter.ai_combat_mode = 2U;
+  threat_shooter.attributes = 12U;
+  threat_shooter.danger_q12 = 1U;
+  require(vm.updateAgentHeadshotThreat(threat_state, player_slot, profile) &&
+              !vm.agentHeadshotThreatActive(),
+          "An untracked sniper armed a headshot outside retail Danger");
+  threat_state.tracked_slots[0] = shooter_slot;
+  threat_shooter.danger_q12 = 0xffffc000U;
+  require(
+      vm.updateAgentHeadshotThreat(threat_state, player_slot, profile) &&
+          !vm.agentHeadshotThreatActive(),
+      "An assigned sniper armed a headshot before retail Danger acquired Gabe");
+  threat_shooter.danger_q12 = 1U;
+
+  const auto arm_headshot = [&](std::uint8_t weapon, std::uint32_t frame) {
+    vm.clearAgentHeadshotThreat();
+    threat_shooter.attributes = weapon;
+    require(
+        vm.runtime().write8(shooter_record + 0x24U, weapon) &&
+            vm.runtime().write8(shooter_ai + 0x47U, 0x4fU) &&
+            vm.runtime().write32(gameplay_frame, frame) &&
+            vm.updateAgentHeadshotThreat(threat_state, player_slot, profile),
+        "Could not evaluate the Agent sniper engagement");
+    return vm.agentHeadshotThreatActive();
+  };
+  const auto find_arming_frame = [&](std::uint8_t weapon) {
+    for (auto frame = std::uint32_t{}; frame < 4096U; ++frame) {
+      if (arm_headshot(weapon, frame)) {
+        return std::optional{frame};
+      }
+    }
+    return std::optional<std::uint32_t>{};
+  };
+
+  require(arm_headshot(12U, 0U),
+          "Tracked SVD did not arm after retail Danger acquired Gabe");
+  const auto released_ready_frame = vm.agentHeadshotThreatReadyFrame();
+  threat_shooter.danger_q12 = 0U;
+  require(
+      vm.runtime().write32(gameplay_frame, released_ready_frame) &&
+          vm.updateAgentHeadshotThreat(threat_state, player_slot, profile) &&
+          !vm.agentHeadshotThreatActive(),
+      "Released retail Danger did not cancel the active headshot warning");
+  const auto released_hit = damage(player_slot, 5, shooter_slot, shooter_slot,
+                                   direct_sniper_damage_type);
+  require(released_hit.completed() && released_hit.return_value == 7U,
+          "A released sniper delivered a stale one-shot kill");
+  threat_shooter.danger_q12 = 1U;
+  require(arm_headshot(12U, released_ready_frame + 1U),
+          "Reacquired SVD did not start a new headshot warning");
+  threat_state.tracked_slots[0] = -1;
+  require(vm.updateAgentHeadshotThreat(threat_state, player_slot, profile) &&
+              !vm.agentHeadshotThreatActive(),
+          "Removing a sniper from retail tracking left its warning active");
+  threat_state.tracked_slots[0] = shooter_slot;
+
+  for (const auto weapon : {std::uint8_t{12U}, std::uint8_t{13U}}) {
+    require(arm_headshot(weapon, 0U),
+            "A new Agent sniper engagement did not arm a headshot");
+  }
+
+  const auto svd_headshot_frame = find_arming_frame(12U);
+  threat_shooter.class_id = 0x35;
+  require(arm_headshot(13U, 0U),
+          "A common-handler hostile sniper was rejected by its class id");
+  threat_shooter.class_id = 1;
+
+  require(svd_headshot_frame && vm.agentHeadshotThreatActive() &&
+              vm.agentHeadshotThreatShooter() == shooter_slot,
+          "Hostile SVD never armed the deterministic Agent headshot");
+  const auto svd_ready_frame = vm.agentHeadshotThreatReadyFrame();
+  const auto warned_svd_hit =
+      damage(player_slot, 5, source_slot, shooter_slot, ballistic_damage_type);
+  require(warned_svd_hit.completed() && warned_svd_hit.return_value == 7U &&
+              vm.agentHeadshotThreatActive(),
+          "SVD headshot killed before its visible warning elapsed");
+  require(vm.runtime().write32(gameplay_frame, svd_ready_frame - 1U),
+          "Could not advance the SVD warning fixture");
+  const auto early_svd_hit =
+      damage(player_slot, 5, source_slot, shooter_slot, ballistic_damage_type);
+  require(early_svd_hit.completed() && early_svd_hit.return_value == 7U &&
+              vm.agentHeadshotThreatActive(),
+          "SVD headshot ignored its one-second telegraph");
+  require(vm.runtime().write32(gameplay_frame, svd_ready_frame),
+          "Could not finish the SVD warning fixture");
+  const auto lethal_svd_hit = damage(player_slot, 90, shooter_slot,
+                                     shooter_slot, direct_sniper_damage_type);
+  require(lethal_svd_hit.completed() &&
+              lethal_svd_hit.return_value ==
+                  static_cast<std::uint32_t>(
+                      std::numeric_limits<std::int16_t>::max()) &&
+              !vm.agentHeadshotThreatActive(),
+          "Warned SVD headshot was not a guaranteed one-shot kill");
+  require(
+      vm.runtime().write32(gameplay_frame, svd_ready_frame + 1U) &&
+          vm.updateAgentHeadshotThreat(threat_state, player_slot, profile) &&
+          !vm.agentHeadshotThreatActive(),
+      "One continuous SVD engagement armed more than one headshot");
+
+  require(arm_headshot(12U, *svd_headshot_frame),
+          "Could not re-arm the ballistic-only SVD fixture");
+  const auto non_ballistic =
+      damage(player_slot, 5, source_slot, shooter_slot, 3);
+  require(non_ballistic.completed() && non_ballistic.return_value == 7U &&
+              vm.agentHeadshotThreatActive() &&
+              vm.runtime().write32(gameplay_frame,
+                                   vm.agentHeadshotThreatReadyFrame()),
+          "Non-ballistic damage consumed the active headshot warning");
+  const auto unrelated_owner =
+      damage(player_slot, 5, 6, 5, ballistic_damage_type);
+  require(unrelated_owner.completed() && unrelated_owner.return_value == 7U &&
+              vm.agentHeadshotThreatActive(),
+          "Unrelated collision ownership consumed a headshot warning");
+  const auto owner_fallback =
+      damage(player_slot, 5, 6, shooter_slot, ballistic_damage_type);
+  require(owner_fallback.completed() &&
+              owner_fallback.return_value ==
+                  static_cast<std::uint32_t>(
+                      std::numeric_limits<std::int16_t>::max()) &&
+              !vm.agentHeadshotThreatActive(),
+          "Exact active-shooter ownership did not deliver its headshot");
+
+  const auto sniper_headshot_frame = find_arming_frame(13U);
+  require(sniper_headshot_frame && vm.agentHeadshotThreatActive(),
+          "Hostile sniper rifle never armed an Agent headshot");
+  require(
+      vm.runtime().write32(gameplay_frame, vm.agentHeadshotThreatReadyFrame()),
+      "Could not finish the sniper warning fixture");
+  const auto lethal_sniper_hit = damage(
+      player_slot, 5, source_slot, shooter_slot, direct_sniper_damage_type);
+  require(lethal_sniper_hit.completed() &&
+              lethal_sniper_hit.return_value ==
+                  static_cast<std::uint32_t>(
+                      std::numeric_limits<std::int16_t>::max()) &&
+              !vm.agentHeadshotThreatActive(),
+          "Warned sniper-rifle headshot was not a guaranteed one-shot kill");
+
+  threat_shooter.class_id = 1;
+  threat_shooter.attributes = 12U;
+  // PARK source 20 acquires Gabe while using this even retail archetype and
+  // combat mode zero. Target ownership, not archetype parity, is the
+  // authoritative hostile-intent signal for retail snipers.
+  threat_shooter.ai_archetype = 0x62U;
+  threat_shooter.ai_combat_mode = 0U;
+  threat_shooter.ai_flags = 0x822a00U;
+  threat_shooter.target_flags = 0x31U;
+  vm.clearAgentHeadshotThreat();
+  require(
+      vm.runtime().write8(shooter_record + 0x24U, 12U) &&
+          vm.runtime().write8(shooter_ai + 0x47U, 0x62U) &&
+          vm.updateAgentHeadshotThreat(threat_state, player_slot, profile) &&
+          vm.agentHeadshotThreatActive(),
+      "PARK SVD was rejected by its retail archetype/combat transition");
+  const auto park_sniper_early_hit =
+      damage(player_slot, 5, shooter_slot, shooter_slot, ballistic_damage_type);
+  require(park_sniper_early_hit.completed() &&
+              park_sniper_early_hit.return_value == 7U &&
+              vm.agentHeadshotThreatActive(),
+          "PARK SVD lost its visible warning before the lethal shot");
+
+  threat_shooter.ai_archetype = 0x4fU;
+  require(vm.runtime().write8(shooter_ai + 0x47U, 0x4fU),
+          "Could not restore the hostile sniper archetype");
+  const auto require_ineligible = [&](const char *message) {
+    vm.clearAgentHeadshotThreat();
+    require(vm.updateAgentHeadshotThreat(threat_state, player_slot, profile) &&
+                !vm.agentHeadshotThreatActive(),
+            message);
+  };
+  threat_shooter.simulated = false;
+  require_ineligible("A non-simulated sniper armed an Agent headshot");
+  threat_shooter.simulated = true;
+  threat_shooter.target_flags = 0x04U;
+  require_ineligible("A sniper with an invalid target armed a headshot");
+  threat_shooter.target_flags = 0U;
+  threat_shooter.object_handler = 0x80060000U;
+  require_ineligible("A non-common NPC handler armed an Agent headshot");
+  threat_shooter.object_handler = legacy_common_npc_handler;
+  threat_shooter.instance_state[3] = 0x02U;
+  require_ineligible("A dormant sniper armed an Agent headshot");
+  threat_shooter.instance_state[3] = 0U;
+  threat_shooter.instance_flags =
+      sf::game::LegacyObjectBridgeState::destroyed_latch;
+  require_ineligible("A destroyed-latched sniper armed an Agent headshot");
+  threat_shooter.instance_flags = 0U;
+
+  // Renderer residency may change while the guest AI remains simulated. Such
+  // a streaming edge must not restart the already visible warning.
+  constexpr std::uint32_t stream_frame = 0x200U;
+  threat_shooter.resident = false;
+  vm.clearAgentHeadshotThreat();
+  require(
+      vm.runtime().write32(gameplay_frame, stream_frame) &&
+          vm.updateAgentHeadshotThreat(threat_state, player_slot, profile) &&
+          vm.agentHeadshotThreatActive(),
+      "A simulated sniper disappeared from Agent mode while streaming");
+  const auto stream_ready_frame = vm.agentHeadshotThreatReadyFrame();
+  threat_shooter.resident = true;
+  require(
+      vm.runtime().write32(gameplay_frame, stream_frame + 1U) &&
+          vm.updateAgentHeadshotThreat(threat_state, player_slot, profile) &&
+          vm.agentHeadshotThreatActive() &&
+          vm.agentHeadshotThreatShooter() == shooter_slot &&
+          vm.agentHeadshotThreatReadyFrame() == stream_ready_frame,
+      "Renderer residency restarted the Agent headshot warning");
+
+  vm.clearAgentHeadshotThreat();
+  threat_shooter.attributes = 1U;
+  require(vm.runtime().write8(shooter_record + 0x24U, 1U) &&
+              vm.updateAgentHeadshotThreat(threat_state, player_slot, profile),
+          "Could not restore the ordinary hostile weapon fixture");
+  const auto ordinary_weapon =
+      damage(player_slot, 5, shooter_slot, shooter_slot, ballistic_damage_type);
+  require(ordinary_weapon.completed() && ordinary_weapon.return_value == 7U &&
+              !vm.agentHeadshotThreatActive(),
+          "A non-sniper weapon triggered an Agent headshot");
+
+  auto &second_threat_shooter = threat_state.objects[second_shooter_slot];
+  second_threat_shooter.slot = second_shooter_slot;
+  second_threat_shooter.class_id = 1;
+  second_threat_shooter.object_handler = legacy_common_npc_handler;
+  second_threat_shooter.attributes = 13U;
+  second_threat_shooter.health = 100;
+  second_threat_shooter.instance = second_shooter_instance;
+  second_threat_shooter.target_controller = 0x801fd800U;
+  second_threat_shooter.ai_controller = second_shooter_ai;
+  second_threat_shooter.resident = true;
+  second_threat_shooter.simulated = true;
+  second_threat_shooter.ai_flags = 0x200U;
+  second_threat_shooter.has_target = true;
+  second_threat_shooter.target_slot = player_slot;
+  second_threat_shooter.ai_archetype = 0x4fU;
+  second_threat_shooter.ai_combat_mode = 2U;
+  second_threat_shooter.danger_q12 = 1U;
+  threat_state.tracked_slots[1] = second_shooter_slot;
+  threat_shooter.attributes = 12U;
+  require(vm.runtime().write8(shooter_record + 0x24U, 12U) &&
+              vm.runtime().write8(second_shooter_record + 0x24U, 13U) &&
+              vm.runtime().write8(second_shooter_ai + 0x47U, 0x4fU),
+          "Could not prepare the simultaneous sniper fixture");
+
+  constexpr std::uint32_t multi_sniper_frame = 0x400U;
+  vm.clearAgentHeadshotThreat();
+  require(
+      vm.runtime().write32(gameplay_frame, multi_sniper_frame) &&
+          vm.updateAgentHeadshotThreat(threat_state, player_slot, profile) &&
+          vm.agentHeadshotThreatActive() &&
+          vm.agentHeadshotThreatShooter() == shooter_slot,
+      "The first simultaneous sniper did not arm a headshot");
+  const auto first_multi_ready_frame = vm.agentHeadshotThreatReadyFrame();
+  require(vm.runtime().write32(gameplay_frame, first_multi_ready_frame),
+          "Could not finish the first simultaneous sniper warning");
+  const auto first_multi_headshot = damage(
+      player_slot, 5, shooter_slot, shooter_slot, direct_sniper_damage_type);
+  require(first_multi_headshot.completed() &&
+              first_multi_headshot.return_value ==
+                  static_cast<std::uint32_t>(
+                      std::numeric_limits<std::int16_t>::max()) &&
+              !vm.agentHeadshotThreatActive(),
+          "The first simultaneous sniper did not deliver its headshot");
+
+  require(
+      vm.runtime().write32(gameplay_frame, first_multi_ready_frame + 1U) &&
+          vm.updateAgentHeadshotThreat(threat_state, player_slot, profile) &&
+          vm.agentHeadshotThreatActive() &&
+          vm.agentHeadshotThreatShooter() == second_shooter_slot,
+      "A continuously engaged second sniper was starved after the first");
+  const auto second_multi_ready_frame = vm.agentHeadshotThreatReadyFrame();
+  const auto wrong_shooter_hit = damage(
+      player_slot, 5, shooter_slot, shooter_slot, direct_sniper_damage_type);
+  require(wrong_shooter_hit.completed() &&
+              wrong_shooter_hit.return_value == 7U &&
+              vm.agentHeadshotThreatActive() &&
+              vm.agentHeadshotThreatShooter() == second_shooter_slot,
+          "Damage from another sniper consumed the active headshot warning");
+  require(vm.runtime().write32(gameplay_frame, second_multi_ready_frame),
+          "Could not finish the second simultaneous sniper warning");
+  const auto second_multi_headshot =
+      damage(player_slot, 5, second_shooter_slot, second_shooter_slot,
+             direct_sniper_damage_type);
+  require(second_multi_headshot.completed() &&
+              second_multi_headshot.return_value ==
+                  static_cast<std::uint32_t>(
+                      std::numeric_limits<std::int16_t>::max()) &&
+              !vm.agentHeadshotThreatActive(),
+          "The second simultaneous sniper did not deliver its headshot");
+  require(
+      vm.runtime().write32(gameplay_frame, second_multi_ready_frame + 1U) &&
+          vm.updateAgentHeadshotThreat(threat_state, player_slot, profile) &&
+          !vm.agentHeadshotThreatActive(),
+      "A consumed simultaneous engagement armed more than one headshot");
+
+  // Retail reuses object slots as rooms stream. A new instance in a consumed
+  // slot is a new enemy and must not inherit the previous actor's latch.
+  threat_shooter.instance = recycled_shooter_instance;
+  threat_shooter.target_controller = 0x801fd900U;
+  threat_shooter.ai_controller = recycled_shooter_ai;
+  require(
+      vm.runtime().write32(shooter_record + 0x34U, recycled_shooter_instance) &&
+          vm.runtime().write16(recycled_shooter_instance + 2U,
+                               std::bit_cast<std::uint16_t>(shooter_slot)) &&
+          vm.runtime().write32(recycled_shooter_instance + 0x1cU,
+                               recycled_shooter_ai) &&
+          vm.runtime().write8(recycled_shooter_ai + 0x47U, 0x4fU) &&
+          vm.runtime().write32(gameplay_frame, second_multi_ready_frame + 2U) &&
+          vm.updateAgentHeadshotThreat(threat_state, player_slot, profile) &&
+          vm.agentHeadshotThreatActive() &&
+          vm.agentHeadshotThreatShooter() == shooter_slot,
+      "A recycled sniper slot inherited the previous actor's headshot latch");
+  require(
+      vm.runtime().write32(gameplay_frame, vm.agentHeadshotThreatReadyFrame()),
+      "Could not finish the recycled sniper warning");
+  const auto recycled_headshot = damage(
+      player_slot, 5, shooter_slot, shooter_slot, direct_sniper_damage_type);
+  require(recycled_headshot.completed() &&
+              recycled_headshot.return_value ==
+                  static_cast<std::uint32_t>(
+                      std::numeric_limits<std::int16_t>::max()) &&
+              !vm.agentHeadshotThreatActive(),
+          "The recycled sniper instance did not deliver its own headshot");
+
+  second_threat_shooter.health = 0;
+  threat_shooter.instance = shooter_instance;
+  threat_shooter.target_controller = 0x801fd200U;
+  threat_shooter.ai_controller = shooter_ai;
+  require(vm.runtime().write32(shooter_record + 0x34U, shooter_instance),
+          "Could not restore the primary sniper instance");
+
+  threat_shooter.attributes = 13U;
+  require(arm_headshot(13U, *sniper_headshot_frame) &&
+              vm.setAgentDifficulty(false) && !vm.agentHeadshotThreatActive() &&
+              vm.setAgentDifficulty(true),
+          "Agent headshot threat survived a difficulty reset");
+
+  constexpr std::int16_t cbdc_slot = 16;
+  constexpr std::uint32_t cbdc_definition = 9U;
+  constexpr std::uint32_t cbdc_record =
+      object_records +
+      static_cast<std::uint32_t>(cbdc_slot) * object_record_stride;
+  constexpr std::uint32_t cbdc_instance = 0x801fbe00U;
+  constexpr std::uint32_t timer_handle = 0x801fe020U;
+  constexpr std::uint32_t timer_remaining = 0x801fe024U;
+  constexpr std::uint32_t pending_seconds = 0x8011669cU;
+  constexpr std::uint32_t pending_callback = 0x801166a4U;
+  constexpr std::uint32_t active_callback = 0x80116698U;
+  constexpr std::uint32_t active_setter = 0x8004027cU;
+  constexpr std::uint32_t park_expiry_callback = 0x80146a64U;
+  profile.mission_timer_handle = timer_handle;
+  profile.mission_timer_remaining = timer_remaining;
+  auto friendly_fire_setter_calls = std::uint32_t{};
+  vm.bindHostCall(active_setter, [&](sf::game::LegacyHostCallContext &context) {
+    ++friendly_fire_setter_calls;
+    require(context.write32(timer_remaining, context.argument(0U)),
+            "Could not write the CBDC timer fixture");
+    context.setReturnValue(0U);
+  });
+  const auto seed_cbdc_timer = [&](std::int32_t remaining,
+                                   std::uint32_t callback = 0x80146a64U) {
+    return vm.runtime().write16(timer_handle, 0x0100U) &&
+           vm.runtime().write32(timer_remaining,
+                                std::bit_cast<std::uint32_t>(remaining)) &&
+           vm.runtime().write32(pending_seconds, 1200U) &&
+           vm.runtime().write32(pending_callback, park_expiry_callback) &&
+           vm.runtime().write32(active_callback, callback);
+  };
+  const auto read_timer = [&] {
+    std::uint32_t value{};
+    require(vm.runtime().read32(timer_remaining, value),
+            "Could not read the CBDC timer fixture");
+    return std::bit_cast<std::int32_t>(value);
+  };
+  require(vm.runtime().write16(mission_index_address, 3U) &&
+              vm.runtime().write32(profile.object_count, 200U) &&
+              vm.runtime().write32(profile.object_definitions_pointer,
+                                   marcos_definitions) &&
+              vm.runtime().write32(profile.object_definition_count, 64U) &&
+              vm.runtime().write32(cbdc_record, cbdc_definition) &&
+              vm.runtime().write32(cbdc_record + 0x34U, cbdc_instance) &&
+              vm.runtime().write16(cbdc_instance + 2U,
+                                   static_cast<std::uint16_t>(cbdc_slot)) &&
+              vm.runtime().write16(marcos_definitions + cbdc_definition * 0x14U,
+                                   0x35U) &&
+              vm.runtime().write32(gameplay_frame, 100U) &&
+              seed_cbdc_timer(5000),
+          "Could not seed the CBDC friendly-fire fixture");
+
+  const auto first_cbdc_hit = damage(cbdc_slot, 5, player_slot, 6, 3);
+  const auto duplicate_frame_hit = damage(cbdc_slot, 5, 6, player_slot, 3);
+  require(
+      first_cbdc_hit.completed() && first_cbdc_hit.return_value == 5U &&
+          duplicate_frame_hit.completed() &&
+          duplicate_frame_hit.return_value == 5U &&
+          friendly_fire_setter_calls == 0U &&
+          vm.applyAgentMissionTimer(3U, profile) && read_timer() == 4400 &&
+          friendly_fire_setter_calls == 1U &&
+          vm.applyAgentMissionTimer(3U, profile) &&
+          friendly_fire_setter_calls == 1U,
+      "CBDC friendly fire was not deferred, retail-neutral, or once per frame");
+
+  require(vm.runtime().write32(gameplay_frame, 101U) && seed_cbdc_timer(3000),
+          "Could not seed the CBDC snapshot fixture");
+  const auto checkpoint_hit = damage(cbdc_slot, 1, player_slot, player_slot);
+  const auto checkpoint = vm.captureSnapshot();
+  require(checkpoint_hit.completed() && checkpoint_hit.return_value == 1U &&
+              checkpoint.agent_cbdc_friendly_fire_pending_penalties == 1U &&
+              vm.applyAgentMissionTimer(3U, profile) && read_timer() == 2400 &&
+              friendly_fire_setter_calls == 2U &&
+              vm.restoreSnapshot(checkpoint) && read_timer() == 3000 &&
+              vm.applyAgentMissionTimer(3U, profile) && read_timer() == 2400 &&
+              friendly_fire_setter_calls == 3U,
+          "CBDC deferred penalty did not replay deterministically");
+
+  require(vm.runtime().write32(gameplay_frame, 102U) &&
+              seed_cbdc_timer(3000, 0x80146eb0U),
+          "Could not seed the unrelated active-timer fixture");
+  const auto wrong_timer_hit = damage(cbdc_slot, 1, player_slot, player_slot);
+  require(wrong_timer_hit.completed() &&
+              vm.applyAgentMissionTimer(3U, profile) && read_timer() == 3000 &&
+              friendly_fire_setter_calls == 3U &&
+              vm.runtime().write32(active_callback, park_expiry_callback) &&
+              vm.applyAgentMissionTimer(3U, profile) &&
+              friendly_fire_setter_calls == 3U,
+          "CBDC penalty leaked into an unrelated or later timer");
+
+  require(vm.runtime().write32(gameplay_frame, 103U) && seed_cbdc_timer(3000) &&
+              damage(cbdc_slot, 1, player_slot, player_slot).completed() &&
+              vm.setAgentDifficulty(false) && vm.setAgentDifficulty(true) &&
+              vm.applyAgentMissionTimer(3U, profile) && read_timer() == 3000 &&
+              friendly_fire_setter_calls == 3U,
+          "Disabling Agent did not clear the deferred CBDC penalty");
+
+  require(vm.runtime().write32(player_pointer, 0x7ffffffcU),
+          "Could not invalidate the Agent player pointer fixture");
+  const auto invalid_player = damage(player_slot, 8);
+  require(invalid_player.completed() && invalid_player.return_value == 8U,
+          "Agent hook modified damage without a valid player slot");
+  require(vm.setAgentDifficulty(false) &&
+              vm.runtime().write32(player_pointer, player),
+          "Could not disable Agent difficulty in the VM");
+  const auto disabled_again = damage(player_slot, 8);
+  require(disabled_again.completed() && disabled_again.return_value == 8U,
+          "Agent damage hook did not return to pass-through mode");
+}
+
+void testLegacyPark2FlameLosPolicy() {
+  constexpr auto profile = sf::game::syphonFilterUsaV11Park2FlameLosProfile();
+  const auto suppressed =
+      [&](std::optional<bool> clear, std::uint32_t return_address,
+          std::uint32_t call_instruction, std::uint32_t delay_instruction,
+          std::uint32_t event_type, std::uint32_t event_player,
+          std::uint32_t current_player) {
+        return sf::game::legacyPark2FlameEventSuppressed(
+            clear, return_address, call_instruction, delay_instruction,
+            event_type, profile.event_mode, profile.event_id, event_player,
+            current_player, profile);
+      };
+
+  constexpr std::uint32_t player_slot = 7U;
+  require(suppressed(false, profile.return_addresses[0],
+                     profile.call_instruction, profile.delay_instruction,
+                     profile.event_type, player_slot, player_slot) &&
+              suppressed(false, profile.return_addresses[1],
+                         profile.call_instruction, profile.delay_instruction,
+                         profile.event_type, player_slot, player_slot),
+          "Blocked PARK2 HANS flame did not suppress both exact events");
+  require(!suppressed(std::nullopt, profile.return_addresses[0],
+                      profile.call_instruction, profile.delay_instruction,
+                      profile.event_type, player_slot, player_slot) &&
+              !suppressed(true, profile.return_addresses[0],
+                          profile.call_instruction, profile.delay_instruction,
+                          profile.event_type, player_slot, player_slot),
+          "Unknown or clear PARK2 flame LOS was not fail-open");
+  require(
+      !suppressed(false, profile.return_addresses[0] + 4U,
+                  profile.call_instruction, profile.delay_instruction,
+                  profile.event_type, player_slot, player_slot) &&
+          !suppressed(false, profile.return_addresses[0],
+                      profile.call_instruction ^ 1U, profile.delay_instruction,
+                      profile.event_type, player_slot, player_slot) &&
+          !suppressed(false, profile.return_addresses[0],
+                      profile.call_instruction, profile.delay_instruction ^ 1U,
+                      profile.event_type, player_slot, player_slot) &&
+          !suppressed(false, profile.return_addresses[0],
+                      profile.call_instruction, profile.delay_instruction,
+                      profile.event_type, player_slot, player_slot + 1U),
+      "Unrelated or mismatched retail event was suppressed by HANS LOS");
+}
+
 void testLegacyGameplayVmContinuousPump() {
   constexpr std::array loop_words{
       encodeI(0x09U, 8U, 8U, 1U),
@@ -6379,6 +8367,11 @@ void testGuestPadBridge() {
               (manual_aim_target_lock.buttons & 0x0800U) == 0U,
           "Retail auto-lock was not isolated from direct manual aim");
 
+  require(sf::game::legacyGrenadeThrowQueueAvailable(true, false) &&
+              !sf::game::legacyGrenadeThrowQueueAvailable(true, true) &&
+              !sf::game::legacyGrenadeThrowQueueAvailable(false, false),
+          "Reliable grenade throw no longer survives the retail ready gate");
+
   input = {};
   input.move = 1.0;
   input.strafe = 1.0;
@@ -6455,6 +8448,9 @@ int main() {
     testLegacyVirtualCd();
     testGuestPadBridge();
     testLegacyGameplayVmBoundary();
+    testLegacyGameplayVmAgentMissionTimers();
+    testLegacyGameplayVmAgentDamageHook();
+    testLegacyPark2FlameLosPolicy();
     testLegacyGameplayVmContinuousPump();
     std::cout << "R3000 runtime tests passed\n";
     return 0;

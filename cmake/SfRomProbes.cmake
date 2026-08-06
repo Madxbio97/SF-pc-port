@@ -15,6 +15,10 @@ if(SF_BUILD_ROM_PROBES)
     sf_add_game_probe(sf_g2_script_probe apps/sf_g2_script_probe.cpp)
     sf_add_game_probe(sf_g3_gameplay_probe apps/sf_g3_gameplay_probe.cpp)
     sf_add_game_probe(sf_g3_retail_spawn_probe apps/sf_g3_retail_spawn_probe.cpp)
+    sf_add_game_probe(sf_agent_mission_weapon_probe
+        apps/sf_agent_mission_weapon_probe.cpp)
+    sf_add_game_probe(sf_agent_kravitch_controller_probe
+        apps/sf_agent_kravitch_controller_probe.cpp)
     sf_add_game_probe(sf_retail_grenade_probe apps/sf_retail_grenade_probe.cpp)
     sf_add_game_probe(sf_g3_special_actor_probe apps/sf_g3_special_actor_probe.cpp)
     sf_add_game_probe(sf_g3_ai_combat_probe apps/sf_g3_ai_combat_probe.cpp)
@@ -54,6 +58,11 @@ function(sf_register_supported_rom_tests)
         "rom;g3;g3.1" 900)
     sf_add_supported_rom_test(sf_g3_retail_spawn_rom sf_g3_retail_spawn_probe
         "rom;g3;g3.2" 300)
+    sf_add_supported_rom_test(sf_agent_mission_weapon_rom
+        sf_agent_mission_weapon_probe "rom;agent;gameplay;weapon" 300)
+    sf_add_supported_rom_test(sf_agent_kravitch_controller_rom
+        sf_agent_kravitch_controller_probe
+        "rom;agent;gameplay;weapon;controller;ai;movement;shotgun" 300)
     sf_add_supported_rom_test(sf_g3_special_actor_rom sf_g3_special_actor_probe
         "rom;g3;g3.3" 300)
     sf_add_supported_rom_test(sf_g3_ai_combat_rom sf_g3_ai_combat_probe

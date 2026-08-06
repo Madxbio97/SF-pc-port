@@ -49,6 +49,8 @@ public:
   void draw(const game::CampaignSaveMenu &menu,
             const game::TitleSaveSlots &slots);
   void drawLoadSlots(const game::TitleSaveSlots &slots, std::size_t selection);
+  void drawDifficultySelection(const game::TitleMenu &menu);
+  void drawAgentModeWarning();
 
 private:
   struct State;
@@ -58,8 +60,9 @@ private:
 class PsyCrossSceneViewer final {
 public:
   PsyCrossSceneViewer(KeyboardMouseBindings input,
-                      game::RetailCheatState &cheats) noexcept
-      : input_(input), cheats_(cheats) {}
+                      game::RetailCheatState &cheats,
+                      game::CampaignDifficulty difficulty) noexcept
+      : input_(input), cheats_(cheats), difficulty_(difficulty) {}
 
   [[nodiscard]] SceneViewerResult
   run(const game::MissionPackage &mission, PADRAW &pad,
@@ -71,6 +74,7 @@ public:
 private:
   KeyboardMouseBindings input_;
   game::RetailCheatState &cheats_;
+  game::CampaignDifficulty difficulty_{game::CampaignDifficulty::original};
   game::PauseSettings pause_settings_;
   bool pause_settings_initialized_{};
 };

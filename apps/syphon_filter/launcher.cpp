@@ -39,7 +39,7 @@ constexpr wchar_t notice_class_name[] = L"SyphonFilterPCLauncherNotice";
 constexpr wchar_t dossier_class_name[] = L"SyphonFilterPCDossierArchive";
 constexpr int resolution_control_id = 1001;
 constexpr int aspect_control_id = 1002;
-constexpr int msaa_control_id = 1003;
+constexpr int antialiasing_control_id = 1003;
 constexpr int bilinear_control_id = 1004;
 constexpr int fullscreen_control_id = 1005;
 constexpr int launch_control_id = 1006;
@@ -52,6 +52,8 @@ constexpr int dossier_control_id = 1014;
 constexpr int language_control_id = 1015;
 constexpr int vsync_control_id = 1016;
 constexpr int frame_limit_control_id = 1017;
+constexpr int trilinear_control_id = 1018;
+constexpr int volumetric_fog_control_id = 1020;
 constexpr int binding_list_control_id = 2001;
 constexpr int change_binding_control_id = 2002;
 constexpr int clear_binding_control_id = 2003;
@@ -87,7 +89,7 @@ struct LauncherState {
   std::vector<std::uint32_t> frame_limits;
   HWND resolution_combo{};
   HWND aspect_combo{};
-  HWND msaa_combo{};
+  HWND antialiasing_combo{};
   HWND frame_limit_combo{};
   HWND game_image_edit{};
   HWND language_combo{};
@@ -250,9 +252,20 @@ void loadSettingsFile(GraphicsSettings &graphics, KeyboardMouseBindings &input,
   graphics.bilinear_filtering =
       readProfileInteger(path, L"Graphics", L"Bilinear",
                          graphics.bilinear_filtering ? 1 : 0) != 0;
+  graphics.trilinear_filtering =
+      readProfileInteger(path, L"Graphics", L"Trilinear",
+                         graphics.trilinear_filtering ? 1 : 0) != 0;
   graphics.anisotropic_filtering =
       readProfileInteger(path, L"Graphics", L"Anisotropic",
                          graphics.anisotropic_filtering ? 1 : 0) != 0;
+  graphics.smaa = readProfileInteger(path, L"Graphics", L"SMAA",
+                                     graphics.smaa ? 1 : 0) != 0;
+  if (graphics.smaa) {
+    graphics.msaa_samples = 0;
+  }
+  graphics.volumetric_fog =
+      readProfileInteger(path, L"Graphics", L"VolumetricFog",
+                         graphics.volumetric_fog ? 1 : 0) != 0;
   graphics.vsync = readProfileInteger(path, L"Graphics", L"VSync",
                                       graphics.vsync ? 1 : 0) != 0;
   const auto frame_limit = readProfileInteger(
@@ -291,11 +304,17 @@ void saveSettingsFile(const GraphicsSettings &graphics,
   const auto path = launcherSettingsPath(true);
   writeProfileInteger(path, L"Graphics", L"Width", graphics.width);
   writeProfileInteger(path, L"Graphics", L"Height", graphics.height);
-  writeProfileInteger(path, L"Graphics", L"MSAA", graphics.msaa_samples);
+  writeProfileInteger(path, L"Graphics", L"MSAA",
+                      graphics.smaa ? 0 : graphics.msaa_samples);
   writeProfileInteger(path, L"Graphics", L"Bilinear",
                       graphics.bilinear_filtering ? 1 : 0);
+  writeProfileInteger(path, L"Graphics", L"Trilinear",
+                      graphics.trilinear_filtering ? 1 : 0);
   writeProfileInteger(path, L"Graphics", L"Anisotropic",
                       graphics.anisotropic_filtering ? 1 : 0);
+  writeProfileInteger(path, L"Graphics", L"SMAA", graphics.smaa ? 1 : 0);
+  writeProfileInteger(path, L"Graphics", L"VolumetricFog",
+                      graphics.volumetric_fog ? 1 : 0);
   writeProfileInteger(path, L"Graphics", L"VSync", graphics.vsync ? 1 : 0);
   writeProfileInteger(path, L"Graphics", L"FrameLimit",
                       static_cast<int>(graphics.frame_limit));
@@ -1537,24 +1556,26 @@ bool selectedResolutionIsDesktop(const LauncherState &state) {
   return width == state.desktop_width && height == state.desktop_height;
 }
 
-void populateMsaa(LauncherState &state) {
-  constexpr std::array<const wchar_t *, 4> labels{
+void populateAntialiasing(LauncherState &state) {
+  constexpr std::array<const wchar_t *, 5> labels{
       L"Off",
-      L"2x",
-      L"4x",
-      L"8x",
+      L"SMAA Ultra",
+      L"MSAA 2x",
+      L"MSAA 4x",
+      L"MSAA 8x",
   };
-  constexpr std::array<int, 4> samples{0, 2, 4, 8};
-  int selected = 0;
+  constexpr std::array<int, 5> samples{0, 0, 2, 4, 8};
+  int selected = state.settings.smaa ? 1 : 0;
   for (std::size_t index = 0; index < labels.size(); ++index) {
-    SendMessageW(state.msaa_combo, CB_ADDSTRING, 0,
+    SendMessageW(state.antialiasing_combo, CB_ADDSTRING, 0,
                  reinterpret_cast<LPARAM>(labels[index]));
-    if (samples[index] == state.settings.msaa_samples) {
+    if (!state.settings.smaa && index != 1U &&
+        samples[index] == state.settings.msaa_samples) {
       selected = static_cast<int>(index);
     }
   }
-  SendMessageW(state.msaa_combo, CB_SETCURSEL, static_cast<WPARAM>(selected),
-               0);
+  SendMessageW(state.antialiasing_combo, CB_SETCURSEL,
+               static_cast<WPARAM>(selected), 0);
 }
 
 void populateFrameLimits(LauncherState &state) {
@@ -1689,12 +1710,14 @@ void acceptSettings(HWND window, LauncherState &state) {
   state.settings.width = resolution->first;
   state.settings.height = resolution->second;
 
-  constexpr std::array<int, 4> samples{0, 2, 4, 8};
-  const auto msaa_index =
-      static_cast<int>(SendMessageW(state.msaa_combo, CB_GETCURSEL, 0, 0));
-  if (msaa_index >= 0 &&
-      static_cast<std::size_t>(msaa_index) < samples.size()) {
-    state.settings.msaa_samples = samples[static_cast<std::size_t>(msaa_index)];
+  constexpr std::array<int, 5> samples{0, 0, 2, 4, 8};
+  const auto antialiasing_index = static_cast<int>(
+      SendMessageW(state.antialiasing_combo, CB_GETCURSEL, 0, 0));
+  if (antialiasing_index >= 0 &&
+      static_cast<std::size_t>(antialiasing_index) < samples.size()) {
+    state.settings.smaa = antialiasing_index == 1;
+    state.settings.msaa_samples =
+        samples[static_cast<std::size_t>(antialiasing_index)];
   }
   const auto frame_limit_index = static_cast<int>(
       SendMessageW(state.frame_limit_combo, CB_GETCURSEL, 0, 0));
@@ -1709,8 +1732,12 @@ void acceptSettings(HWND window, LauncherState &state) {
           : AspectRatioMode::original_4_3;
   state.settings.bilinear_filtering =
       IsDlgButtonChecked(window, bilinear_control_id) == BST_CHECKED;
+  state.settings.trilinear_filtering =
+      IsDlgButtonChecked(window, trilinear_control_id) == BST_CHECKED;
   state.settings.anisotropic_filtering =
       IsDlgButtonChecked(window, anisotropic_control_id) == BST_CHECKED;
+  state.settings.volumetric_fog =
+      IsDlgButtonChecked(window, volumetric_fog_control_id) == BST_CHECKED;
   state.settings.vsync =
       IsDlgButtonChecked(window, vsync_control_id) == BST_CHECKED;
   state.settings.fullscreen =
@@ -1881,9 +1908,10 @@ LRESULT CALLBACK launcherWindowProc(HWND window, UINT message, WPARAM w_param,
                       144, 258, 214, 120, aspect_control_id, state->ui_font);
     createControl(window, L"STATIC", L"Antialiasing", 0, 48, 300, 92, 20, 0,
                   state->ui_font);
-    state->msaa_combo =
+    state->antialiasing_combo =
         createControl(window, L"COMBOBOX", L"", WS_TABSTOP | CBS_DROPDOWNLIST,
-                      144, 294, 214, 160, msaa_control_id, state->ui_font);
+                      144, 294, 214, 180, antialiasing_control_id,
+                      state->ui_font);
     createControl(window, L"STATIC", L"Frame limit", 0, 48, 336, 92, 20, 0,
                   state->ui_font);
     state->frame_limit_combo = createControl(
@@ -1892,14 +1920,20 @@ LRESULT CALLBACK launcherWindowProc(HWND window, UINT message, WPARAM w_param,
     createControl(window, L"BUTTON", L"Bilinear filtering",
                   WS_TABSTOP | BS_AUTOCHECKBOX, 48, 366, 294, 24,
                   bilinear_control_id, state->ui_font);
-    createControl(window, L"BUTTON", L"Anisotropic filtering",
+    createControl(window, L"BUTTON", L"Mipmapped trilinear",
                   WS_TABSTOP | BS_AUTOCHECKBOX, 48, 392, 294, 24,
-                  anisotropic_control_id, state->ui_font);
-    createControl(window, L"BUTTON", L"Vertical synchronization",
+                  trilinear_control_id, state->ui_font);
+    createControl(window, L"BUTTON", L"Anisotropic filtering",
                   WS_TABSTOP | BS_AUTOCHECKBOX, 48, 418, 294, 24,
+                  anisotropic_control_id, state->ui_font);
+    createControl(window, L"BUTTON", L"Volumetric fog",
+                  WS_TABSTOP | BS_AUTOCHECKBOX, 48, 444, 294, 24,
+                  volumetric_fog_control_id, state->ui_font);
+    createControl(window, L"BUTTON", L"Vertical synchronization",
+                  WS_TABSTOP | BS_AUTOCHECKBOX, 414, 390, 294, 24,
                   vsync_control_id, state->ui_font);
     createControl(window, L"BUTTON", L"Borderless fullscreen",
-                  WS_TABSTOP | BS_AUTOCHECKBOX, 48, 444, 294, 24,
+                  WS_TABSTOP | BS_AUTOCHECKBOX, 414, 416, 294, 24,
                   fullscreen_control_id, state->ui_font);
 
     createControl(window, L"STATIC", L"MISSION CONTROL", 0, 410, 188, 286, 26,
@@ -1917,7 +1951,7 @@ LRESULT CALLBACK launcherWindowProc(HWND window, UINT message, WPARAM w_param,
         createControl(window, L"COMBOBOX", L"", WS_TABSTOP | CBS_DROPDOWNLIST,
                       516, 300, 204, 96, language_control_id, state->ui_font);
     createControl(window, L"BUTTON", L"INPUT CONFIGURATION",
-                  WS_TABSTOP | BS_OWNERDRAW, 414, 408, 294, 38,
+                  WS_TABSTOP | BS_OWNERDRAW, 414, 448, 294, 38,
                   controls_control_id, state->heading_font);
     createControl(window, L"BUTTON", L"DOSSIERS", WS_TABSTOP | BS_OWNERDRAW, 26,
                   514, 140, 42, dossier_control_id, state->heading_font);
@@ -1928,14 +1962,20 @@ LRESULT CALLBACK launcherWindowProc(HWND window, UINT message, WPARAM w_param,
     CheckDlgButton(window, bilinear_control_id,
                    state->settings.bilinear_filtering ? BST_CHECKED
                                                       : BST_UNCHECKED);
+    CheckDlgButton(window, trilinear_control_id,
+                   state->settings.trilinear_filtering ? BST_CHECKED
+                                                       : BST_UNCHECKED);
     CheckDlgButton(window, anisotropic_control_id,
                    state->settings.anisotropic_filtering ? BST_CHECKED
                                                          : BST_UNCHECKED);
+    CheckDlgButton(window, volumetric_fog_control_id,
+                   state->settings.volumetric_fog ? BST_CHECKED
+                                                  : BST_UNCHECKED);
     CheckDlgButton(window, vsync_control_id,
                    state->settings.vsync ? BST_CHECKED : BST_UNCHECKED);
     populateResolutions(*state);
     populateAspectRatios(*state);
-    populateMsaa(*state);
+    populateAntialiasing(*state);
     populateFrameLimits(*state);
     populateLanguages(*state);
     CheckDlgButton(window, fullscreen_control_id,

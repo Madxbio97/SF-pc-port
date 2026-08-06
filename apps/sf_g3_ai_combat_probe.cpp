@@ -178,7 +178,6 @@ struct ScenarioResult {
   std::int16_t initial_player_health{};
   std::int16_t minimum_player_health{};
   std::size_t enemy_fire_samples{};
-  std::uint64_t enemy_close_aim_patches{};
   bool stealth_observed{};
   bool ai_transition{};
   bool target_transition{};
@@ -353,6 +352,10 @@ bool replayStateEqual(const sf::game::LegacyGameplayVmSnapshot &left,
          left.video_timing_baseline == right.video_timing_baseline &&
          left.audio_frame_tick == right.audio_frame_tick &&
          left.interrupt_callbacks == right.interrupt_callbacks &&
+         left.agent_cbdc_friendly_fire_frame ==
+             right.agent_cbdc_friendly_fire_frame &&
+         left.agent_cbdc_friendly_fire_pending_penalties ==
+             right.agent_cbdc_friendly_fire_pending_penalties &&
          left.video_timing_baseline_initialized ==
              right.video_timing_baseline_initialized &&
          left.audio_frame_tick_initialized ==
@@ -798,7 +801,6 @@ ScenarioResult runScenario(sf::game::LegacyGameplayVm &vm,
   result.player_position = initial_bridge->player.position;
   result.initial_player_health = mission->player_health;
   result.minimum_player_health = mission->player_health;
-  const auto initial_close_aim_patches = vm.enemyCloseAimPatchCount();
   const auto &authored = package.objects().objects()[candidate.source];
 
   auto stealth_sample = std::optional<ActorSample>{};
@@ -814,8 +816,6 @@ ScenarioResult runScenario(sf::game::LegacyGameplayVm &vm,
       return result;
     }
     const auto &actor = bridge->objects[candidate.source];
-    result.enemy_close_aim_patches =
-        vm.enemyCloseAimPatchCount() - initial_close_aim_patches;
     result.player_position = bridge->player.position;
     result.player_room = bridge->player.room;
     if (actor.definition != authored.type ||
@@ -1158,7 +1158,6 @@ bool scenarioEqual(const ScenarioResult &left, const ScenarioResult &right) {
          left.initial_player_health == right.initial_player_health &&
          left.minimum_player_health == right.minimum_player_health &&
          left.enemy_fire_samples == right.enemy_fire_samples &&
-         left.enemy_close_aim_patches == right.enemy_close_aim_patches &&
          left.stealth_observed == right.stealth_observed &&
          left.ai_transition == right.ai_transition &&
          left.target_transition == right.target_transition &&
@@ -1389,8 +1388,6 @@ int runProbe(const std::filesystem::path &cue_path,
                 << " player-hp=" << result.first.initial_player_health << "->"
                 << result.first.minimum_player_health
                 << " enemy-fire-samples=" << result.first.enemy_fire_samples
-                << " close-aim-patches="
-                << result.first.enemy_close_aim_patches
                 << " impact/damage/death-instructions="
                 << result.first.impact_instructions << '/'
                 << result.first.nonlethal_instructions << '/'
@@ -1414,8 +1411,6 @@ int runProbe(const std::filesystem::path &cue_path,
                 << " player-hp=" << result.first.initial_player_health << "->"
                 << result.first.minimum_player_health
                 << " enemy-fire-samples=" << result.first.enemy_fire_samples
-                << " close-aim-patches="
-                << result.first.enemy_close_aim_patches
                 << " damage=" << result.first.nonlethal_damage
                 << " acquired=" << result.first.target_acquired
                 << " ai-transition=" << result.first.ai_transition

@@ -62,6 +62,11 @@ struct WeaponCombatDefinition {
 // simulation ticks.
 [[nodiscard]] const WeaponCombatDefinition& weaponCombatDefinition(WeaponId id) noexcept;
 [[nodiscard]] PlayerWeaponStance weaponStance(WeaponId id) noexcept;
+// FUN_80045c04 resolves ordinary floor-drop identities through record+4.
+// The host uses these GMD identities only for authored size metadata; visible
+// floor pickups are always TIM billboards. Armour uses the VEST.GMD bounds.
+[[nodiscard]] std::string_view
+droppedItemWorldModel(std::uint16_t item) noexcept;
 
 struct DamageResult {
     std::uint16_t armor_damage{};

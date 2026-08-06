@@ -17,12 +17,14 @@ using OpticHistory = sf::platform::RetailOpticHistory<OpticProjectedFrame>;
 
 struct ActorFrameScratch {
   std::vector<Vector3> hmd_world_vertices;
+  std::vector<Vector3> hmd_world_normals;
   std::vector<Vector3> shadow_world_vertices;
   std::vector<ActorShadowTriangle> shadow_triangles;
   std::vector<std::optional<ActorShadowReceiverVertex>> shadow_receivers;
 
   void reset() noexcept {
     hmd_world_vertices.clear();
+    hmd_world_normals.clear();
     shadow_world_vertices.clear();
     shadow_triangles.clear();
     shadow_receivers.clear();
@@ -31,11 +33,13 @@ struct ActorFrameScratch {
 
 struct WorldVertexFrameScratch {
   std::vector<double> precise_depths;
+  std::vector<int> chunk_depth_cues;
   std::vector<int> depth_cues;
   std::vector<WorldProjectedVertex> projected_vertices;
 
   void reset() noexcept {
     precise_depths.clear();
+    chunk_depth_cues.clear();
     depth_cues.clear();
     projected_vertices.clear();
   }
@@ -54,6 +58,7 @@ struct PrimitiveBuffer {
   StableFrameVector<LINE_F2> combat_effect_lines{"Combat effect lines"};
   StableFrameVector<POLY_F3> combat_effect_triangles{"Combat effect triangles"};
   StableFrameVector<POLY_GT4> effect_sprite_quads{"Effect sprite quads"};
+  StableFrameVector<POLY_FT4> world_decals{"Retail world decals"};
   StableFrameVector<POLY_FT4> park2_flamethrower_ribbons{
       "PARK2 flamethrower ribbons"};
   StableFrameVector<POLY_FT4> pickup_sprites{"Retail pickup sprites"};
@@ -110,6 +115,7 @@ struct PrimitiveBuffer {
     combat_effect_lines.reset();
     combat_effect_triangles.reset();
     effect_sprite_quads.reset();
+    world_decals.reset();
     park2_flamethrower_ribbons.reset();
     pickup_sprites.reset();
     projectile_sprites.reset();
@@ -140,6 +146,7 @@ struct PrimitiveBuffer {
     combat_effect_lines.lockStorage();
     combat_effect_triangles.lockStorage();
     effect_sprite_quads.lockStorage();
+    world_decals.lockStorage();
     park2_flamethrower_ribbons.lockStorage();
     pickup_sprites.lockStorage();
     projectile_sprites.lockStorage();
@@ -163,6 +170,7 @@ struct PrimitiveBuffer {
            effects.storageStable() && combat_effect_lines.storageStable() &&
            combat_effect_triangles.storageStable() &&
            effect_sprite_quads.storageStable() &&
+           world_decals.storageStable() &&
            park2_flamethrower_ribbons.storageStable() &&
            pickup_sprites.storageStable() &&
            projectile_sprites.storageStable() &&
@@ -522,23 +530,34 @@ visibleSurfaceNormal(const std::array<SVECTOR, Count> &vertices) noexcept {
   return normal;
 }
 
+void dynamicallyLight(
+    POLY_GT3 &primitive, const std::array<SVECTOR, 3U> &vertices,
+    const std::array<game::DynamicLightPoint, 3U> &normals,
+    const game::DynamicLightFrame &light_frame =
+        active_dynamic_lights) noexcept {
+  const auto first =
+      dynamicallyLit({primitive.r0, primitive.g0, primitive.b0}, vertices[0].vx,
+                     vertices[0].vy, vertices[0].vz, normals[0], light_frame);
+  const auto second =
+      dynamicallyLit({primitive.r1, primitive.g1, primitive.b1}, vertices[1].vx,
+                     vertices[1].vy, vertices[1].vz, normals[1], light_frame);
+  const auto third =
+      dynamicallyLit({primitive.r2, primitive.g2, primitive.b2}, vertices[2].vx,
+                     vertices[2].vy, vertices[2].vz, normals[2], light_frame);
+  setRGB0(&primitive, first.red, first.green, first.blue);
+  setRGB1(&primitive, second.red, second.green, second.blue);
+  setRGB2(&primitive, third.red, third.green, third.blue);
+}
+
 void dynamicallyLight(POLY_GT3 &primitive,
                       const std::array<SVECTOR, 3U> &vertices,
                       const game::DynamicLightFrame &light_frame =
                           active_dynamic_lights) noexcept {
   const auto normal = visibleSurfaceNormal(vertices);
-  const auto first =
-      dynamicallyLit({primitive.r0, primitive.g0, primitive.b0}, vertices[0].vx,
-                     vertices[0].vy, vertices[0].vz, normal, light_frame);
-  const auto second =
-      dynamicallyLit({primitive.r1, primitive.g1, primitive.b1}, vertices[1].vx,
-                     vertices[1].vy, vertices[1].vz, normal, light_frame);
-  const auto third =
-      dynamicallyLit({primitive.r2, primitive.g2, primitive.b2}, vertices[2].vx,
-                     vertices[2].vy, vertices[2].vz, normal, light_frame);
-  setRGB0(&primitive, first.red, first.green, first.blue);
-  setRGB1(&primitive, second.red, second.green, second.blue);
-  setRGB2(&primitive, third.red, third.green, third.blue);
+  dynamicallyLight(primitive, vertices,
+                   std::array<game::DynamicLightPoint, 3U>{normal, normal,
+                                                           normal},
+                   light_frame);
 }
 
 void dynamicallyLight(POLY_GT4 &primitive,

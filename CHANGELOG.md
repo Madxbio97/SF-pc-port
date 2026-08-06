@@ -3,6 +3,79 @@
 All notable public-test changes are documented here. The project currently uses
 pre-release tags rather than a stable semantic-versioning promise.
 
+## 0.1.0-public-test.24 - 2026-08-06
+
+### Difficulty and saves
+
+- Added a localized confirmation screen before starting a new Agent campaign;
+  it identifies Agent as a PC-version addition and briefly explains its higher
+  enemy threat and stricter mission conditions.
+
+- Added a localized three-mode New Game selector: **Normal**, **Hard Mode** and
+  **Agent** (`Оригинал`, `Высокая сложность`, `Агент`).
+- Moved retail Hard Mode out of the cheat list and made it a persistent campaign
+  choice. Agent retains the retail hard-mode behavior, adds 25% incoming player
+  damage, strengthens enemy aim and tracks a fresh target point at medium range.
+- Agent now replaces the recurring Hard notice with its own localized start
+  message. On 20% of new hostile SVD/sniper engagements, the original localized
+  Head Shot leader appears above Gabe. After a one-second grace period, the
+  warned enemy's next ballistic hit is a guaranteed one-shot kill.
+- Agent enemies now alert immediately at twice the retail grenade distance.
+  Unsafe first route edges toward the grenade are rejected while collision,
+  path following and locomotion remain guest-owned.
+- Extended campaign saves to V5 with a per-slot difficulty marker; V1-V4 saves
+  remain compatible and migrate to Normal.
+
+### Agent mission rules
+
+- Added exact mission HUD meters for Destroyed Subway, Main Subway Line,
+  Freedom Memorial, Expo Center Reception and Expo Center Dinorama.
+- Added validated actor-specific overrides: Kravitch carries an ITHACA-37 and
+  uses shorter retail firing pauses with post-shot route changes; Aramov's
+  Main Subway Line movement is 25% faster; Marcos uses fragmentation grenades
+  at a faster cadence; Gabrek carries an M-16 and fragmentation grenades;
+  three exact Stronghold lower-level chapel guards carry shotguns; and active
+  fragmentation-equipped PHARCOM elite guards use a faster grenade cadence.
+- Set the Washington Park Agent timer to 15 minutes and deduct 30 seconds for
+  each damaging player hit on an exact CBDC bomb-technician actor.
+- Added Freedom Memorial's 100% bomb-detonation budget: shotgun hits add 50%,
+  .45 hits 40%, M-16 hits 10%, 9 mm/rifle hits 2%, and an M-79 hit or thrown
+  grenade fills the budget; taser and flashlight events do not affect it.
+- Set Base Escape to 2:24 and Warehouse 76 to 12 minutes, including the
+  Warehouse objective text. In Tunnel Blackout, an active flashlight extends
+  Agent enemy target memory from 80 to 100 game frames.
+
+## 0.1.0-public-test.23 - 2026-08-04
+
+### Graphics
+
+- Added palette-aware, atlas-clamped mip reconstruction with trilinear and
+  mipmapped anisotropic filtering for distant world textures.
+- Upgraded official SMAA 1x to the Ultra preset with combined colour/depth
+  edges, and made it a mutually exclusive alternative to MSAA. The scene-only
+  pass remains before projected overlays, HUD, optics and letterbox.
+
+### Combat and aiming
+
+- Made grenade input reliable across the retail readiness gate.
+- Unified first-person and auto-lock reticles under one rendering path, with
+  distance-based sizing, a smaller calibrated frame and faster display-rate
+  scale response while retaining soft positional follow.
+- Restored reliable first-person bullet impacts, surface-aligned short-lived
+  decals and PS1-style per-vertex wound colouring instead of whole-model flash.
+
+### Presentation
+
+- Preserved the authored night-vision filter across mission-specific tunnel
+  environments.
+- Kept moving-light, flashlight and impact presentation synchronized with the
+  current display rate without changing the original 20 Hz game simulation.
+
+### Validation
+
+- Added regression coverage for retail aim-ray depth, reticle ownership and
+  near/far reticle geometry.
+
 ## 0.1.0-public-test.22 - 2026-08-03
 
 ### Lighting
@@ -73,6 +146,23 @@ pre-release tags rather than a stable semantic-versioning promise.
 
 - Added regression coverage for viewport normalization, display-rate UI
   interpolation, radio state and presentation timing.
+
+## 0.1.0-public-test.17 - 2026-08-02
+
+- Release tag alias for Public Test 16. Both local tags resolve to source
+  revision `7519dc0`; there is no source delta between them.
+
+## 0.1.0-public-test.16 - 2026-08-02
+
+### Optics and validation
+
+- Restored the retail SVD live silhouettes and three 20 Hz pose-history echoes.
+- Rebuilt the virus scanner around the authored target slot and x-ray marker.
+- Isolated optic capture from the visible PGXP stream and reserved packet
+  storage for actor/model changes within a guest frame.
+- Passed the documented MSVC, PsyCross, VRAM/PGXP and package validation gates.
+
+Full notes: [Public Test 16](docs/releases/0.1.0-public-test.16.md).
 
 ## 0.1.0-public-test.15 - 2026-07-31
 
@@ -346,7 +436,7 @@ pre-release tags rather than a stable semantic-versioning promise.
 ### Architecture
 
 - Moved retail cheat definitions, chord detection and state into a dedicated
-  game module shared by the title screen, pause menu and gameplay runtime.
+  game module shared by the pause menu and gameplay runtime.
 - Kept cheat state alive across mission transitions and returns to the title
   screen, with one activation path for both original button codes and menu
   switches.
@@ -460,11 +550,11 @@ pre-release tags rather than a stable semantic-versioning promise.
 
 ### Gameplay presentation
 
-- Restored every documented retail cheat and its original title/pause-menu
-  button context, including PAL aliases, infinite ammunition, hard mode,
-  one-shot kills, weak enemies, stage select and the Georgia Street theater.
+- Restored every documented pause-menu retail cheat and its original button
+  context, including PAL aliases, infinite ammunition, one-shot kills, weak
+  enemies, stage select and the Georgia Street theater.
 - Added the original-style **Options > Cheats** page with synchronized switches
-  for all six restored modes.
+  for all five restored modes.
 - Removed mission selection and cheat controls from the launcher permanently;
   `syphon_filter_cheats` now activates persistent retail cheats directly.
 

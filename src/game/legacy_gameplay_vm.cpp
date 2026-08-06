@@ -1,4 +1,7 @@
 #include "sf/game/legacy_gameplay_vm.hpp"
+#include "sf/game/agent_late_mission_rules.hpp"
+#include "sf/game/agent_mission_rules.hpp"
+#include "sf/game/agent_park_timer.hpp"
 #include "sf/game/legacy_virtual_cd.hpp"
 
 #include <algorithm>
@@ -15,6 +18,18 @@ namespace sf::game {
 namespace {
 
 constexpr std::uint32_t cd_lead_in_sectors = 150U;
+constexpr std::uint32_t agent_guest_ram_begin = 0x80000000U;
+constexpr std::uint32_t agent_guest_ram_end = 0x80200000U;
+
+bool validGuestRamRange(std::uint32_t address, std::uint32_t size) noexcept {
+  return size != 0U && size <= agent_guest_ram_end - agent_guest_ram_begin &&
+         address >= agent_guest_ram_begin &&
+         address <= agent_guest_ram_end - size;
+}
+
+bool guestFrameReached(std::uint32_t frame, std::uint32_t target) noexcept {
+  return std::bit_cast<std::int32_t>(frame - target) >= 0;
+}
 
 std::uint8_t legacyTextChecksum(std::string_view text) noexcept {
   auto checksum = std::uint8_t{};
@@ -426,6 +441,9 @@ LegacyGameplayVm::LegacyGameplayVm(const psx::Executable &executable,
       executable_initial_pc_(executable.header().initial_pc) {
   host_calls_.reserve(128U);
   runtime_.loadExecutable(executable);
+  bindAgentDifficultyDamageHook();
+  bindSyphonFilterUsaV11AgentMissionNpcSpawnHook();
+  bindSyphonFilterUsaV11AgentAramovSpeedHook();
 }
 
 bool LegacyGameplayVm::loadOverlay(std::uint32_t address,
@@ -1308,10 +1326,46 @@ void LegacyGameplayVm::bindSyphonFilterUsaV11PlatformCalls() {
   bindPsxGpuSubmissionCall();
 }
 
+void LegacyGameplayVm::bindSyphonFilterUsaV11Park2FlameLosHook(
+    const LegacyPark2FlameLosProfile &profile) {
+  bindHostCall(
+      profile.event_entry, [this, profile](LegacyHostCallContext &context) {
+        if (!park2_flame_line_of_sight_clear_.has_value() ||
+            *park2_flame_line_of_sight_clear_) {
+          context.continueGuestInstruction();
+          return;
+        }
+
+        const auto return_address = context.returnAddress();
+        std::uint32_t call_instruction{};
+        std::uint32_t delay_instruction{};
+        std::uint32_t current_player{};
+        if (return_address < 8U ||
+            !context.read32(return_address - 8U, call_instruction) ||
+            !context.read32(return_address - 4U, delay_instruction) ||
+            !context.read32(profile.current_player_slot, current_player) ||
+            !legacyPark2FlameEventSuppressed(
+                park2_flame_line_of_sight_clear_, return_address,
+                call_instruction, delay_instruction, context.argument(0U),
+                context.argument(1U), context.argument(2U),
+                context.argument(3U), current_player, profile)) {
+          context.continueGuestInstruction();
+          return;
+        }
+
+        // HLE-return to the exact PARK2 continuation, skipping only the blocked
+        // proximity event. The retail flame animation and state machine
+        // continue.
+        context.setReturnValue(0U);
+      });
+}
+
 void LegacyGameplayVm::bindSyphonFilterUsaV11BootstrapPlatformCalls() {
   bindSyphonFilterUsaV11PlatformCalls();
+  bindSyphonFilterUsaV11Park2FlameLosHook();
   bindSyphonFilterUsaV11HostAimRayHook();
-  bindSyphonFilterUsaV11EnemyCloseAimHook();
+  bindSyphonFilterUsaV11AgentEnemyAimHooks();
+  bindSyphonFilterUsaV11AgentGrenadeAwarenessHook();
   bindSyphonFilterUsaV11WeaponEventHooks();
   bindSyphonFilterUsaV11GameplayTextHooks();
   const auto bind_zero_result = [this](std::uint32_t address) {
@@ -1657,56 +1711,1350 @@ void LegacyGameplayVm::bindSyphonFilterUsaV11BootstrapPlatformCalls() {
   });
 }
 
-void LegacyGameplayVm::bindSyphonFilterUsaV11EnemyCloseAimHook(
-    const LegacyEnemyCloseAimProfile &profile) {
-  bindHostCall(profile.boundary, [this,
-                                  profile](LegacyHostCallContext &context) {
-    // This is an instruction-boundary adjustment, not an HLE
-    // replacement: retire the original JAL and its delay slot.
+void LegacyGameplayVm::bindAgentDifficultyDamageHook(
+    const LegacyNativeMissionBridgeProfile &profile) {
+  bindHostCall(profile.damage_entry, [this,
+                                      profile](LegacyHostCallContext &context) {
+    // This is an instruction-boundary patch, not an HLE replacement: the
+    // retail damage routine must still execute for guest and host hits.
+    context.continueGuestInstruction();
+    if (!agent_difficulty_) {
+      return;
+    }
+
+    constexpr std::size_t a3_register = 7U;
+    std::uint32_t player{};
+    std::uint16_t player_slot_bits{};
+    if (!context.read32(profile.player_pointer, player) ||
+        !validGuestRamRange(player, 4U) ||
+        !context.read16(player + 2U, player_slot_bits)) {
+      return;
+    }
+
+    const auto player_slot = std::bit_cast<std::int16_t>(player_slot_bits);
+    const auto attacker_slot = std::bit_cast<std::int16_t>(
+        static_cast<std::uint16_t>(context.argument(0U)));
+    const auto owner_slot = std::bit_cast<std::int16_t>(
+        static_cast<std::uint16_t>(context.argument(1U)));
+    const auto target_slot = std::bit_cast<std::int16_t>(
+        static_cast<std::uint16_t>(context.argument(2U)));
+    const auto damage = std::bit_cast<std::int16_t>(
+        static_cast<std::uint16_t>(context.argument(3U)));
+
+    // CBDC personnel keep retail damage and reactions. Agent only records an
+    // exact player-owned friendly-fire edge here; timer mutation is deferred
+    // to the safe post-frame maintenance boundary.
+    if (damage > 0 &&
+        (attacker_slot == player_slot || owner_slot == player_slot) &&
+        target_slot >= 0) {
+      constexpr std::uint32_t object_record_stride = 0x4cU;
+      constexpr std::uint32_t object_definition_stride = 0x14U;
+      constexpr std::uint32_t object_instance_offset = 0x34U;
+      constexpr std::uint32_t instance_slot_offset = 2U;
+      std::uint16_t mission_bits{};
+      std::uint32_t records{};
+      std::uint32_t count{};
+      std::uint32_t definitions{};
+      std::uint32_t definition_count{};
+      if (context.read16(profile.mission_index, mission_bits) &&
+          mission_bits == 3U &&
+          context.read32(profile.object_records_pointer, records) &&
+          context.read32(profile.object_count, count) &&
+          context.read32(profile.object_definitions_pointer, definitions) &&
+          context.read32(profile.object_definition_count, definition_count) &&
+          count <= profile.maximum_objects &&
+          definition_count <= profile.maximum_definitions &&
+          static_cast<std::uint32_t>(target_slot) < count) {
+        const auto record64 = static_cast<std::uint64_t>(records) +
+                              static_cast<std::uint64_t>(
+                                  static_cast<std::uint16_t>(target_slot)) *
+                                  object_record_stride;
+        if (record64 <= std::numeric_limits<std::uint32_t>::max()) {
+          const auto record = static_cast<std::uint32_t>(record64);
+          std::uint32_t definition{};
+          std::uint32_t instance{};
+          std::uint16_t live_slot_bits{};
+          if (validGuestRamRange(record, object_record_stride) &&
+              context.read32(record, definition) &&
+              definition < definition_count &&
+              definition <= std::numeric_limits<std::uint16_t>::max() &&
+              context.read32(record + object_instance_offset, instance) &&
+              validGuestRamRange(instance, instance_slot_offset + 2U) &&
+              context.read16(instance + instance_slot_offset, live_slot_bits) &&
+              std::bit_cast<std::int16_t>(live_slot_bits) == target_slot) {
+            const auto definition64 = static_cast<std::uint64_t>(definitions) +
+                                      static_cast<std::uint64_t>(definition) *
+                                          object_definition_stride;
+            if (definition64 <= std::numeric_limits<std::uint32_t>::max()) {
+              const auto definition_address =
+                  static_cast<std::uint32_t>(definition64);
+              std::uint16_t object_class{};
+              std::uint32_t gameplay_frame{};
+              if (validGuestRamRange(definition_address,
+                                     object_definition_stride) &&
+                  context.read16(definition_address, object_class) &&
+                  agentCbdcFriendlyFireTarget(
+                      mission_bits, static_cast<std::uint16_t>(target_slot),
+                      static_cast<std::uint16_t>(definition), object_class) &&
+                  context.read32(profile.gameplay_frame, gameplay_frame) &&
+                  (!agent_cbdc_friendly_fire_frame_ ||
+                   *agent_cbdc_friendly_fire_frame_ != gameplay_frame)) {
+                agent_cbdc_friendly_fire_frame_ = gameplay_frame;
+                if (agent_cbdc_friendly_fire_pending_penalties_ !=
+                    std::numeric_limits<std::uint32_t>::max()) {
+                  ++agent_cbdc_friendly_fire_pending_penalties_;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    if (target_slot != player_slot || damage <= 0) {
+      return;
+    }
+
+    constexpr std::uint32_t object_record_stride = 0x4cU;
+    std::uint32_t records{};
+    std::uint32_t count{};
+    const auto tables_valid =
+        context.read32(profile.object_records_pointer, records) &&
+        context.read32(profile.object_count, count) &&
+        count <= profile.maximum_objects &&
+        validGuestRamRange(records, object_record_stride);
+    struct SniperSource {
+      std::int16_t slot{-1};
+      std::uint32_t instance{};
+      std::uint32_t ai_controller{};
+      std::uint8_t weapon{};
+    };
+    const auto sniper_source =
+        [&](std::int16_t source_slot) -> std::optional<SniperSource> {
+      constexpr std::uint32_t object_weapon_offset = 0x24U;
+      constexpr std::uint32_t object_instance_offset = 0x34U;
+      constexpr std::uint32_t instance_slot_offset = 2U;
+      constexpr std::uint32_t instance_ai_offset = 0x1cU;
+      constexpr std::uint8_t svd_weapon = 12U;
+      constexpr std::uint8_t sniper_weapon = 13U;
+      if (!tables_valid || source_slot < 0 ||
+          static_cast<std::uint32_t>(source_slot) >= count) {
+        return std::nullopt;
+      }
+      const auto source_record64 =
+          static_cast<std::uint64_t>(records) +
+          static_cast<std::uint64_t>(static_cast<std::uint16_t>(source_slot)) *
+              object_record_stride;
+      if (source_record64 > std::numeric_limits<std::uint32_t>::max()) {
+        return std::nullopt;
+      }
+      const auto source_record = static_cast<std::uint32_t>(source_record64);
+      std::uint32_t source_instance{};
+      std::uint16_t shooter_slot_bits{};
+      if (!validGuestRamRange(source_record, object_record_stride) ||
+          !context.read32(source_record + object_instance_offset,
+                          source_instance) ||
+          !validGuestRamRange(source_instance, instance_slot_offset + 2U) ||
+          !context.read16(source_instance + instance_slot_offset,
+                          shooter_slot_bits)) {
+        return std::nullopt;
+      }
+      const auto shooter_slot = std::bit_cast<std::int16_t>(shooter_slot_bits);
+      if (shooter_slot < 0 || shooter_slot == player_slot ||
+          static_cast<std::uint32_t>(shooter_slot) >= count) {
+        return std::nullopt;
+      }
+      const auto shooter_record64 =
+          static_cast<std::uint64_t>(records) +
+          static_cast<std::uint64_t>(static_cast<std::uint16_t>(shooter_slot)) *
+              object_record_stride;
+      if (shooter_record64 > std::numeric_limits<std::uint32_t>::max()) {
+        return std::nullopt;
+      }
+      const auto shooter_record = static_cast<std::uint32_t>(shooter_record64);
+      std::uint8_t weapon{};
+      std::uint32_t shooter_instance{};
+      std::uint32_t shooter_ai{};
+      std::uint16_t identity_slot_bits{};
+      if (!validGuestRamRange(shooter_record, object_record_stride) ||
+          !context.read8(shooter_record + object_weapon_offset, weapon) ||
+          (weapon != svd_weapon && weapon != sniper_weapon) ||
+          !context.read32(shooter_record + object_instance_offset,
+                          shooter_instance) ||
+          !validGuestRamRange(shooter_instance, instance_ai_offset + 4U) ||
+          !context.read16(shooter_instance + instance_slot_offset,
+                          identity_slot_bits) ||
+          std::bit_cast<std::int16_t>(identity_slot_bits) != shooter_slot ||
+          !context.read32(shooter_instance + instance_ai_offset, shooter_ai) ||
+          shooter_ai == 0U) {
+        return std::nullopt;
+      }
+      return SniperSource{shooter_slot, shooter_instance, shooter_ai, weapon};
+    };
+    const auto matches_active = [&](const SniperSource &candidate) {
+      return candidate.slot == agent_headshot_shooter_slot_ &&
+             candidate.instance == agent_headshot_shooter_instance_ &&
+             candidate.ai_controller == agent_headshot_shooter_ai_controller_ &&
+             candidate.weapon == agent_headshot_weapon_;
+    };
+
+    auto shooter = sniper_source(attacker_slot);
+    std::uint32_t gameplay_frame{};
+    const auto damage_type = std::bit_cast<std::int16_t>(
+        static_cast<std::uint16_t>(context.argument(4U)));
+    constexpr std::int16_t direct_sniper_damage_type = 0x000f;
+    constexpr std::int16_t weapon_collision_damage_type = 0x0892;
+    const auto ballistic_sniper_hit =
+        damage_type == direct_sniper_damage_type ||
+        damage_type == weapon_collision_damage_type;
+    if (ballistic_sniper_hit && (!shooter || !matches_active(*shooter))) {
+      if (const auto owner = sniper_source(owner_slot);
+          owner && matches_active(*owner)) {
+        shooter = owner;
+      }
+    }
+    if (ballistic_sniper_hit && shooter && matches_active(*shooter) &&
+        context.read32(profile.gameplay_frame, gameplay_frame) &&
+        guestFrameReached(gameplay_frame, agent_headshot_ready_frame_)) {
+      context.setRegister(
+          a3_register, guestArgument(std::numeric_limits<std::int16_t>::max()));
+      if (shooter->slot >= 0 && static_cast<std::size_t>(shooter->slot) <
+                                    agent_headshot_engagements_.size()) {
+        auto &engagement = agent_headshot_engagements_[static_cast<std::size_t>(
+            shooter->slot)];
+        if (engagement.instance == shooter->instance &&
+            engagement.ai_controller == shooter->ai_controller &&
+            engagement.weapon == shooter->weapon) {
+          engagement.consumed = true;
+        }
+      }
+      agent_headshot_shooter_slot_ = -1;
+      agent_headshot_shooter_instance_ = 0U;
+      agent_headshot_shooter_ai_controller_ = 0U;
+      agent_headshot_weapon_ = 0U;
+      agent_headshot_ready_frame_ = 0U;
+      return;
+    }
+
+    const auto increased = static_cast<std::int32_t>(damage) +
+                           (static_cast<std::int32_t>(damage) + 3) / 4;
+    const auto saturated = std::min(
+        increased,
+        static_cast<std::int32_t>(std::numeric_limits<std::int16_t>::max()));
+    context.setRegister(a3_register,
+                        guestArgument(static_cast<std::int16_t>(saturated)));
+  });
+}
+
+void LegacyGameplayVm::bindSyphonFilterUsaV11AgentMissionNpcSpawnHook(
+    const LegacyNativeMissionBridgeProfile &profile) {
+  constexpr std::uint32_t spawn_attributes_boundary = 0x8005f468U;
+  constexpr std::uint32_t spawn_attributes_instruction = 0xac430024U;
+  constexpr std::uint32_t mission_index_address = 0x80130c88U;
+  constexpr std::uint32_t object_record_stride = 0x4cU;
+  bindHostCall(spawn_attributes_boundary, [this, profile](
+                                              LegacyHostCallContext &context) {
+    context.continueGuestInstruction();
+    std::uint32_t instruction{};
+    std::uint16_t mission_index{};
+    if (!agent_difficulty_ || !context.read32(context.pc(), instruction) ||
+        instruction != spawn_attributes_instruction ||
+        !context.read16(mission_index_address, mission_index)) {
+      return;
+    }
+
+    enum class SpawnRuleKind : std::uint8_t {
+      kravitch,
+      marcos,
+      gabrek,
+      chapel_guard,
+    };
+    struct SpawnRule {
+      std::uint32_t mission;
+      std::uint32_t slot;
+      std::uint32_t definition;
+      std::optional<LegacyNativePoint> authored_position;
+      SpawnRuleKind kind;
+      std::uint16_t retail_attributes{};
+    };
+    std::optional<SpawnRule> rule;
+    const auto slot = context.registerValue(16U); // s0
+    if (mission_index == 0U && slot == 174U) {
+      // Kravitch's live record is transformed during mission bootstrap, so its
+      // coordinates no longer match the authored source values here. Mission,
+      // slot, definition and the exact record pointer uniquely identify him.
+      rule = SpawnRule{0U, 174U, 53U, std::nullopt, SpawnRuleKind::kravitch};
+    } else if (mission_index == 3U && slot == 48U) {
+      rule = SpawnRule{3U, 48U, 11U, LegacyNativePoint{5802, 0, 15845},
+                       SpawnRuleKind::marcos};
+    } else if (mission_index == agent_gabrek_identity.mission &&
+               slot == agent_gabrek_identity.slot) {
+      rule = SpawnRule{agent_gabrek_identity.mission,
+                       agent_gabrek_identity.slot,
+                       agent_gabrek_identity.definition,
+                       LegacyNativePoint{agent_gabrek_identity.authored_x,
+                                         agent_gabrek_identity.authored_y,
+                                         agent_gabrek_identity.authored_z},
+                       SpawnRuleKind::gabrek,
+                       agent_gabrek_identity.retail_attributes};
+    } else if (mission_index == 12U) {
+      for (const auto &identity : agent_chapel_guard_identities) {
+        if (slot != identity.slot) {
+          continue;
+        }
+        rule = SpawnRule{identity.mission,
+                         identity.slot,
+                         identity.definition,
+                         LegacyNativePoint{identity.authored_x,
+                                           identity.authored_y,
+                                           identity.authored_z},
+                         SpawnRuleKind::chapel_guard,
+                         identity.retail_attributes};
+        break;
+      }
+    }
+    if (!rule) {
+      return;
+    }
+
+    std::uint32_t records{};
+    std::uint32_t definition{};
+    if (!context.read32(profile.object_records_pointer, records)) {
+      return;
+    }
+    const auto expected_record64 =
+        static_cast<std::uint64_t>(records) +
+        static_cast<std::uint64_t>(rule->slot) * object_record_stride;
+    if (expected_record64 > std::numeric_limits<std::uint32_t>::max()) {
+      return;
+    }
+    const auto record = context.registerValue(2U); // v0
+    if (record != static_cast<std::uint32_t>(expected_record64) ||
+        !validGuestRamRange(record, object_record_stride) ||
+        !context.read32(record, definition) || definition != rule->definition) {
+      return;
+    }
+    if (rule->authored_position) {
+      std::uint32_t authored_x{};
+      std::uint32_t authored_y{};
+      std::uint32_t authored_z{};
+      if (!context.read32(record + 0x18U, authored_x) ||
+          !context.read32(record + 0x1cU, authored_y) ||
+          !context.read32(record + 0x20U, authored_z) ||
+          std::bit_cast<std::int32_t>(authored_x) !=
+              rule->authored_position->x ||
+          std::bit_cast<std::int32_t>(authored_y) !=
+              rule->authored_position->y ||
+          std::bit_cast<std::int32_t>(authored_z) !=
+              rule->authored_position->z) {
+        return;
+      }
+    }
+
+    const auto attributes =
+        static_cast<std::uint16_t>(context.registerValue(3U)); // v1
+    auto adjusted = attributes;
+    switch (rule->kind) {
+    case SpawnRuleKind::kravitch:
+      adjusted = agentKravitchAttributes(attributes, true);
+      break;
+    case SpawnRuleKind::marcos:
+      adjusted = agentMarcosAttributes(attributes, true);
+      break;
+    case SpawnRuleKind::gabrek:
+      adjusted = agentGabrekAttributes(attributes, true);
+      break;
+    case SpawnRuleKind::chapel_guard:
+      adjusted =
+          agentChapelGuardAttributes(attributes, rule->retail_attributes, true);
+      break;
+    }
+    context.setRegister(3U, adjusted);
+  });
+
+  constexpr std::uint32_t npc_init_entry = 0x8005805cU;
+  constexpr std::uint32_t npc_init_entry_instruction = 0x27bdffc8U;
+  constexpr std::uint32_t npc_init_entry_next_instruction = 0xafb1002cU;
+  bindHostCall(npc_init_entry, [this, profile](
+                                             LegacyHostCallContext &context) {
+    // Patch the exact record before FUN_8005805c reads and caches its weapon
+    // descriptor, then retire the original retail prologue instruction.
     context.continueGuestInstruction();
 
-    std::uint32_t instruction{};
-    std::uint32_t delay_instruction{};
-    if (profile.close_distance <= 0 ||
-        !context.read32(context.pc(), instruction) ||
-        !context.read32(context.pc() + 4U, delay_instruction) ||
-        instruction != profile.instruction ||
-        delay_instruction != profile.delay_instruction) {
+    constexpr std::uint32_t kravitch_slot = 174U;
+    constexpr std::uint32_t kravitch_definition = 53U;
+    std::uint32_t boundary_word{};
+    std::uint32_t delay_word{};
+    std::uint16_t mission_index{};
+    std::uint16_t live_slot{};
+    std::uint32_t records{};
+    std::uint32_t count{};
+    const auto instance = context.argument(0U); // a0
+    if (!agent_difficulty_ ||
+        !context.read32(npc_init_entry, boundary_word) ||
+        boundary_word != npc_init_entry_instruction ||
+        !context.read32(npc_init_entry + 4U, delay_word) ||
+        delay_word != npc_init_entry_next_instruction ||
+        !context.read16(profile.mission_index, mission_index) ||
+        mission_index != 0U || !validGuestRamRange(instance, 4U) ||
+        !context.read16(instance + 2U, live_slot) ||
+        live_slot != kravitch_slot ||
+        !context.read32(profile.object_records_pointer, records) ||
+        !context.read32(profile.object_count, count) ||
+        count <= kravitch_slot || count > profile.maximum_objects) {
       return;
     }
 
-    const auto shooter = context.argument(0);
-    const auto stack = context.registerValue(29U);
-    std::uint32_t shooter_instance{};
-    std::uint32_t shooter_matrix{};
-    std::uint32_t source_x_bits{};
-    std::uint32_t source_z_bits{};
+    const auto record64 = static_cast<std::uint64_t>(records) +
+                          static_cast<std::uint64_t>(kravitch_slot) *
+                              object_record_stride;
+    if (record64 > std::numeric_limits<std::uint32_t>::max()) {
+      return;
+    }
+    const auto record = static_cast<std::uint32_t>(record64);
+    std::uint32_t definition{};
+    std::uint16_t attributes{};
+    std::uint32_t owner{};
+    if (!validGuestRamRange(record, object_record_stride) ||
+        !context.read32(record, definition) ||
+        definition != kravitch_definition ||
+        !context.read16(record + 0x24U, attributes) ||
+        (attributes != 0xc102U && attributes != 0xc107U &&
+         attributes != 0xc109U) ||
+        !context.read32(record + 0x34U, owner) || owner != instance) {
+      return;
+    }
+
+    const auto adjusted = agentKravitchAttributes(attributes, true);
+    if (adjusted != attributes) {
+      static_cast<void>(context.write16(record + 0x24U, adjusted));
+    }
+  });
+}
+
+void LegacyGameplayVm::bindSyphonFilterUsaV11AgentAramovSpeedHook() {
+  constexpr std::uint32_t locomotion_boundary = 0x8007157cU;
+  constexpr std::uint32_t locomotion_instruction = 0x0c01bf12U;
+  constexpr std::size_t actor_register = 16U; // s0
+  constexpr std::uint32_t mission_index_address = 0x80130c88U;
+  constexpr std::uint32_t object_records_pointer = 0x80115cccU;
+  constexpr std::uint32_t object_count_address = 0x80116a5cU;
+  constexpr std::uint32_t object_definitions_pointer = 0x80116b98U;
+  constexpr std::uint32_t definition_count_address = 0x80116b14U;
+  constexpr std::uint32_t object_record_stride = 0x4cU;
+  constexpr std::uint32_t object_definition_stride = 0x14U;
+  constexpr std::uint32_t aramov_slot = 13U;
+  constexpr std::uint32_t aramov_definition = 6U;
+  constexpr std::uint16_t aramov_class = 2U;
+
+  bindHostCall(locomotion_boundary, [this](LegacyHostCallContext &context) {
+    // FUN_80071384 has merged animation root motion and scripted locomotion.
+    // Scale Mara's final horizontal delta before retail collision integration.
+    context.continueGuestInstruction();
+    std::uint32_t instruction{};
+    std::uint16_t mission_index{};
+    if (!agent_difficulty_ || !context.read32(context.pc(), instruction) ||
+        instruction != locomotion_instruction ||
+        !context.read16(mission_index_address, mission_index) ||
+        mission_index != 2U) {
+      return;
+    }
+
+    const auto actor = context.registerValue(actor_register);
+    std::uint16_t instance_slot{};
+    std::uint32_t records{};
+    std::uint32_t count{};
+    std::uint32_t definitions{};
+    std::uint32_t definition_count{};
+    if (actor == 0U || !validGuestRamRange(actor, 0x10U) ||
+        !context.read16(actor + 2U, instance_slot) ||
+        instance_slot != aramov_slot ||
+        !context.read32(object_records_pointer, records) ||
+        !context.read32(object_count_address, count) || count <= aramov_slot ||
+        count > 2048U ||
+        !context.read32(object_definitions_pointer, definitions) ||
+        !context.read32(definition_count_address, definition_count) ||
+        definition_count <= aramov_definition || definition_count > 1024U) {
+      return;
+    }
+
+    const auto record64 = static_cast<std::uint64_t>(records) +
+                          aramov_slot * object_record_stride;
+    const auto definition64 = static_cast<std::uint64_t>(definitions) +
+                              aramov_definition * object_definition_stride;
+    if (record64 > std::numeric_limits<std::uint32_t>::max() ||
+        definition64 > std::numeric_limits<std::uint32_t>::max()) {
+      return;
+    }
+    const auto record = static_cast<std::uint32_t>(record64);
+    const auto definition_address = static_cast<std::uint32_t>(definition64);
+    std::uint32_t definition{};
+    std::uint32_t record_instance{};
+    std::uint32_t authored_x{};
+    std::uint32_t authored_y{};
+    std::uint32_t authored_z{};
+    std::uint32_t motion{};
+    std::uint32_t delta_x{};
+    std::uint32_t delta_z{};
+    std::uint16_t attributes{};
+    std::uint16_t class_id{};
+    if (!validGuestRamRange(record, object_record_stride) ||
+        !context.read32(record, definition) ||
+        definition != aramov_definition ||
+        !context.read32(record + 0x18U, authored_x) ||
+        !context.read32(record + 0x1cU, authored_y) ||
+        !context.read32(record + 0x20U, authored_z) ||
+        std::bit_cast<std::int32_t>(authored_x) != -2749 ||
+        std::bit_cast<std::int32_t>(authored_y) != 10 ||
+        std::bit_cast<std::int32_t>(authored_z) != 9958 ||
+        !context.read16(record + 0x24U, attributes) ||
+        (attributes & 0x00ffU) != 2U ||
+        !context.read32(record + 0x34U, record_instance) ||
+        record_instance != actor ||
+        !validGuestRamRange(definition_address, object_definition_stride) ||
+        !context.read16(definition_address, class_id) ||
+        class_id != aramov_class || !context.read32(actor + 0x0cU, motion) ||
+        !validGuestRamRange(motion, 0x5cU) ||
+        !context.read32(motion + 0x50U, delta_x) ||
+        !context.read32(motion + 0x58U, delta_z)) {
+      return;
+    }
+
+    const auto adjusted_x =
+        agentAramovRootMotionDelta(std::bit_cast<std::int32_t>(delta_x));
+    const auto adjusted_z =
+        agentAramovRootMotionDelta(std::bit_cast<std::int32_t>(delta_z));
+    if (!context.write32(motion + 0x50U,
+                         std::bit_cast<std::uint32_t>(adjusted_x))) {
+      return;
+    }
+    if (!context.write32(motion + 0x58U,
+                         std::bit_cast<std::uint32_t>(adjusted_z))) {
+      // Keep the horizontal pair coherent if the second guest write fails.
+      if (!context.write32(motion + 0x50U, delta_x)) {
+        return;
+      }
+    }
+  });
+}
+
+void LegacyGameplayVm::bindSyphonFilterUsaV11AgentEnemyAimHooks(
+    const LegacyAgentEnemyAimProfile &profile) {
+  if (profile.agent_accuracy_boundary != 0U) {
+    bindHostCall(
+        profile.agent_accuracy_boundary,
+        [this, profile](LegacyHostCallContext &context) {
+          // Hard's branch has already added six to a0. Agent adds a
+          // small extra bias before retail multiplies the same aim
+          // coefficient; the original mult still executes.
+          context.continueGuestInstruction();
+          std::uint32_t instruction{};
+          if (!agent_difficulty_ || profile.agent_accuracy_bonus <= 0 ||
+              !context.read32(context.pc(), instruction) ||
+              instruction != profile.agent_accuracy_instruction) {
+            return;
+          }
+          const auto bonus =
+              static_cast<std::uint32_t>(profile.agent_accuracy_bonus);
+          const auto coefficient = context.argument(0U);
+          if (coefficient > std::numeric_limits<std::uint32_t>::max() - bonus) {
+            return;
+          }
+          context.setRegister(4U, coefficient + bonus);
+        });
+  }
+
+  if (profile.agent_target_memory_boundary != 0U) {
+    bindHostCall(
+        profile.agent_target_memory_boundary,
+        [this, profile](LegacyHostCallContext &context) {
+          // The original SLTIU still executes. For the Agent-only extension,
+          // values in [retail, Agent) are moved just inside retail's window.
+          context.continueGuestInstruction();
+          constexpr std::size_t age_register = 2U;    // v0
+          constexpr std::size_t actor_register = 16U; // s0
+          constexpr std::uint32_t actor_ai_controller_offset = 0x1cU;
+          constexpr std::uint32_t ai_archetype_offset = 0x47U;
+          std::uint32_t instruction{};
+          if (!agent_difficulty_ || profile.retail_target_memory_frames == 0U ||
+              profile.agent_target_memory_frames <=
+                  profile.retail_target_memory_frames ||
+              !context.read32(context.pc(), instruction) ||
+              instruction != profile.agent_target_memory_instruction) {
+            return;
+          }
+
+          const auto actor = context.registerValue(actor_register);
+          std::uint32_t target{};
+          std::uint32_t player{};
+          std::uint32_t ai{};
+          std::uint16_t target_slot_bits{};
+          std::uint16_t player_slot_bits{};
+          std::uint8_t archetype{};
+          if (!validGuestRamRange(actor, actor_ai_controller_offset + 4U) ||
+              !context.read32(actor + profile.actor_target_controller_offset,
+                              target) ||
+              !context.read32(actor + actor_ai_controller_offset, ai) ||
+              !validGuestRamRange(ai, ai_archetype_offset + 1U) ||
+              !context.read8(ai + ai_archetype_offset, archetype) ||
+              (archetype & 1U) == 0U ||
+              !validGuestRamRange(target, profile.target_slot_offset + 2U) ||
+              !context.read16(target + profile.target_slot_offset,
+                              target_slot_bits) ||
+              !context.read32(profile.player_pointer, player) ||
+              !validGuestRamRange(player, profile.instance_slot_offset + 2U) ||
+              !context.read16(player + profile.instance_slot_offset,
+                              player_slot_bits) ||
+              target_slot_bits != player_slot_bits) {
+            return;
+          }
+
+          std::uint16_t mission{};
+          const auto mission_valid =
+              context.read16(profile.mission_index, mission);
+          const auto flashlight_active = [&]() {
+            constexpr std::uint32_t light_node_size = 0x0cU;
+            constexpr std::uint32_t light_next_offset = 8U;
+            constexpr std::size_t light_capacity = 4U;
+            if (!mission_valid || mission != profile.tunnel_blackout_mission ||
+                profile.maximum_vertex_lights == 0U ||
+                profile.maximum_vertex_lights > light_capacity) {
+              return false;
+            }
+            std::uint32_t source_handle{};
+            std::uint32_t node{};
+            if (!context.read32(profile.flashlight_source, source_handle) ||
+                source_handle == 0U ||
+                !context.read32(profile.dynamic_light_list, node)) {
+              return false;
+            }
+            std::array<std::uint32_t, light_capacity> seen_nodes{};
+            std::array<std::uint32_t, light_capacity> seen_sources{};
+            auto count = std::size_t{};
+            auto found = false;
+            while (node != 0U) {
+              if (count >= profile.maximum_vertex_lights || (node & 3U) != 0U ||
+                  !validGuestRamRange(node, light_node_size)) {
+                return false;
+              }
+              for (std::size_t previous = 0U; previous < count; ++previous) {
+                if (seen_nodes[previous] == node) {
+                  return false;
+                }
+              }
+              std::uint32_t source{};
+              std::uint32_t next{};
+              std::uint32_t backlink{};
+              if (!context.read32(node, source) ||
+                  !context.read32(node + light_next_offset, next) ||
+                  (source & 3U) != 0U || !validGuestRamRange(source, 4U) ||
+                  !context.read32(source, backlink) || backlink != node) {
+                return false;
+              }
+              for (std::size_t previous = 0U; previous < count; ++previous) {
+                if (seen_sources[previous] == source) {
+                  return false;
+                }
+              }
+              seen_nodes[count] = node;
+              seen_sources[count] = source;
+              ++count;
+              found = found || (source == profile.flashlight_source &&
+                                source_handle == node);
+              node = next;
+            }
+            return found;
+          }();
+          const auto memory_frames = agentEnemyTargetMemoryFrames(
+              mission, true, flashlight_active,
+              profile.retail_target_memory_frames,
+              profile.agent_target_memory_frames,
+              profile.flashlight_target_memory_frames);
+          const auto age = context.registerValue(age_register);
+          if (age >= profile.retail_target_memory_frames &&
+              age < memory_frames) {
+            context.setRegister(age_register,
+                                profile.retail_target_memory_frames - 1U);
+          }
+        });
+  }
+
+  if (profile.kravitch_post_shot_boundary != 0U) {
+    bindHostCall(
+        profile.kravitch_post_shot_boundary,
+        [this, profile](LegacyHostCallContext &context) {
+          // Keep FUN_800630c0's SB and all retail firing/LOS decisions. Only
+          // shorten the pause it already produced for the exact live Agent
+          // Kravitch, then make the next retail route decision eligible.
+          context.continueGuestInstruction();
+          constexpr std::size_t cooldown_register = 3U; // v1
+          constexpr std::size_t instance_register = 16U; // s0
+          constexpr std::size_t weapon_register = 17U;   // s1
+          constexpr std::size_t ai_register = 18U;       // s2
+          constexpr std::uint16_t kravitch_slot = 174U;
+          constexpr std::uint32_t kravitch_definition = 53U;
+          constexpr std::uint8_t shotgun = 7U;
+          constexpr std::uint32_t object_record_stride = 0x4cU;
+          constexpr std::uint32_t object_definition_stride = 0x14U;
+          constexpr std::uint32_t instance_slot_offset = 0x02U;
+          constexpr std::uint32_t instance_target_offset = 0x14U;
+          constexpr std::uint32_t instance_health_offset = 0x18U;
+          constexpr std::uint32_t instance_ai_offset = 0x1cU;
+          constexpr std::uint32_t health_value_offset = 0x08U;
+          constexpr std::uint32_t target_slot_offset = 0U;
+          constexpr std::uint32_t target_flags_offset = 0x04U;
+          constexpr std::uint32_t target_invalid_flag = 0x04U;
+          constexpr std::uint32_t ai_decision_counter_offset = 0x4aU;
+          constexpr std::uint32_t ai_combat_mode_offset = 0x48U;
+          constexpr std::uint32_t record_attributes_offset = 0x24U;
+          constexpr std::uint32_t record_owner_offset = 0x34U;
+
+          std::uint32_t instruction{};
+          std::uint16_t mission{};
+          if (!agent_difficulty_ ||
+              !context.read32(context.pc(), instruction) ||
+              instruction != profile.kravitch_post_shot_instruction ||
+              !context.read16(profile.mission_index, mission) || mission != 0U ||
+              context.registerValue(weapon_register) != shotgun) {
+            return;
+          }
+
+          const auto instance = context.registerValue(instance_register);
+          const auto ai = context.registerValue(ai_register);
+          std::uint16_t instance_slot{};
+          std::uint32_t instance_target{};
+          std::uint32_t health{};
+          std::uint32_t instance_ai{};
+          std::uint16_t health_bits{};
+          std::uint8_t combat_mode{};
+          if (!validGuestRamRange(instance, instance_ai_offset + 4U) ||
+              !context.read16(instance + instance_slot_offset, instance_slot) ||
+              instance_slot != kravitch_slot ||
+              !context.read32(instance + instance_target_offset,
+                              instance_target) ||
+              !context.read32(instance + instance_health_offset, health) ||
+              !context.read32(instance + instance_ai_offset, instance_ai) ||
+              instance_ai != ai ||
+              !validGuestRamRange(health, health_value_offset + 2U) ||
+              !context.read16(health + health_value_offset, health_bits) ||
+              std::bit_cast<std::int16_t>(health_bits) <= 0 ||
+              !validGuestRamRange(ai, ai_decision_counter_offset + 1U) ||
+              !context.read8(ai + ai_combat_mode_offset, combat_mode) ||
+              combat_mode != 2U) {
+            return;
+          }
+
+          std::uint32_t player{};
+          std::uint16_t player_slot{};
+          std::uint16_t target_slot{};
+          std::uint32_t target_flags{};
+          if (!validGuestRamRange(instance_target, target_flags_offset + 4U) ||
+              !context.read16(instance_target + target_slot_offset,
+                              target_slot) ||
+              !context.read32(instance_target + target_flags_offset,
+                              target_flags) ||
+              (target_flags & target_invalid_flag) != 0U ||
+              !context.read32(profile.player_pointer, player) ||
+              !validGuestRamRange(player, instance_slot_offset + 2U) ||
+              !context.read16(player + instance_slot_offset, player_slot) ||
+              target_slot != player_slot) {
+            return;
+          }
+
+          std::uint32_t records{};
+          std::uint32_t count{};
+          std::uint32_t definitions{};
+          std::uint32_t definition_count{};
+          if (!context.read32(profile.object_records_pointer, records) ||
+              !context.read32(profile.object_count, count) ||
+              !context.read32(profile.object_definitions_pointer,
+                              definitions) ||
+              !context.read32(profile.object_definition_count,
+                              definition_count) ||
+              count <= kravitch_slot || count > profile.maximum_objects ||
+              definition_count <= kravitch_definition ||
+              definition_count > profile.maximum_definitions) {
+            return;
+          }
+          const auto record64 = static_cast<std::uint64_t>(records) +
+                                static_cast<std::uint64_t>(kravitch_slot) *
+                                    object_record_stride;
+          const auto definition64 =
+              static_cast<std::uint64_t>(definitions) +
+              static_cast<std::uint64_t>(kravitch_definition) *
+                  object_definition_stride;
+          if (record64 > std::numeric_limits<std::uint32_t>::max() ||
+              definition64 > std::numeric_limits<std::uint32_t>::max()) {
+            return;
+          }
+          const auto record = static_cast<std::uint32_t>(record64);
+          const auto definition_address =
+              static_cast<std::uint32_t>(definition64);
+          std::uint32_t definition{};
+          std::uint16_t attributes{};
+          std::uint32_t owner{};
+          std::uint16_t object_class{};
+          std::uint32_t handler{};
+          if (!validGuestRamRange(record, object_record_stride) ||
+              !context.read32(record, definition) ||
+              definition != kravitch_definition ||
+              !context.read16(record + record_attributes_offset, attributes) ||
+              attributes != 0xc107U ||
+              !context.read32(record + record_owner_offset, owner) ||
+              owner != instance ||
+              !validGuestRamRange(definition_address,
+                                  object_definition_stride) ||
+              !context.read16(definition_address, object_class) ||
+              object_class != 1U ||
+              !context.read32(profile.object_handler_table + 4U, handler) ||
+              handler != profile.common_npc_handler) {
+            return;
+          }
+
+          const auto retail_value = context.registerValue(cooldown_register);
+          const auto retail_cooldown =
+              static_cast<std::uint8_t>(retail_value & 0xffU);
+          const auto cooldown =
+              agentKravitchPostShotCooldown(retail_cooldown, true);
+          context.setRegister(cooldown_register,
+                              (retail_value & 0xffffff00U) | cooldown);
+
+          std::uint8_t decision_counter{};
+          if (!context.read8(ai + ai_decision_counter_offset,
+                             decision_counter)) {
+            return;
+          }
+          const auto primed =
+              agentKravitchPostShotDecisionCounter(decision_counter, true);
+          if (primed != decision_counter) {
+            static_cast<void>(context.write8(ai + ai_decision_counter_offset,
+                                             primed));
+          }
+        });
+  }
+}
+
+void LegacyGameplayVm::bindSyphonFilterUsaV11AgentGrenadeAwarenessHook(
+    const LegacyAgentGrenadeAwarenessProfile &profile) {
+  for (const auto boundary : profile.boundaries) {
+    bindHostCall(boundary, [this, profile](LegacyHostCallContext &context) {
+      // Preserve both retail functions wholesale. In the extended Agent-only
+      // band, feed their original SLTI a value just inside the 0xa00 threshold;
+      // guest code then alerts the NPC and owns route choice and locomotion.
+      context.continueGuestInstruction();
+      std::uint32_t instruction{};
+      if (!agent_difficulty_ || profile.retail_distance <= 0 ||
+          profile.agent_distance <= profile.retail_distance ||
+          !context.read32(context.pc(), instruction) ||
+          instruction != profile.instruction) {
+        return;
+      }
+
+      const auto distance =
+          std::bit_cast<std::int32_t>(context.registerValue(2U));
+      if (distance >= profile.retail_distance &&
+          distance < profile.agent_distance) {
+        context.setRegister(
+            2U, static_cast<std::uint32_t>(profile.retail_distance - 1));
+      }
+    });
+  }
+
+  if (profile.route_return_boundary == 0U) {
+    return;
+  }
+  bindHostCall(profile.route_return_boundary, [this,
+                                               profile](LegacyHostCallContext
+                                                            &context) {
+    // Retail chooses the first route edge by distance to a 0x780 ring
+    // around a player/grenade midpoint. The wider Agent alert band makes
+    // that heuristic visibly pull distant enemies toward the live grenade.
+    // Keep every retail controller and animation, but reject a first edge
+    // unless it has a positive away component and increases XZ distance.
+    context.continueGuestInstruction();
+    constexpr std::size_t return_value_register = 2U;
+    constexpr std::size_t target_point_register = 20U;  // s4
+    constexpr std::size_t standoff_register = 21U;      // s5
+    constexpr std::size_t controller_register = 22U;    // s6
+    constexpr std::size_t current_route_register = 23U; // s7
+    constexpr std::size_t stack_register = 29U;
+    constexpr std::size_t return_address_register = 31U;
+    constexpr std::uint8_t player_grenade_danger = 1U;
+    constexpr std::uint32_t route_actor_stack_offset = 0x58U;
+    constexpr std::uint32_t route_table_stack_offset = 0x60U;
+    constexpr std::uint32_t controller_route_offset = 0x43U;
+    static constexpr std::uint32_t route_stride = 0x0cU;
+    static constexpr std::uint32_t route_flags_offset = 0x06U;
+    static constexpr std::uint32_t route_neighbours_offset = 0x08U;
+    constexpr std::size_t route_neighbour_count = 3U;
+
+    std::uint32_t instruction{};
+    std::uint8_t danger_mask{};
+    if (!agent_difficulty_ || !context.read32(context.pc(), instruction) ||
+        instruction != profile.route_return_instruction ||
+        !context.read8(profile.danger_mask, danger_mask) ||
+        !validGuestRamRange(context.registerValue(stack_register),
+                            route_table_stack_offset + 4U)) {
+      return;
+    }
+
+    const auto stack = context.registerValue(stack_register);
+    const auto controller = context.registerValue(controller_register);
+    std::uint32_t route_table{};
+    std::uint8_t current_route{};
+    std::uint8_t previous_route{};
+    if (!validGuestRamRange(stack, route_table_stack_offset + 4U) ||
+        !validGuestRamRange(controller, controller_route_offset + 2U) ||
+        !context.read32(stack + route_table_stack_offset, route_table) ||
+        !context.read8(controller + controller_route_offset, current_route) ||
+        !context.read8(controller + controller_route_offset + 1U,
+                       previous_route)) {
+      return;
+    }
+
+    struct RouteNode {
+      std::int32_t x{};
+      std::int32_t z{};
+      std::uint16_t flags{};
+      std::array<std::int8_t, route_neighbour_count> neighbours{};
+    };
+    const auto read_route_node =
+        [&](std::uint8_t index) -> std::optional<RouteNode> {
+      const auto address64 = static_cast<std::uint64_t>(route_table) +
+                             static_cast<std::uint64_t>(index) * route_stride;
+      if (address64 > std::numeric_limits<std::uint32_t>::max()) {
+        return std::nullopt;
+      }
+      const auto address = static_cast<std::uint32_t>(address64);
+      if (!validGuestRamRange(address, route_stride)) {
+        return std::nullopt;
+      }
+
+      std::uint16_t x_bits{};
+      std::uint16_t z_bits{};
+      RouteNode node;
+      if (!context.read16(address, x_bits) ||
+          !context.read16(address + 4U, z_bits) ||
+          !context.read16(address + route_flags_offset, node.flags)) {
+        return std::nullopt;
+      }
+      node.x = std::bit_cast<std::int16_t>(x_bits);
+      node.z = std::bit_cast<std::int16_t>(z_bits);
+      for (std::size_t neighbour = 0U; neighbour < node.neighbours.size();
+           ++neighbour) {
+        std::uint8_t bits{};
+        if (!context.read8(address + route_neighbours_offset +
+                               static_cast<std::uint32_t>(neighbour),
+                           bits)) {
+          return std::nullopt;
+        }
+        node.neighbours[neighbour] = std::bit_cast<std::int8_t>(bits);
+      }
+      return node;
+    };
+
+    const auto current = read_route_node(current_route);
+    if (!current) {
+      return;
+    }
+
+    // A live grenade always owns this decision. Preserve the earlier
+    // Agent safety correction before considering weapon spacing/roles.
+    if ((danger_mask & player_grenade_danger) != 0U) {
+      constexpr std::uint32_t projectile_position_offset = 0x0cU;
+      constexpr std::uint32_t projectile_live_offset = 0U;
+      constexpr std::uint16_t route_type_mask = 0x0f00U;
+      constexpr std::uint16_t blocked_route_type = 1U;
+      constexpr std::uint16_t disabled_route_type = 7U;
+      if (profile.retail_standoff_distance <= 0 ||
+          context.registerValue(standoff_register) !=
+              static_cast<std::uint32_t>(profile.retail_standoff_distance)) {
+        return;
+      }
+
+      std::uint32_t projectile{};
+      std::uint32_t grenade_x_bits{};
+      std::uint32_t grenade_z_bits{};
+      std::uint8_t projectile_live{};
+      if (!context.read32(profile.player_projectile_pointer, projectile) ||
+          !validGuestRamRange(projectile, projectile_position_offset + 12U) ||
+          !context.read8(projectile + projectile_live_offset,
+                         projectile_live) ||
+          !context.read32(projectile + projectile_position_offset,
+                          grenade_x_bits) ||
+          !context.read32(projectile + projectile_position_offset + 8U,
+                          grenade_z_bits) ||
+          projectile_live != 0U) {
+        return;
+      }
+
+      const auto grenade_x = std::bit_cast<std::int32_t>(grenade_x_bits);
+      const auto grenade_z = std::bit_cast<std::int32_t>(grenade_z_bits);
+      const auto distance_squared = [&](const RouteNode &node) {
+        const auto dx = static_cast<std::int64_t>(node.x) - grenade_x;
+        const auto dz = static_cast<std::int64_t>(node.z) - grenade_z;
+        return static_cast<std::uint64_t>(dx * dx) +
+               static_cast<std::uint64_t>(dz * dz);
+      };
+      const auto away_score = [&](const RouteNode &node) {
+        const auto away_x = static_cast<std::int64_t>(current->x) - grenade_x;
+        const auto away_z = static_cast<std::int64_t>(current->z) - grenade_z;
+        const auto step_x = static_cast<std::int64_t>(node.x) - current->x;
+        const auto step_z = static_cast<std::int64_t>(node.z) - current->z;
+        return away_x * step_x + away_z * step_z;
+      };
+      const auto current_distance = distance_squared(*current);
+      const auto current_type =
+          static_cast<std::uint16_t>((current->flags & route_type_mask) >> 8U);
+      const auto route_allowed = [&](const RouteNode &node) {
+        const auto type =
+            static_cast<std::uint16_t>((node.flags & route_type_mask) >> 8U);
+        return type != blocked_route_type &&
+               (current_type != disabled_route_type ||
+                type != disabled_route_type);
+      };
+      const auto safe_route = [&](std::uint8_t route) {
+        if (route == current_route) {
+          return true;
+        }
+        const auto node = read_route_node(route);
+        return node && route_allowed(*node) && away_score(*node) >= 0 &&
+               distance_squared(*node) > current_distance;
+      };
+
+      const auto selected = context.registerValue(return_value_register);
+      if (selected <= std::numeric_limits<std::uint8_t>::max() &&
+          selected != current_route &&
+          safe_route(static_cast<std::uint8_t>(selected))) {
+        return;
+      }
+
+      auto best_route = current_route;
+      auto best_distance = current_distance;
+      auto best_score = std::int64_t{};
+      for (const auto neighbour : current->neighbours) {
+        if (neighbour < 0) {
+          continue;
+        }
+        const auto candidate_route = static_cast<std::uint8_t>(neighbour);
+        const auto candidate = read_route_node(candidate_route);
+        if (!candidate) {
+          continue;
+        }
+        const auto score = away_score(*candidate);
+        const auto distance = distance_squared(*candidate);
+        if (candidate_route == current_route || !route_allowed(*candidate) ||
+            score < 0 || distance <= current_distance) {
+          continue;
+        }
+        const auto candidate_is_previous = candidate_route == previous_route;
+        const auto best_is_previous = best_route == previous_route;
+        if (best_route == current_route ||
+            (!candidate_is_previous && best_is_previous) ||
+            (candidate_is_previous == best_is_previous &&
+             (distance > best_distance ||
+              (distance == best_distance && score > best_score)))) {
+          best_route = candidate_route;
+          best_distance = distance;
+          best_score = score;
+        }
+      }
+      context.setReturnValue(best_route);
+      return;
+    }
+
+    // The second caller of this epilogue is a reversal probe. Changing
+    // its return value would create false 180-degree turns.
+    if (profile.route_selection_return_address == 0U ||
+        context.registerValue(return_address_register) !=
+            profile.route_selection_return_address ||
+        context.registerValue(current_route_register) != current_route) {
+      return;
+    }
+    const auto retail_standoff = context.registerValue(standoff_register);
+    if (retail_standoff == 0U || retail_standoff == 0x03c0U ||
+        retail_standoff == 0x0780U || retail_standoff == 0x7d00U) {
+      return;
+    }
+
+    constexpr std::uint32_t actor_target_offset = 0x14U;
+    constexpr std::uint32_t actor_health_offset = 0x18U;
+    constexpr std::uint32_t actor_ai_offset = 0x1cU;
+    constexpr std::uint32_t actor_slot_offset = 0x02U;
+    constexpr std::uint32_t health_value_offset = 0x08U;
+    constexpr std::uint32_t ai_flags_offset = 0x20U;
+    constexpr std::uint32_t ai_fire_latch_offset = 0x41U;
+    constexpr std::uint32_t ai_archetype_offset = 0x47U;
+    constexpr std::uint32_t ai_combat_mode_offset = 0x48U;
+    constexpr std::uint32_t target_slot_offset = 0U;
+    constexpr std::uint32_t target_flags_offset = 0x04U;
+    constexpr std::uint32_t object_record_stride = 0x4cU;
+    constexpr std::uint32_t object_weapon_offset = 0x24U;
+    constexpr std::uint32_t object_instance_offset = 0x34U;
+    constexpr std::uint32_t object_definition_stride = 0x14U;
+    constexpr std::uint32_t active_combat_flag = 0x00000200U;
+    constexpr std::uint32_t scripted_combat_flags =
+        0x00000400U | 0x00001000U | 0x00040000U | 0x00080000U | 0x20000000U;
+    constexpr std::uint32_t target_invalid_flag = 0x04U;
+    constexpr std::uint16_t authored_route_mask = 0x0f0fU;
+
+    std::uint32_t actor{};
+    std::uint32_t target{};
+    std::uint32_t health{};
+    std::uint32_t actor_ai{};
+    std::uint32_t player{};
+    std::uint16_t actor_slot_bits{};
+    std::uint16_t player_slot_bits{};
+    std::uint16_t target_slot_bits{};
+    std::uint16_t health_bits{};
+    std::uint32_t target_flags{};
+    std::uint32_t ai_flags{};
+    std::uint8_t fire_latch{};
+    std::uint8_t archetype{};
+    std::uint8_t combat_mode{};
+    if (!context.read32(stack + route_actor_stack_offset, actor) ||
+        !validGuestRamRange(actor, actor_ai_offset + 4U) ||
+        !context.read16(actor + actor_slot_offset, actor_slot_bits) ||
+        !context.read32(actor + actor_target_offset, target) ||
+        !context.read32(actor + actor_health_offset, health) ||
+        !context.read32(actor + actor_ai_offset, actor_ai) ||
+        actor_ai != controller ||
+        !validGuestRamRange(target, target_flags_offset + 4U) ||
+        !validGuestRamRange(health, health_value_offset + 2U) ||
+        !validGuestRamRange(controller, ai_combat_mode_offset + 1U) ||
+        !context.read16(target + target_slot_offset, target_slot_bits) ||
+        !context.read32(target + target_flags_offset, target_flags) ||
+        !context.read16(health + health_value_offset, health_bits) ||
+        std::bit_cast<std::int16_t>(health_bits) <= 0 ||
+        !context.read32(controller + ai_flags_offset, ai_flags) ||
+        !context.read8(controller + ai_fire_latch_offset, fire_latch) ||
+        !context.read8(controller + ai_archetype_offset, archetype) ||
+        !context.read8(controller + ai_combat_mode_offset, combat_mode) ||
+        (archetype & 1U) == 0U || combat_mode != 2U ||
+        (ai_flags & active_combat_flag) == 0U ||
+        (ai_flags & scripted_combat_flags) != 0U ||
+        (target_flags & target_invalid_flag) != 0U ||
+        !context.read32(profile.player_pointer, player) ||
+        !validGuestRamRange(player, actor_slot_offset + 2U) ||
+        !context.read16(player + actor_slot_offset, player_slot_bits) ||
+        target_slot_bits != player_slot_bits) {
+      return;
+    }
+
+    const auto actor_slot = static_cast<std::uint32_t>(actor_slot_bits);
+    std::uint32_t records{};
+    std::uint32_t definition_count{};
+    std::uint32_t definitions{};
+    if (!context.read32(profile.object_records_pointer, records) ||
+        !context.read32(profile.object_definition_count, definition_count) ||
+        !context.read32(profile.object_definitions_pointer, definitions) ||
+        records == 0U || definitions == 0U || definition_count == 0U ||
+        definition_count > 4096U) {
+      return;
+    }
+    const auto record64 =
+        static_cast<std::uint64_t>(records) +
+        static_cast<std::uint64_t>(actor_slot) * object_record_stride;
+    if (record64 > std::numeric_limits<std::uint32_t>::max()) {
+      return;
+    }
+    const auto record = static_cast<std::uint32_t>(record64);
+    std::uint32_t definition{};
+    std::uint32_t record_instance{};
+    std::uint8_t weapon{};
+    if (!validGuestRamRange(record, object_record_stride) ||
+        !context.read32(record, definition) || definition >= definition_count ||
+        !context.read8(record + object_weapon_offset, weapon) ||
+        !context.read32(record + object_instance_offset, record_instance) ||
+        record_instance != actor) {
+      return;
+    }
+    const auto definition64 =
+        static_cast<std::uint64_t>(definitions) +
+        static_cast<std::uint64_t>(definition) * object_definition_stride;
+    if (definition64 > std::numeric_limits<std::uint32_t>::max()) {
+      return;
+    }
+    const auto definition_address = static_cast<std::uint32_t>(definition64);
+    std::uint16_t class_bits{};
+    if (!validGuestRamRange(definition_address, object_definition_stride) ||
+        !context.read16(definition_address, class_bits)) {
+      return;
+    }
+    const auto object_class = std::bit_cast<std::int16_t>(class_bits);
+    if (object_class < 0 || object_class > 255) {
+      return;
+    }
+    std::uint32_t handler{};
+    if (!context.read32(profile.object_handler_table +
+                            static_cast<std::uint32_t>(object_class) * 4U,
+                        handler) ||
+        handler != profile.common_npc_handler) {
+      return;
+    }
+
+    const auto preferred_distance = [&]() -> std::optional<std::int32_t> {
+      if (weapon >= 1U && weapon <= 5U) {
+        return profile.pistol_distance;
+      }
+      if (weapon == 6U || weapon == 7U || weapon == 14U || weapon == 15U) {
+        return profile.shotgun_distance;
+      }
+      if ((weapon >= 8U && weapon <= 11U) || weapon == 17U) {
+        return profile.automatic_distance;
+      }
+      if (weapon == 12U || weapon == 13U || weapon == 16U) {
+        return profile.sniper_distance;
+      }
+      return std::nullopt;
+    }();
+    if (!preferred_distance || *preferred_distance <= 0 ||
+        profile.tactical_distance_band < 0 ||
+        profile.tactical_minimum_improvement < 0 ||
+        profile.flank_distance_tolerance < 0 ||
+        profile.flank_minimum_step < 0 ||
+        (current->flags & authored_route_mask) != 0U) {
+      return;
+    }
+
+    const auto target_point = context.registerValue(target_point_register);
     std::uint32_t target_x_bits{};
     std::uint32_t target_z_bits{};
-    if (!context.read32(shooter + 8U, shooter_instance) ||
-        !context.read32(shooter_instance + 0x0cU, shooter_matrix) ||
-        !context.read32(shooter_matrix + 0x14U, source_x_bits) ||
-        !context.read32(shooter_matrix + 0x1cU, source_z_bits) ||
-        !context.read32(stack + 0x10U, target_x_bits) ||
-        !context.read32(stack + 0x18U, target_z_bits)) {
+    if (!validGuestRamRange(target_point, 12U) ||
+        !context.read32(target_point, target_x_bits) ||
+        !context.read32(target_point + 8U, target_z_bits)) {
       return;
     }
-
-    const auto source_x = std::bit_cast<std::int32_t>(source_x_bits);
-    const auto source_z = std::bit_cast<std::int32_t>(source_z_bits);
     const auto target_x = std::bit_cast<std::int32_t>(target_x_bits);
     const auto target_z = std::bit_cast<std::int32_t>(target_z_bits);
-    const auto distance = std::hypot(static_cast<double>(target_x) - source_x,
-                                     static_cast<double>(target_z) - source_z);
-    if (!std::isfinite(distance) ||
-        distance > static_cast<double>(profile.close_distance)) {
+    const auto route_is_direct = [&](std::uint8_t route) {
+      if (route == current_route) {
+        return true;
+      }
+      return std::ranges::find(current->neighbours,
+                               std::bit_cast<std::int8_t>(route)) !=
+             current->neighbours.end();
+    };
+    const auto tactical_node =
+        [&](std::uint8_t route) -> std::optional<RouteNode> {
+      if (!route_is_direct(route) ||
+          (route != current_route && route == previous_route)) {
+        return std::nullopt;
+      }
+      const auto node = read_route_node(route);
+      if (!node || (node->flags & authored_route_mask) != 0U) {
+        return std::nullopt;
+      }
+      return node;
+    };
+    const auto distance_to_target = [&](const RouteNode &node) {
+      const auto dx = static_cast<double>(node.x) - target_x;
+      const auto dz = static_cast<double>(node.z) - target_z;
+      return static_cast<std::uint64_t>(std::llround(std::hypot(dx, dz)));
+    };
+    const auto distance_error = [&](const RouteNode &node) {
+      const auto distance = distance_to_target(node);
+      const auto preferred = static_cast<std::uint64_t>(*preferred_distance);
+      return distance > preferred ? distance - preferred : preferred - distance;
+    };
+
+    const auto selected_bits = context.registerValue(return_value_register);
+    const auto selected_route =
+        selected_bits <= std::numeric_limits<std::uint8_t>::max()
+            ? std::optional{static_cast<std::uint8_t>(selected_bits)}
+            : std::nullopt;
+    if (!selected_route) {
+      return;
+    }
+    const auto selected_node = tactical_node(*selected_route);
+    if (!selected_node) {
+      return;
+    }
+    const auto current_error = distance_error(*current);
+    const auto band =
+        static_cast<std::uint64_t>(profile.tactical_distance_band);
+    const auto baseline_error = distance_error(*selected_node);
+
+    if (current_error > band) {
+      auto best_route = current_route;
+      auto best_error = current_error;
+      for (const auto neighbour : current->neighbours) {
+        if (neighbour < 0) {
+          continue;
+        }
+        const auto candidate_route = static_cast<std::uint8_t>(neighbour);
+        const auto candidate = tactical_node(candidate_route);
+        if (!candidate) {
+          continue;
+        }
+        const auto error = distance_error(*candidate);
+        if (error < best_error) {
+          best_route = candidate_route;
+          best_error = error;
+        }
+      }
+      const auto improvement =
+          static_cast<std::uint64_t>(profile.tactical_minimum_improvement);
+      if (best_error + improvement <= baseline_error) {
+        context.setReturnValue(best_route);
+      }
       return;
     }
 
-    // The original delay instruction adds 0x10 to a1. Seed it
-    // with sp so the callee receives retail's exact local target.
-    context.setRegister(5U, stack);
-    ++enemy_close_aim_patch_count_;
+    // Stable stateless roles: suppress / left flank / right flank / hold.
+    // Dynamic slot reuse changes definition/path and therefore assignment.
+    const auto role = static_cast<std::uint32_t>(
+        (actor_slot + definition + (route_table >> 4U)) & 3U);
+    if (role == 0U) {
+      constexpr std::uint32_t weapon_in_range_flag = 0x00002000U;
+      if ((ai_flags & weapon_in_range_flag) != 0U && fire_latch != 0U) {
+        context.setReturnValue(current_route);
+      }
+      return;
+    }
+    if (role == 3U) {
+      context.setReturnValue(current_route);
+      return;
+    }
+
+    const auto radial_x = static_cast<std::int64_t>(target_x) - current->x;
+    const auto radial_z = static_cast<std::int64_t>(target_z) - current->z;
+    const auto side = role == 1U ? std::int64_t{1} : std::int64_t{-1};
+    const auto allowed_error =
+        baseline_error +
+        static_cast<std::uint64_t>(profile.flank_distance_tolerance);
+    const auto minimum_lateral =
+        static_cast<std::int64_t>(profile.flank_minimum_step) *
+        static_cast<std::int64_t>(
+            std::max<std::uint64_t>(distance_to_target(*current), 1U));
+    auto best_route = *selected_route;
+    auto best_lateral = std::numeric_limits<std::int64_t>::min();
+    auto best_error = std::numeric_limits<std::uint64_t>::max();
+    for (const auto neighbour : current->neighbours) {
+      if (neighbour < 0) {
+        continue;
+      }
+      const auto candidate_route = static_cast<std::uint8_t>(neighbour);
+      const auto candidate = tactical_node(candidate_route);
+      if (!candidate) {
+        continue;
+      }
+      const auto error = distance_error(*candidate);
+      const auto step_x = static_cast<std::int64_t>(candidate->x) - current->x;
+      const auto step_z = static_cast<std::int64_t>(candidate->z) - current->z;
+      const auto lateral = side * (radial_x * step_z - radial_z * step_x);
+      if (error > allowed_error || lateral < minimum_lateral) {
+        continue;
+      }
+      if (lateral > best_lateral ||
+          (lateral == best_lateral && error < best_error)) {
+        best_route = candidate_route;
+        best_lateral = lateral;
+        best_error = error;
+      }
+    }
+    if (best_lateral != std::numeric_limits<std::int64_t>::min()) {
+      context.setReturnValue(best_route);
+    }
   });
 }
 
@@ -1939,6 +3287,78 @@ void LegacyGameplayVm::bindSyphonFilterUsaV11WeaponEventHooks(
       weapon_events_.push_back(event);
     });
   }
+
+  bindHostCall(profile.impact_boundary, [this, profile](
+                                            LegacyHostCallContext &context) {
+    context.continueGuestInstruction();
+
+    constexpr auto signature_bytes = static_cast<std::uint32_t>(
+        (std::tuple_size_v<decltype(profile.impact_instructions)> - 1U) * 4U);
+    if (context.pc() >
+        std::numeric_limits<std::uint32_t>::max() - signature_bytes) {
+      return;
+    }
+    for (std::size_t word = 0U; word < profile.impact_instructions.size();
+         ++word) {
+      std::uint32_t instruction{};
+      if (!context.read32(context.pc() + static_cast<std::uint32_t>(word * 4U),
+                          instruction) ||
+          instruction != profile.impact_instructions[word]) {
+        return;
+      }
+    }
+
+    const auto shooter_slot = static_cast<std::int16_t>(
+        static_cast<std::uint16_t>(context.argument(0U)));
+    const auto edge = std::find_if(
+        weapon_events_.rbegin(), weapon_events_.rend(),
+        [shooter_slot](const LegacyWeaponEventBridgeState &candidate) {
+          return candidate.type == LegacyWeaponEventType::shot &&
+                 candidate.actor_slot == shooter_slot &&
+                 candidate.impact_count < candidate.impacts.size();
+        });
+    if (edge == weapon_events_.rend()) {
+      return;
+    }
+
+    const auto read_signed32 = [&context](std::uint32_t address,
+                                          std::int32_t &value) {
+      std::uint32_t bits{};
+      if (!context.read32(address, bits)) {
+        return false;
+      }
+      value = std::bit_cast<std::int32_t>(bits);
+      return true;
+    };
+    LegacyWeaponImpactBridgeState impact;
+    const auto position = context.argument(3U);
+    const auto vector = context.argument(4U);
+    if (!read_signed32(position, impact.position.x) ||
+        !read_signed32(position + 4U, impact.position.y) ||
+        !read_signed32(position + 8U, impact.position.z) ||
+        !read_signed32(vector, impact.vector.x) ||
+        !read_signed32(vector + 4U, impact.vector.y) ||
+        !read_signed32(vector + 8U, impact.vector.z) ||
+        !context.read32(profile.hit_result, impact.hit_result)) {
+      return;
+    }
+
+    const auto target_controller = context.argument(1U);
+    impact.world = target_controller == 0U;
+    impact.effect_kind = static_cast<std::int16_t>(
+        static_cast<std::uint16_t>(context.argument(2U)));
+    if (!impact.world) {
+      std::uint16_t target_slot{};
+      if (!context.read16(target_controller + 2U, target_slot)) {
+        return;
+      }
+      impact.target_slot = std::bit_cast<std::int16_t>(target_slot);
+      if (impact.target_slot < 0) {
+        return;
+      }
+    }
+    edge->impacts[edge->impact_count++] = impact;
+  });
 }
 
 void LegacyGameplayVm::bindSyphonFilterUsaV11GameplayTextHooks(
@@ -2115,11 +3535,14 @@ void LegacyGameplayVm::clearHostCalls() noexcept {
   std::ranges::fill(ram_host_calls_, nullptr);
   host_calls_.clear();
   host_aim_ray_.reset();
+  agent_cbdc_friendly_fire_frame_.reset();
+  agent_cbdc_friendly_fire_pending_penalties_ = 0U;
   weapon_events_.clear();
   attached_text_sources_.clear();
   ui_messages_.clear();
   host_aim_ray_patch_count_ = 0U;
-  enemy_close_aim_patch_count_ = 0U;
+
+  clearAgentHeadshotThreat();
   interrupt_callbacks_.fill(0U);
   machine_.setCdRomMedia(nullptr);
   virtual_cd_.reset();
@@ -2742,6 +4165,7 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
   std::uint32_t player_control_lock{};
   std::uint16_t current_room_bits{};
   std::uint8_t target_lock_active{};
+  std::uint8_t aim_miss{};
   std::int32_t virus_scanner_target_slot{-1};
   std::uint32_t flashlight_handle{};
   std::uint16_t headshot_text_handle{};
@@ -2756,6 +4180,10 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
       !runtime_.read32(profile.player_control_lock, player_control_lock) ||
       !runtime_.read16(profile.current_room, current_room_bits) ||
       !runtime_.read8(profile.target_lock_active, target_lock_active) ||
+      !read_signed32(profile.aim_target, state.aim_target.x) ||
+      !read_signed32(profile.aim_target + 4U, state.aim_target.y) ||
+      !read_signed32(profile.aim_target + 8U, state.aim_target.z) ||
+      !runtime_.read8(profile.aim_miss, aim_miss) ||
       !read_signed32(profile.virus_scanner_target,
                      state.virus_scanner_target.x) ||
       !read_signed32(profile.virus_scanner_target + 4U,
@@ -2782,6 +4210,7 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
   state.player.control_locked = player_control_lock != 0U;
   state.player.room = std::bit_cast<std::int16_t>(current_room_bits);
   state.target_lock_active = target_lock_active != 0U;
+  state.aim_target_valid = aim_miss == 0U;
 
   // FUN_800cd734 owns this intrusive list. A source is active only while its
   // +0 handle names the node that actually contains it; sampling the low byte
@@ -2925,6 +4354,53 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
       profile.maximum_world_section_vertices == 0U ||
       profile.maximum_world_vertex_colors == 0U) {
     return std::nullopt;
+  }
+
+  constexpr std::uint32_t decal_active_offset = 0x20U;
+  constexpr std::uint32_t decal_owner_offset = 0x24U;
+  constexpr std::uint32_t decal_material_offset = 0x28U;
+  if (profile.world_decal_stride != 0x38U ||
+      profile.world_decal_capacity != legacy_world_decal_capacity) {
+    return std::nullopt;
+  }
+  state.world_decals.reserve(profile.world_decal_capacity);
+  for (std::uint32_t slot = 0U; slot < profile.world_decal_capacity; ++slot) {
+    const auto record =
+        address(profile.world_decal_pool,
+                static_cast<std::uint64_t>(slot) * profile.world_decal_stride);
+    std::uint32_t active{};
+    std::int32_t owner{};
+    if (!record || !runtime_.read32(*record + decal_active_offset, active) ||
+        active > 1U) {
+      return std::nullopt;
+    }
+    if (active == 0U) {
+      continue;
+    }
+    if (!read_signed32(*record + decal_owner_offset, owner)) {
+      return std::nullopt;
+    }
+    LegacyWorldDecalBridgeState decal;
+    decal.owner = owner;
+    decal.slot = static_cast<std::uint8_t>(slot);
+    for (std::uint32_t vertex = 0U; vertex < decal.vertices.size(); ++vertex) {
+      const auto source = *record + vertex * 8U;
+      std::int16_t x{};
+      std::int16_t y{};
+      std::int16_t z{};
+      if (!read_signed16(source, x) || !read_signed16(source + 2U, y) ||
+          !read_signed16(source + 4U, z)) {
+        return std::nullopt;
+      }
+      decal.vertices[vertex] = {x, y, z};
+    }
+    for (std::uint32_t word = 0U; word < decal.material_words.size(); ++word) {
+      if (!runtime_.read32(*record + decal_material_offset + word * 4U,
+                           decal.material_words[word])) {
+        return std::nullopt;
+      }
+    }
+    state.world_decals.push_back(decal);
   }
 
   // FUN_8002ba08/FUN_800c6ac0 do not create a radial lamp. They mutate the
@@ -3102,6 +4578,7 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
       profile.dropped_item_matrix_stride != 0x24U) {
     return std::nullopt;
   }
+  state.dropped_item_floor_owner_mask = 0U;
   state.dropped_items.reserve(profile.dropped_item_capacity);
   for (std::uint32_t slot = 0U; slot < profile.dropped_item_capacity; ++slot) {
     const auto owner_address = address(profile.dropped_item_owners, slot * 4U);
@@ -3115,10 +4592,13 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
       return std::nullopt;
     }
     // Attached equipment stores an actor pointer (KSEG0); 0xffffffff is the
-    // vacant sentinel.  Only a non-negative room owner is a floor pickup.
-    if ((owner & 0x80000000U) != 0U) {
+    // vacant sentinel. Only a non-negative in-range room owner is a floor
+    // pickup. Publish that ownership before descriptor validation so the
+    // presentation cache can distinguish allocator churn from collection.
+    if ((owner & 0x80000000U) != 0U || owner >= state.world_model_count) {
       continue;
     }
+    state.dropped_item_floor_owner_mask |= std::uint32_t{1U} << slot;
     std::uint16_t item{};
     std::uint32_t matrix{};
     LegacyNativeMatrix transform;
@@ -3132,8 +4612,7 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
     const auto expected_matrix = address(
         profile.dropped_item_matrices,
         static_cast<std::uint64_t>(slot) * profile.dropped_item_matrix_stride);
-    if (owner >= state.world_model_count ||
-        !readable_ram_pointer(descriptor, 0x18U) || !descriptor_matrix ||
+    if (!readable_ram_pointer(descriptor, 0x18U) || !descriptor_matrix ||
         !expected_matrix || !runtime_.read32(*descriptor_matrix, matrix) ||
         matrix != *expected_matrix || !readable_ram_pointer(matrix, 0x20U) ||
         !runtime_.read16(descriptor + 0x16U, item) ||
@@ -3209,6 +4688,7 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
       !runtime_.read32(profile.player_pointer, player)) {
     return std::nullopt;
   }
+  state.grenade_input_ready = grenade_input_pending != 0U;
   const auto grenade_weapon = current_weapon == 19U || current_weapon == 20U;
   const auto charge_held = (state.pad.buttons & 0x0080U) != 0U;
   if (grenade_weapon && aim_mode != 0U && !state.thrown_projectile &&
@@ -3512,8 +4992,8 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
     if (state.environment.nightvision_enabled) {
       const auto interface_sprite_head_address =
           address(interface_renderer, profile.renderer_sprite_list_offset);
-      const auto interface_fast_path_address = address(
-          interface_renderer, profile.renderer_sprite_fast_path_offset);
+      const auto interface_fast_path_address =
+          address(interface_renderer, profile.renderer_sprite_fast_path_offset);
       if (!interface_sprite_head_address || !interface_fast_path_address ||
           !runtime_.read32(*interface_sprite_head_address,
                            interface_sprite_head) ||
@@ -3701,12 +5181,21 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
                  read_raw_packet)) {
     return std::nullopt;
   }
+  // Modes 2..4 are the three retail first-person optics. The interface packet
+  // pool keeps stale non-zero links outside those modes, so link state alone
+  // cannot identify an active scope overlay.
+  const auto optic_active = aim_mode >= 2U && aim_mode <= 4U;
+  const auto packet_matches_optic_mode =
+      [aim_mode](const LegacyGuestRawPacketBridgeState &packet) {
+        return aim_mode == 4U
+                   ? legacyGuestRawPacketIsVirusScannerOverlay(packet)
+                   : legacyGuestRawPacketIsRetailScopeOverlay(packet);
+      };
   const auto read_interface_scope_packet = [&](std::uint32_t item) {
     const auto candidate = LegacyGuestRawPacketBridgeState{
         .source_address = item,
     };
-    return !legacyGuestRawPacketIsRetailOpticOverlay(candidate) ||
-           read_raw_packet(item);
+    return !packet_matches_optic_mode(candidate) || read_raw_packet(item);
   };
   // The interface context is normally distinct from the world camera. Avoid
   // reading the same intrusive list twice on exceptional/loading frames where
@@ -3714,7 +5203,8 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
   // sprite/raw arrays cross this boundary; the rest of retail UI is already
   // represented by the dedicated immutable UI bridge and would otherwise be
   // drawn twice.
-  if (interface_renderer != 0U && interface_renderer != camera_object &&
+  if (optic_active && interface_renderer != 0U &&
+      interface_renderer != camera_object &&
       ((state.environment.nightvision_enabled &&
         !read_list(interface_sprite_head, profile.maximum_guest_sprites,
                    read_interface_scope_sprite)) ||
@@ -3727,7 +5217,7 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
   // the known arrays as a fallback, accept only linked entries, and dedupe the
   // normal list traversal. This is also what preserves the six semitransparent
   // mode-2 POLY_F4 dim quads at 0x8011c5b8..0x8011c66c.
-  if (interface_renderer != 0U) {
+  if (optic_active && interface_renderer != 0U) {
     const auto read_active_fixed_optic_range = [&](const auto &range) {
       for (std::uint32_t index = 0U; index < range.count; ++index) {
         const auto item = range.begin + index * range.stride;
@@ -3735,11 +5225,11 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
         if (!runtime_.read32(item, link)) {
           return false;
         }
-        if (link == 0U ||
-            std::ranges::any_of(state.guest_raw_packets,
-                                [item](const auto &packet) {
-                                  return packet.source_address == item;
-                                })) {
+        if (link == 0U || std::ranges::any_of(state.guest_raw_packets,
+                                              [item](const auto &packet) {
+                                                return packet.source_address ==
+                                                       item;
+                                              })) {
           continue;
         }
         if (!read_raw_packet(item)) {
@@ -3748,9 +5238,18 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
       }
       return true;
     };
-    if (!std::ranges::all_of(
-            legacy_fixed_retail_optic_packet_ranges,
-            read_active_fixed_optic_range)) {
+    const auto fixed_ranges_valid =
+        aim_mode == 4U
+            ? read_active_fixed_optic_range(
+                  legacy_virus_scanner_line_packets) &&
+                  read_active_fixed_optic_range(
+                      legacy_virus_scanner_target_dot_packets)
+            : read_active_fixed_optic_range(legacy_retail_scope_line_packets) &&
+                  read_active_fixed_optic_range(
+                      legacy_retail_scope_quad_packets) &&
+                  read_active_fixed_optic_range(
+                      legacy_retail_scope_triangle_packets);
+    if (!fixed_ranges_valid) {
       return std::nullopt;
     }
   }
@@ -3870,6 +5369,212 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
   }
   // FUN_8003ce88 clears only the three coordinates. The slot word is stale
   // after leaving scanner range and must never keep a carrier selected alone.
+  const auto read_hmd_wound_vertices = [this, &address, &readable_ram_pointer,
+                                        &profile](
+                                           LegacyObjectBridgeState &object) {
+    object.hmd_wound_vertex_count = 0U;
+    if (!object.resident || object.root_node == 0U) {
+      return;
+    }
+
+    constexpr std::uint32_t display_model_offset = 0x10U;
+    constexpr std::uint32_t model_payload_offset = 0x20U;
+    constexpr std::uint32_t hmd_wound_table_offset = 0x10U;
+    constexpr std::uint32_t hmd_geometry_end_offset = 0x14U;
+    constexpr std::uint32_t hmd_header_size = 0x24U;
+    constexpr std::uint32_t hmd_part_header_size = 0x44U;
+    constexpr std::uint32_t hmd_vertex_size = 8U;
+    constexpr std::uint32_t wound_record_stride = 0x3cU;
+    constexpr std::uint32_t wound_record_node_offset = 0U;
+    constexpr std::uint32_t wound_record_count_offset = 0x0cU;
+    constexpr std::uint32_t wound_record_vertices_offset = 0x10U;
+    constexpr std::uint32_t maximum_hmd_parts = 256U;
+
+    const auto model_address = address(object.root_node, display_model_offset);
+    std::uint32_t model{};
+    if (!model_address || !runtime_.read32(*model_address, model) ||
+        model == 0U) {
+      return;
+    }
+    const auto payload_address = address(model, model_payload_offset);
+    std::uint32_t payload{};
+    if (!payload_address || !runtime_.read32(*payload_address, payload) ||
+        !readable_ram_pointer(payload, hmd_header_size)) {
+      return;
+    }
+
+    std::uint32_t flags{};
+    std::uint32_t part_count{};
+    std::uint32_t triangle_words{};
+    std::uint32_t geometry_end{};
+    const auto geometry_end_address = address(payload, hmd_geometry_end_offset);
+    if (!geometry_end_address || !runtime_.read32(payload, flags) ||
+        !runtime_.read32(payload + 4U, part_count) ||
+        !runtime_.read32(payload + 8U, triangle_words) ||
+        !runtime_.read32(*geometry_end_address, geometry_end) ||
+        (flags & ~1U) != 0x48000000U || part_count == 0U ||
+        part_count > maximum_hmd_parts || triangle_words == 0U ||
+        (triangle_words & 3U) != 0U) {
+      return;
+    }
+
+    std::uint32_t wound_table{};
+    if (object.class_id == 0) {
+      wound_table = profile.player_hmd_wound_table;
+    } else {
+      const auto table_address = address(payload, hmd_wound_table_offset);
+      if (!table_address || !runtime_.read32(*table_address, wound_table)) {
+        return;
+      }
+    }
+    if (!readable_ram_pointer(wound_table, 8U)) {
+      return;
+    }
+
+    std::uint32_t record_count{};
+    std::uint32_t records{};
+    if (!runtime_.read32(wound_table, record_count) ||
+        !runtime_.read32(wound_table + 4U, records) || record_count == 0U ||
+        record_count > profile.maximum_objects) {
+      return;
+    }
+    const auto record_bytes =
+        static_cast<std::uint64_t>(record_count) * wound_record_stride;
+    if (record_bytes > std::numeric_limits<std::size_t>::max() ||
+        !readable_ram_pointer(records,
+                              static_cast<std::size_t>(record_bytes))) {
+      return;
+    }
+
+    auto matching_record = std::uint32_t{};
+    for (std::uint32_t index = 0U; index < record_count; ++index) {
+      const auto record = address(records, static_cast<std::uint64_t>(index) *
+                                               wound_record_stride);
+      std::uint32_t record_node{};
+      if (!record ||
+          !runtime_.read32(*record + wound_record_node_offset, record_node)) {
+        return;
+      }
+      if (record_node == object.root_node) {
+        matching_record = *record;
+        break;
+      }
+    }
+    if (matching_record == 0U) {
+      return;
+    }
+
+    std::uint32_t wound_count{};
+    if (!runtime_.read32(matching_record + wound_record_count_offset,
+                         wound_count) ||
+        wound_count > legacy_hmd_wound_vertex_capacity) {
+      return;
+    }
+    std::array<std::uint32_t, legacy_hmd_wound_vertex_capacity>
+        wound_pointers{};
+    for (std::uint32_t index = 0U; index < wound_count; ++index) {
+      if (!runtime_.read32(matching_record + wound_record_vertices_offset +
+                               index * 4U,
+                           wound_pointers[index])) {
+        return;
+      }
+    }
+
+    const auto geometry_offset =
+        static_cast<std::uint64_t>(hmd_header_size) +
+        static_cast<std::uint64_t>(triangle_words) * 4U;
+    if (geometry_offset > geometry_end ||
+        !readable_ram_pointer(payload, geometry_end)) {
+      return;
+    }
+    const auto geometry_begin =
+        static_cast<std::uint64_t>(payload) + geometry_offset;
+    const auto geometry_finish =
+        static_cast<std::uint64_t>(payload) + geometry_end;
+    auto cursor = geometry_begin;
+    auto first_vertex = std::uint64_t{};
+    std::array<std::uint16_t, legacy_hmd_wound_vertex_capacity> vertices{};
+    auto vertex_count = std::size_t{};
+
+    for (std::uint32_t part = 0U; part < part_count; ++part) {
+      if (cursor > geometry_finish ||
+          geometry_finish - cursor < hmd_part_header_size ||
+          cursor > std::numeric_limits<std::uint32_t>::max()) {
+        return;
+      }
+      const auto part_address = static_cast<std::uint32_t>(cursor);
+      std::uint32_t part_size{};
+      std::uint32_t vertex_triplets{};
+      std::uint32_t normal_triplets{};
+      std::uint16_t declared_vertices{};
+      std::uint16_t declared_normals{};
+      std::uint32_t normal_offset{};
+      if (!runtime_.read32(part_address, part_size) ||
+          !runtime_.read32(part_address + 8U, vertex_triplets) ||
+          !runtime_.read32(part_address + 0x0cU, normal_triplets) ||
+          !runtime_.read16(part_address + 0x34U, declared_vertices) ||
+          !runtime_.read16(part_address + 0x36U, declared_normals) ||
+          !runtime_.read32(part_address + 0x40U, normal_offset)) {
+        return;
+      }
+      const auto padded_vertices =
+          static_cast<std::uint64_t>(vertex_triplets) * 3U;
+      const auto padded_normals =
+          static_cast<std::uint64_t>(normal_triplets) * 3U;
+      const auto expected_part_size =
+          static_cast<std::uint64_t>(hmd_part_header_size) +
+          (padded_vertices + padded_normals) * hmd_vertex_size;
+      const auto relative_part = cursor - payload;
+      const auto expected_normal_offset = relative_part + hmd_part_header_size +
+                                          padded_vertices * hmd_vertex_size;
+      if (expected_part_size != part_size ||
+          part_size > geometry_finish - cursor ||
+          declared_vertices > padded_vertices ||
+          declared_normals > padded_normals ||
+          expected_normal_offset != normal_offset ||
+          first_vertex + declared_vertices >
+              std::numeric_limits<std::uint16_t>::max()) {
+        return;
+      }
+
+      const auto normal_begin =
+          static_cast<std::uint64_t>(payload) + normal_offset;
+      // FUN_800d2bf0/FUN_800d2dd4 index this normal table with the
+      // part's authored +0x34 vertex count; +0x36 is not the search bound.
+      const auto normal_end =
+          normal_begin +
+          static_cast<std::uint64_t>(declared_vertices) * hmd_vertex_size;
+      if (normal_begin < cursor || normal_end > cursor + part_size) {
+        return;
+      }
+      for (std::uint32_t wound = 0U; wound < wound_count; ++wound) {
+        const auto pointer = static_cast<std::uint64_t>(wound_pointers[wound]);
+        if (pointer < normal_begin || pointer >= normal_end ||
+            (pointer - normal_begin) % hmd_vertex_size != 0U) {
+          continue;
+        }
+        const auto local_vertex = (pointer - normal_begin) / hmd_vertex_size;
+        if (local_vertex >= declared_vertices) {
+          continue;
+        }
+        const auto global_vertex =
+            static_cast<std::uint16_t>(first_vertex + local_vertex);
+        if (std::ranges::find(vertices.begin(), vertices.begin() + vertex_count,
+                              global_vertex) ==
+                vertices.begin() + vertex_count &&
+            vertex_count < vertices.size()) {
+          vertices[vertex_count++] = global_vertex;
+        }
+      }
+      first_vertex += declared_vertices;
+      cursor += part_size;
+    }
+    if (cursor != geometry_finish) {
+      return;
+    }
+    object.hmd_wound_vertices = vertices;
+    object.hmd_wound_vertex_count = static_cast<std::uint8_t>(vertex_count);
+  };
   state.objects.reserve(static_cast<std::size_t>(object_count));
   for (std::uint32_t slot = 0U; slot < static_cast<std::uint32_t>(object_count);
        ++slot) {
@@ -4029,6 +5734,7 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
           }
           object.hmd_back_color_valid = complete;
         }
+        read_hmd_wound_vertices(object);
         for (std::uint32_t component = 0U;
              component < object.guest_rotation.size(); ++component) {
           const auto component_address = address(matrix, component * 2U);
@@ -4342,6 +6048,7 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
   constexpr std::int16_t vapor_maximum_frame = 7;
   constexpr std::uint32_t park_rain_update_mode = 1U;
   constexpr std::uint32_t ballistic_update_mode = 4U;
+  constexpr std::uint32_t taser_conductor_update_mode = 5U;
   constexpr std::uint32_t ejected_shot_update_mode = 6U;
   constexpr std::uint32_t moving_trail_update_mode = 7U;
   constexpr std::uint32_t blood_impact_update_mode = 9U;
@@ -4383,6 +6090,10 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
       effect_controller_count);
   std::vector<std::uint16_t> particle_controller(
       profile.effect_particle_capacity, 0U);
+  std::vector<std::uint16_t> particle_chain_index(
+      profile.effect_particle_capacity, 0U);
+  std::vector<std::uint16_t> controller_chain_count(effect_controller_count,
+                                                    0U);
   std::vector<bool> particle_linked(profile.effect_particle_capacity, false);
   for (std::uint32_t controller_index = 0U;
        controller_index < effect_controller_count; ++controller_index) {
@@ -4474,7 +6185,8 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
         return std::nullopt;
       }
     }
-    for (std::uint32_t chain_length = 0U; particle >= 0; ++chain_length) {
+    std::uint32_t chain_length = 0U;
+    for (; particle >= 0; ++chain_length) {
       const auto particle_index = static_cast<std::uint32_t>(particle);
       if (chain_length >= profile.effect_particle_capacity ||
           particle_index >= profile.effect_particle_capacity ||
@@ -4484,6 +6196,8 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
       particle_linked[particle_index] = true;
       particle_controller[particle_index] =
           static_cast<std::uint16_t>(controller_index);
+      particle_chain_index[particle_index] =
+          static_cast<std::uint16_t>(chain_length);
       const auto particle_address = address(
           profile.effect_particle_pool,
           static_cast<std::uint64_t>(particle_index) * effect_particle_stride);
@@ -4495,6 +6209,8 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
         return std::nullopt;
       }
     }
+    controller_chain_count[controller_index] =
+        static_cast<std::uint16_t>(chain_length);
   }
 
   const auto packet_color = [](std::uint32_t packet) {
@@ -4636,8 +6352,20 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
       for (auto &packet : state.guest_raw_packets) {
         if (packet.effect_particle ==
             static_cast<std::int16_t>(particle_index)) {
+          packet.effect_controller =
+              static_cast<std::int16_t>(controller_index);
           packet.effect_position = particle_position;
           packet.effect_world_position_valid = true;
+          const auto base_opcode =
+              static_cast<std::uint8_t>(packet.opcode & 0xfdU);
+          if (controller.update_mode == taser_conductor_update_mode &&
+              controller.render_mode == line_render_mode &&
+              packet.word_count == 4U && base_opcode == 0x50U) {
+            packet.taser_segment_index =
+                static_cast<std::int16_t>(particle_chain_index[particle_index]);
+            packet.taser_segment_count =
+                controller_chain_count[controller_index];
+          }
         }
       }
     }
@@ -5706,6 +7434,560 @@ bool LegacyGameplayVm::setRetailHardMode(bool enabled) noexcept {
   return runtime_.write8(hard_mode_flag, enabled ? 1U : 0U);
 }
 
+bool LegacyGameplayVm::setAgentDifficulty(bool enabled) noexcept {
+  agent_difficulty_ = enabled;
+  if (!enabled) {
+    clearAgentHeadshotThreat();
+    agent_cbdc_friendly_fire_frame_.reset();
+    agent_cbdc_friendly_fire_pending_penalties_ = 0U;
+  }
+  return true;
+}
+
+bool LegacyGameplayVm::applyAgentMissionNpcOverrides(
+    std::uint32_t mission_index, bool enabled,
+    const LegacyNativeMissionBridgeProfile &profile) noexcept {
+  if (mission_index == 15U) {
+    if (!enabled) {
+      return true;
+    }
+    constexpr std::uint32_t object_record_stride = 0x4cU;
+    constexpr std::uint32_t object_definition_stride = 0x14U;
+    constexpr std::uint32_t object_instance_offset = 0x34U;
+    constexpr std::uint32_t instance_slot_offset = 2U;
+    constexpr std::uint32_t instance_health_offset = 0x18U;
+    constexpr std::uint32_t instance_ai_offset = 0x1cU;
+    constexpr std::uint32_t health_value_offset = 8U;
+    constexpr std::uint32_t grenade_counter_offset = 0x4aU;
+    constexpr std::uint32_t common_npc_handler = 0x80061874U;
+    std::uint32_t records{};
+    std::uint32_t count{};
+    std::uint32_t definitions{};
+    std::uint32_t definition_count{};
+    std::uint32_t handler{};
+    if (!runtime_.read32(profile.object_records_pointer, records) ||
+        !runtime_.read32(profile.object_count, count) ||
+        !runtime_.read32(profile.object_definitions_pointer, definitions) ||
+        !runtime_.read32(profile.object_definition_count, definition_count) ||
+        !runtime_.read32(profile.object_handler_table + 4U, handler) ||
+        count > profile.maximum_objects ||
+        definition_count > profile.maximum_definitions ||
+        handler != common_npc_handler) {
+      return true;
+    }
+    for (std::uint32_t slot = 0U; slot < count; ++slot) {
+      const auto record64 =
+          static_cast<std::uint64_t>(records) +
+          static_cast<std::uint64_t>(slot) * object_record_stride;
+      if (record64 > std::numeric_limits<std::uint32_t>::max()) {
+        continue;
+      }
+      const auto record = static_cast<std::uint32_t>(record64);
+      std::uint32_t definition{};
+      std::uint16_t attributes{};
+      std::uint32_t instance{};
+      if (!validGuestRamRange(record, object_record_stride) ||
+          !runtime_.read32(record, definition) ||
+          definition >= definition_count ||
+          !runtime_.read16(record + 0x24U, attributes) ||
+          !runtime_.read32(record + object_instance_offset, instance)) {
+        continue;
+      }
+      const auto definition64 =
+          static_cast<std::uint64_t>(definitions) +
+          static_cast<std::uint64_t>(definition) * object_definition_stride;
+      if (definition64 > std::numeric_limits<std::uint32_t>::max()) {
+        continue;
+      }
+      std::uint16_t object_class{};
+      std::uint16_t live_slot{};
+      std::uint32_t health_controller{};
+      std::uint32_t ai{};
+      std::uint16_t health_bits{};
+      std::uint8_t grenade_counter{};
+      if (!validGuestRamRange(static_cast<std::uint32_t>(definition64),
+                              object_definition_stride) ||
+          !runtime_.read16(static_cast<std::uint32_t>(definition64),
+                           object_class) ||
+          !validGuestRamRange(instance, instance_ai_offset + 4U) ||
+          !runtime_.read16(instance + instance_slot_offset, live_slot) ||
+          live_slot != slot ||
+          !runtime_.read32(instance + instance_health_offset,
+                           health_controller) ||
+          !runtime_.read32(instance + instance_ai_offset, ai) ||
+          !validGuestRamRange(health_controller, health_value_offset + 2U) ||
+          !runtime_.read16(health_controller + health_value_offset,
+                           health_bits) ||
+          !validGuestRamRange(ai, grenade_counter_offset + 1U) ||
+          !runtime_.read8(ai + grenade_counter_offset, grenade_counter)) {
+        continue;
+      }
+      const auto eligible = agentEliteGuardGrenadeCadenceEligible(
+          15U, attributes, object_class == 1U, true,
+          std::bit_cast<std::int16_t>(health_bits) > 0);
+      const auto adjusted =
+          agentEliteGuardGrenadeDecisionCounter(grenade_counter, eligible);
+      if (adjusted != grenade_counter &&
+          !runtime_.write8(ai + grenade_counter_offset, adjusted)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  if (mission_index == agent_gabrek_identity.mission ||
+      mission_index == agent_chapel_guard_identities.front().mission) {
+    constexpr std::uint32_t object_record_stride = 0x4cU;
+    constexpr std::uint32_t object_definition_stride = 0x14U;
+    constexpr std::uint32_t common_npc_handler = 0x80061874U;
+    std::uint32_t records{};
+    std::uint32_t count{};
+    std::uint32_t definitions{};
+    std::uint32_t definition_count{};
+    std::uint32_t handler{};
+    if (!runtime_.read32(profile.object_records_pointer, records) ||
+        !runtime_.read32(profile.object_count, count) ||
+        !runtime_.read32(profile.object_definitions_pointer, definitions) ||
+        !runtime_.read32(profile.object_definition_count, definition_count) ||
+        !runtime_.read32(profile.object_handler_table + 4U, handler) ||
+        count > profile.maximum_objects ||
+        definition_count > profile.maximum_definitions ||
+        handler != common_npc_handler) {
+      // Mission and room tables are replaced transactionally. Retry after the
+      // next coherent outer frame instead of touching a partial table.
+      return true;
+    }
+
+    const auto apply_identity = [&](const AgentMissionNpcIdentity &identity,
+                                    bool gabrek) {
+      if (identity.mission != mission_index || count <= identity.slot ||
+          definition_count <= identity.definition) {
+        return true;
+      }
+      const auto record64 = static_cast<std::uint64_t>(records) +
+                            identity.slot * object_record_stride;
+      const auto definition64 = static_cast<std::uint64_t>(definitions) +
+                                identity.definition * object_definition_stride;
+      if (record64 > std::numeric_limits<std::uint32_t>::max() ||
+          definition64 > std::numeric_limits<std::uint32_t>::max()) {
+        return true;
+      }
+      const auto record = static_cast<std::uint32_t>(record64);
+      const auto definition_address = static_cast<std::uint32_t>(definition64);
+      std::uint32_t definition{};
+      std::uint16_t attributes{};
+      std::uint16_t class_id{};
+      if (!validGuestRamRange(record, object_record_stride) ||
+          !runtime_.read32(record, definition) ||
+          definition != identity.definition ||
+          !runtime_.read16(record + 0x24U, attributes) ||
+          !validGuestRamRange(definition_address, object_definition_stride) ||
+          !runtime_.read16(definition_address, class_id) || class_id != 1U) {
+        return true;
+      }
+
+      if (gabrek) {
+        // BASEEXT bootstrap moves Gabrek from his DAT root before maintained
+        // overrides run. Spawn matching above remains on the authored tuple.
+        constexpr LegacyNativePoint expected_position{-817, 0, -7044};
+        std::uint32_t authored_x{};
+        std::uint32_t authored_y{};
+        std::uint32_t authored_z{};
+        if (!runtime_.read32(record + 0x18U, authored_x) ||
+            !runtime_.read32(record + 0x1cU, authored_y) ||
+            !runtime_.read32(record + 0x20U, authored_z) ||
+            std::bit_cast<std::int32_t>(authored_x) != expected_position.x ||
+            std::bit_cast<std::int32_t>(authored_y) != expected_position.y ||
+            std::bit_cast<std::int32_t>(authored_z) != expected_position.z) {
+          return true;
+        }
+      } else {
+        constexpr std::uint32_t object_instance_offset = 0x34U;
+        constexpr std::uint32_t instance_slot_offset = 2U;
+        std::uint32_t instance{};
+        std::uint16_t instance_slot{};
+        if (!agentChapelGuardMaintainedAttributesEligible(
+                attributes, identity.retail_attributes) ||
+            !runtime_.read32(record + object_instance_offset, instance) ||
+            instance == 0U ||
+            !validGuestRamRange(instance, instance_slot_offset + 2U) ||
+            !runtime_.read16(instance + instance_slot_offset, instance_slot) ||
+            instance_slot != identity.slot) {
+          return true;
+        }
+      }
+
+      const auto adjusted =
+          gabrek ? agentGabrekAttributes(attributes, enabled)
+                 : agentChapelGuardAttributes(
+                       attributes, identity.retail_attributes, enabled);
+      return adjusted == attributes ||
+             runtime_.write16(record + 0x24U, adjusted);
+    };
+
+    if (mission_index == agent_gabrek_identity.mission) {
+      return apply_identity(agent_gabrek_identity, true);
+    }
+    for (const auto &identity : agent_chapel_guard_identities) {
+      if (!apply_identity(identity, false)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  struct Rule {
+    std::uint32_t slot;
+    std::uint32_t definition;
+    LegacyNativePoint authored_position;
+  };
+  std::optional<Rule> rule;
+  if (mission_index == 0U) {
+    // SUBWAY bootstrap transforms Kravitch's authored DAT root before the
+    // maintained override sees the live record.
+    rule = Rule{174U, 53U, LegacyNativePoint{-1495, -2140, 6679}};
+  } else if (mission_index == 3U) {
+    // PARK bootstrap likewise moves Marcos away from his authored DAT root.
+    // The spawn hook still matches the authored tuple before this transform.
+    rule = Rule{48U, 11U, LegacyNativePoint{5825, 0, 15855}};
+  } else {
+    return true;
+  }
+
+  constexpr std::uint32_t object_record_stride = 0x4cU;
+  constexpr std::uint32_t object_definition_stride = 0x14U;
+  constexpr std::uint32_t common_npc_handler = 0x80061874U;
+  std::uint32_t records{};
+  std::uint32_t count{};
+  std::uint32_t definitions{};
+  std::uint32_t definition_count{};
+  if (!runtime_.read32(profile.object_records_pointer, records) ||
+      !runtime_.read32(profile.object_count, count) ||
+      !runtime_.read32(profile.object_definitions_pointer, definitions) ||
+      !runtime_.read32(profile.object_definition_count, definition_count) ||
+      count <= rule->slot || count > profile.maximum_objects ||
+      definition_count <= rule->definition ||
+      definition_count > profile.maximum_definitions) {
+    // Room streaming swaps these tables transactionally. The immutable
+    // bridge will report persistent corruption; an override simply retries.
+    return true;
+  }
+
+  const auto record64 =
+      static_cast<std::uint64_t>(records) + rule->slot * object_record_stride;
+  const auto definition64 = static_cast<std::uint64_t>(definitions) +
+                            rule->definition * object_definition_stride;
+  if (record64 > std::numeric_limits<std::uint32_t>::max() ||
+      definition64 > std::numeric_limits<std::uint32_t>::max()) {
+    return true;
+  }
+  const auto record = static_cast<std::uint32_t>(record64);
+  const auto definition_address = static_cast<std::uint32_t>(definition64);
+  std::uint32_t definition{};
+  std::uint32_t authored_x{};
+  std::uint32_t authored_y{};
+  std::uint32_t authored_z{};
+  std::uint16_t attributes{};
+  std::uint16_t class_id{};
+  std::uint32_t handler{};
+  if (!validGuestRamRange(record, object_record_stride) ||
+      !runtime_.read32(record, definition) || definition != rule->definition ||
+      !runtime_.read32(record + 0x18U, authored_x) ||
+      !runtime_.read32(record + 0x1cU, authored_y) ||
+      !runtime_.read32(record + 0x20U, authored_z) ||
+      std::bit_cast<std::int32_t>(authored_x) != rule->authored_position.x ||
+      std::bit_cast<std::int32_t>(authored_y) != rule->authored_position.y ||
+      std::bit_cast<std::int32_t>(authored_z) != rule->authored_position.z ||
+      !runtime_.read16(record + 0x24U, attributes) ||
+      !validGuestRamRange(definition_address, object_definition_stride) ||
+      !runtime_.read16(definition_address, class_id) || class_id != 1U ||
+      !runtime_.read32(profile.object_handler_table + 4U, handler) ||
+      handler != common_npc_handler) {
+    return true;
+  }
+
+  const auto adjusted = mission_index == 0U
+                            ? agentKravitchAttributes(attributes, enabled)
+                            : agentMarcosAttributes(attributes, enabled);
+  if (adjusted != attributes && !runtime_.write16(record + 0x24U, adjusted)) {
+    return false;
+  }
+  if (mission_index != 3U || !enabled) {
+    return true;
+  }
+
+  // FUN_8005d088 increments ai+0x4a and makes a retail grenade decision at
+  // 0x3d. Raising only Marcos's post-reset floor keeps the original random
+  // choice, animation, projectile ownership and safety gates, while reducing
+  // the average delay between his ordinary-frag attempts.
+  constexpr std::uint32_t record_instance_offset = 0x34U;
+  constexpr std::uint32_t instance_slot_offset = 2U;
+  constexpr std::uint32_t instance_ai_offset = 0x1cU;
+  constexpr std::uint32_t grenade_counter_offset = 0x4aU;
+  std::uint32_t instance{};
+  std::uint16_t instance_slot{};
+  std::uint32_t ai{};
+  std::uint8_t grenade_counter{};
+  if (!runtime_.read32(record + record_instance_offset, instance) ||
+      !validGuestRamRange(instance, instance_ai_offset + 4U) ||
+      !runtime_.read16(instance + instance_slot_offset, instance_slot) ||
+      instance_slot != rule->slot ||
+      !runtime_.read32(instance + instance_ai_offset, ai) ||
+      !validGuestRamRange(ai, grenade_counter_offset + 1U) ||
+      !runtime_.read8(ai + grenade_counter_offset, grenade_counter)) {
+    // The actor is not live yet or room streaming is swapping ownership.
+    // The maintained override retries on the next coherent outer frame.
+    return true;
+  }
+  const auto accelerated =
+      agentMarcosGrenadeDecisionCounter(grenade_counter, true);
+  return accelerated == grenade_counter ||
+         runtime_.write8(ai + grenade_counter_offset, accelerated);
+}
+
+bool LegacyGameplayVm::applyAgentMissionTimer(
+    std::uint32_t mission_index,
+    const LegacyNativeMissionBridgeProfile &profile) noexcept {
+  constexpr std::uint32_t pending_seconds_address = 0x8011669cU;
+  constexpr std::uint32_t expiry_callback_address = 0x801166a4U;
+  constexpr std::uint32_t active_expiry_callback_address = 0x80116698U;
+  constexpr std::uint32_t active_timer_setter = 0x8004027cU;
+  constexpr std::uint64_t execution_budget = 1'000'000U;
+
+  if (!agent_difficulty_) {
+    agent_cbdc_friendly_fire_frame_.reset();
+    agent_cbdc_friendly_fire_pending_penalties_ = 0U;
+    return true;
+  }
+  if (mission_index != 3U &&
+      agent_cbdc_friendly_fire_pending_penalties_ != 0U) {
+    agent_cbdc_friendly_fire_frame_.reset();
+    agent_cbdc_friendly_fire_pending_penalties_ = 0U;
+  }
+  const auto *rule = agentMissionTimerRule(mission_index);
+  if (rule == nullptr) {
+    return true;
+  }
+  const auto pending_penalties =
+      mission_index == 3U ? agent_cbdc_friendly_fire_pending_penalties_ : 0U;
+  std::uint16_t handle{};
+  std::uint32_t pending_seconds{};
+  std::uint32_t pending_expiry_callback{};
+  std::uint32_t active_expiry_callback{};
+  std::uint32_t remaining_bits{};
+  if (!runtime_.read16(profile.mission_timer_handle, handle) ||
+      !runtime_.read32(pending_seconds_address, pending_seconds) ||
+      !runtime_.read32(expiry_callback_address, pending_expiry_callback) ||
+      !runtime_.read32(active_expiry_callback_address,
+                       active_expiry_callback) ||
+      !runtime_.read32(profile.mission_timer_remaining, remaining_bits)) {
+    return false;
+  }
+  if (handle == 0xffffU) {
+    agent_cbdc_friendly_fire_pending_penalties_ = 0U;
+    agent_cbdc_friendly_fire_frame_.reset();
+    // FUN_80040154 delays creation by 0x14 ticks. Change its pending seconds
+    // only for the exact mission callback and retail duration. The retail
+    // callback still creates and owns the timer, HUD and failure transition.
+    return pending_expiry_callback != rule->expiry_callback ||
+           pending_seconds != rule->retail_seconds ||
+           runtime_.write32(pending_seconds_address, rule->agent_seconds);
+  }
+  if (active_expiry_callback != rule->expiry_callback) {
+    agent_cbdc_friendly_fire_pending_penalties_ = 0U;
+    agent_cbdc_friendly_fire_frame_.reset();
+    return true;
+  }
+
+  const auto current = std::bit_cast<std::int32_t>(remaining_bits);
+  auto adjusted = agentMissionTimerAdjustedTicks(current, *rule);
+  adjusted = agentCbdcFriendlyFireAdjustedTicks(adjusted, pending_penalties);
+  if (adjusted == current) {
+    agent_cbdc_friendly_fire_pending_penalties_ = 0U;
+    return true;
+  }
+  try {
+    const std::array arguments{std::bit_cast<std::uint32_t>(adjusted)};
+    const auto completed =
+        invoke(active_timer_setter, arguments, execution_budget).completed();
+    if (completed) {
+      agent_cbdc_friendly_fire_pending_penalties_ = 0U;
+    }
+    return completed;
+  } catch (...) {
+    return false;
+  }
+}
+
+bool LegacyGameplayVm::applyAgentWashingtonParkTimer(
+    const LegacyNativeMissionBridgeProfile &profile) noexcept {
+  return applyAgentMissionTimer(3U, profile);
+}
+
+LegacyGameplayVmResult
+LegacyGameplayVm::invokeRetailPark2BombFailure(std::uint64_t execution_budget) {
+  // PARK2 FUN_80146ac0 calls the common story-failure wrapper with parameter
+  // zero and sound 0x6b when its class-0x2e BOMB actor dies. Re-enter that
+  // exact resident boundary for the Agent detonation meter.
+  constexpr std::uint32_t story_failure_entry = 0x80091b9cU;
+  constexpr std::array arguments{0U, 0x6bU, 0U};
+  return invoke(story_failure_entry, arguments, execution_budget);
+}
+
+bool LegacyGameplayVm::updateAgentGrenadeAwareness(
+    const LegacyGameplayBridgeState &state,
+    const LegacyAgentGrenadeAwarenessProfile &profile,
+    std::uint64_t execution_budget) noexcept {
+  constexpr std::uint8_t player_grenade_danger = 1U;
+  if (!agent_difficulty_ || !state.thrown_projectile) {
+    return true;
+  }
+  const auto &projectile = *state.thrown_projectile;
+  if ((projectile.weapon != 19U && projectile.weapon != 20U) ||
+      projectile.age > 60U || profile.alert_entry == 0U) {
+    return true;
+  }
+
+  std::uint8_t danger_mask{};
+  if (!runtime_.read8(profile.danger_mask, danger_mask)) {
+    return false;
+  }
+  if ((danger_mask & player_grenade_danger) != 0U) {
+    return true;
+  }
+
+  try {
+    const std::array arguments{0U}; // FUN_800591fc: player grenade owner
+    return invoke(profile.alert_entry, arguments, execution_budget).completed();
+  } catch (...) {
+    return false;
+  }
+}
+
+bool LegacyGameplayVm::updateAgentHeadshotThreat(
+    const LegacyGameplayBridgeState &state, std::int16_t player_slot,
+    const LegacyNativeMissionBridgeProfile &profile) noexcept {
+  if (!agent_difficulty_) {
+    clearAgentHeadshotThreat();
+    return true;
+  }
+
+  std::uint32_t gameplay_frame{};
+  if (player_slot < 0 ||
+      !runtime_.read32(profile.gameplay_frame, gameplay_frame)) {
+    clearAgentHeadshotThreat();
+    return false;
+  }
+
+  constexpr std::uint32_t common_npc_handler = 0x80061874U;
+  constexpr std::uint32_t active_combat_flag = 0x200U;
+  constexpr std::uint32_t invalid_target_flag = 0x04U;
+  constexpr std::uint32_t danger_value_mask = 0x3fffU;
+  constexpr std::uint8_t dormant_instance_flag = 0x02U;
+  constexpr std::uint8_t svd_weapon = 12U;
+  constexpr std::uint8_t sniper_weapon = 13U;
+  constexpr std::uint32_t warning_frames = 20U;
+  auto current_engagements =
+      std::vector<AgentHeadshotEngagement>(state.objects.size());
+  const auto tracked_by_retail = [&state](std::uint32_t slot) {
+    return std::ranges::find(
+               state.tracked_slots,
+               static_cast<std::int16_t>(static_cast<std::uint16_t>(slot))) !=
+           state.tracked_slots.end();
+  };
+  const auto eligible = [&](const LegacyObjectBridgeState &object) {
+    const auto weapon = static_cast<std::uint8_t>(object.attributes);
+    return object.slot < current_engagements.size() &&
+           object.slot != static_cast<std::uint32_t>(player_slot) &&
+           object.instance != 0U && !object.destroyed() && object.has_target &&
+           tracked_by_retail(object.slot) &&
+           object.object_handler == common_npc_handler &&
+           object.target_controller != 0U && object.ai_controller != 0U &&
+           object.target_slot == player_slot && object.simulated &&
+           (object.danger_q12 & danger_value_mask) != 0U &&
+           (object.ai_flags & active_combat_flag) != 0U &&
+           (object.instance_state[3] & dormant_instance_flag) == 0U &&
+           (object.target_flags & invalid_target_flag) == 0U &&
+           (weapon == svd_weapon || weapon == sniper_weapon);
+  };
+  const auto same_identity = [](const AgentHeadshotEngagement &engagement,
+                                const LegacyObjectBridgeState &object,
+                                std::uint8_t weapon) {
+    return engagement.instance == object.instance &&
+           engagement.ai_controller == object.ai_controller &&
+           engagement.weapon == weapon;
+  };
+
+  for (const auto &object : state.objects) {
+    if (!eligible(object)) {
+      continue;
+    }
+    const auto weapon = static_cast<std::uint8_t>(object.attributes);
+    auto engagement = AgentHeadshotEngagement{
+        object.instance,
+        object.ai_controller,
+        weapon,
+        false,
+    };
+    if (object.slot < agent_headshot_engagements_.size()) {
+      const auto &previous = agent_headshot_engagements_[object.slot];
+      if (same_identity(previous, object, weapon)) {
+        engagement.consumed = previous.consumed;
+      }
+    }
+    current_engagements[object.slot] = engagement;
+  }
+
+  const auto clear_active = [this] {
+    agent_headshot_shooter_slot_ = -1;
+    agent_headshot_shooter_instance_ = 0U;
+    agent_headshot_shooter_ai_controller_ = 0U;
+    agent_headshot_weapon_ = 0U;
+    agent_headshot_ready_frame_ = 0U;
+  };
+  if (agent_headshot_shooter_slot_ >= 0) {
+    const auto slot = static_cast<std::size_t>(agent_headshot_shooter_slot_);
+    const auto active = slot < current_engagements.size()
+                            ? &current_engagements[slot]
+                            : nullptr;
+    if (active == nullptr || active->consumed ||
+        active->instance != agent_headshot_shooter_instance_ ||
+        active->ai_controller != agent_headshot_shooter_ai_controller_ ||
+        active->weapon != agent_headshot_weapon_) {
+      clear_active();
+    }
+  }
+
+  if (agent_headshot_shooter_slot_ < 0) {
+    for (const auto &object : state.objects) {
+      if (!eligible(object)) {
+        continue;
+      }
+      const auto &engagement = current_engagements[object.slot];
+      if (engagement.consumed) {
+        continue;
+      }
+      agent_headshot_shooter_slot_ = static_cast<std::int16_t>(object.slot);
+      agent_headshot_shooter_instance_ = engagement.instance;
+      agent_headshot_shooter_ai_controller_ = engagement.ai_controller;
+      agent_headshot_weapon_ = engagement.weapon;
+      agent_headshot_ready_frame_ = gameplay_frame + warning_frames;
+      break;
+    }
+  }
+
+  agent_headshot_engagements_ = std::move(current_engagements);
+  return true;
+}
+
+void LegacyGameplayVm::clearAgentHeadshotThreat() noexcept {
+  agent_headshot_engagements_.clear();
+  agent_headshot_shooter_slot_ = -1;
+  agent_headshot_shooter_instance_ = 0U;
+  agent_headshot_shooter_ai_controller_ = 0U;
+  agent_headshot_weapon_ = 0U;
+  agent_headshot_ready_frame_ = 0U;
+}
+
 bool LegacyGameplayVm::setRetailOneShotKills(bool enabled) noexcept {
   // MENU.OVL's 9mm super-ammo action toggles this resident byte. The common
   // damage path consumes it for every player firearm, despite the historical
@@ -5991,8 +8273,7 @@ LegacyGameplayVm::readMissionBridgeState(
   state.inventory.current_weapon = static_cast<std::uint8_t>(current_weapon);
   state.weapon_menu_state = std::bit_cast<std::int32_t>(weapon_menu_state);
   state.weapon_menu_dirty = weapon_menu_dirty != 0U;
-  state.normal_hud_phase =
-      std::bit_cast<std::int32_t>(normal_hud_phase_bits);
+  state.normal_hud_phase = std::bit_cast<std::int32_t>(normal_hud_phase_bits);
   if (state.normal_hud_phase < -1 || state.normal_hud_phase > 13) {
     return std::nullopt;
   }
@@ -6281,6 +8562,9 @@ LegacyGameplayVmSnapshot LegacyGameplayVm::captureSnapshot() const {
   snapshot.attached_text_sources = attached_text_sources_;
   snapshot.ui_messages = ui_messages_;
   snapshot.pending_actor_drops = pending_actor_drops_;
+  snapshot.agent_cbdc_friendly_fire_frame = agent_cbdc_friendly_fire_frame_;
+  snapshot.agent_cbdc_friendly_fire_pending_penalties =
+      agent_cbdc_friendly_fire_pending_penalties_;
   snapshot.video_timing_baseline_initialized =
       video_timing_baseline_initialized_;
   snapshot.audio_frame_tick_initialized = audio_frame_tick_initialized_;
@@ -6382,7 +8666,11 @@ bool LegacyGameplayVm::restoreSnapshot(
   attached_text_sources_ = snapshot.attached_text_sources;
   ui_messages_ = snapshot.ui_messages;
   pending_actor_drops_ = snapshot.pending_actor_drops;
+  agent_cbdc_friendly_fire_frame_ = snapshot.agent_cbdc_friendly_fire_frame;
+  agent_cbdc_friendly_fire_pending_penalties_ =
+      snapshot.agent_cbdc_friendly_fire_pending_penalties;
   weapon_events_.clear();
+  clearAgentHeadshotThreat();
   return true;
 }
 
@@ -7322,6 +9610,8 @@ LegacyFirstMissionBootstrapResult LegacyGameplayVm::bootstrapMission(
     const LegacyFirstMissionOpeningProfile &opening_profile,
     std::uint64_t execution_budget) {
   LegacyFirstMissionBootstrapResult result;
+  agent_cbdc_friendly_fire_frame_.reset();
+  agent_cbdc_friendly_fire_pending_penalties_ = 0U;
   interrupt_callbacks_.fill(0U);
   runtime_.reset(executable_initial_pc_, profile.global_pointer,
                  profile.stack_pointer);

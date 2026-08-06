@@ -393,6 +393,46 @@ struct LegacyPark2FlamethrowerBridgeProfile {
   }};
 };
 
+// PARK2's flamethrower applies its contact damage through the common event
+// dispatcher. Retail checks distance only, so a nearby column can separate
+// HANS from Gabe while the event still lands. A transient host LOS sample is
+// allowed to suppress only these two exact overlay call sites; every unknown
+// revision and every unrelated event remains guest-owned.
+struct LegacyPark2FlameLosProfile {
+  std::uint32_t event_entry{0x80015364U};
+  std::array<std::uint32_t, 2U> return_addresses{{
+      0x801480e4U,
+      0x801483ecU,
+  }};
+  std::uint32_t call_instruction{0x0c0054d9U};
+  std::uint32_t delay_instruction{0xafa0001cU};
+  std::uint32_t current_player_slot{0x80116ab0U};
+  std::uint32_t event_type{0x0dU};
+  std::uint32_t event_mode{5U};
+  std::uint32_t event_id{0x29aU};
+};
+
+[[nodiscard]] constexpr LegacyPark2FlameLosProfile
+syphonFilterUsaV11Park2FlameLosProfile() noexcept {
+  return {};
+}
+
+[[nodiscard]] constexpr bool legacyPark2FlameEventSuppressed(
+    std::optional<bool> line_of_sight_clear, std::uint32_t return_address,
+    std::uint32_t call_instruction, std::uint32_t delay_instruction,
+    std::uint32_t event_type, std::uint32_t event_mode, std::uint32_t event_id,
+    std::uint32_t event_player, std::uint32_t current_player,
+    const LegacyPark2FlameLosProfile &profile =
+        syphonFilterUsaV11Park2FlameLosProfile()) noexcept {
+  const auto exact_return = return_address == profile.return_addresses[0] ||
+                            return_address == profile.return_addresses[1];
+  return line_of_sight_clear.has_value() && !*line_of_sight_clear &&
+         exact_return && call_instruction == profile.call_instruction &&
+         delay_instruction == profile.delay_instruction &&
+         event_type == profile.event_type && event_mode == profile.event_mode &&
+         event_id == profile.event_id && event_player == current_player;
+}
+
 struct LegacyGameplayBridgeProfile {
   struct ScrimProfile {
     bool enabled{};
@@ -458,12 +498,16 @@ struct LegacyGameplayBridgeProfile {
   std::uint32_t nightvision_clear_color{0x80116b28U};
   std::uint32_t processed_pad0{0x80122478U};
   std::uint32_t player_pointer{0x80116b9cU};
+  // Gabe uses the inline FUN_800cbcb8/FUN_800cfdb0 wound-table header here;
+  // non-player HMDs store a relocated header pointer at payload+0x10.
+  std::uint32_t player_hmd_wound_table{0x8011650cU};
   std::uint32_t current_weapon{0x80115fb8U};
   std::uint32_t aim_mode{0x80115e80U};
   std::uint32_t gameplay_frame{0x80116a88U};
   std::uint32_t grenade_charge_frame{0x80127da0U};
   std::uint32_t grenade_input_pending{0x80127d98U};
   std::uint32_t aim_target{0x80119550U};
+  std::uint32_t aim_miss{0x8011665cU};
   std::uint32_t virus_scanner_target{0x80130d28U};
   std::uint32_t virus_scanner_target_slot{0x80130d34U};
   std::uint32_t player_control_lock{0x80115e28U};
@@ -475,6 +519,11 @@ struct LegacyGameplayBridgeProfile {
   std::uint32_t object_activation_distance{0x80116b54U};
   std::uint32_t gameplay_trigger_enable{0x80116962U};
   std::uint32_t world_visibility_bytes{0x8012c7d8U};
+  // FUN_800ccdd0 owns sixty persistent 0x38-byte decal records. Active and
+  // owner live at +0x20/+0x24; vertices and POLY_FT4 material remain exact.
+  std::uint32_t world_decal_pool{0x8012e130U};
+  std::uint32_t world_decal_stride{0x38U};
+  std::uint32_t world_decal_capacity{legacy_world_decal_capacity};
   std::uint32_t fade_step{0x801164d8U};
   std::uint32_t fade_current{0x801164daU};
   std::uint32_t fade_callback{0x801164e0U};
@@ -633,20 +682,92 @@ syphonFilterUsaV11HostAimRayProfile() noexcept {
   return {};
 }
 
-struct LegacyEnemyCloseAimProfile {
-  // FUN_80062220 normally feeds Gabe's lagged tracking point to the generic
-  // weapon controller. At point-blank range that PS1-era lead can put an
-  // entire burst behind him. The hook substitutes the target point already
-  // built by retail at sp+0x10, while the original JAL/delay slot and damage
-  // pipeline continue unchanged.
-  std::uint32_t boundary{0x80062858U};
-  std::uint32_t instruction{0x0c01fa12U};
-  std::uint32_t delay_instruction{0x24a50010U};
-  std::int32_t close_distance{0x333};
+struct LegacyAgentEnemyAimProfile {
+  // Keep FUN_80062220's cached last-visible target authoritative. Replacing
+  // it with Gabe's current position bypasses retail occlusion and lets enemies
+  // track him through walls. Agent only strengthens Hard's authored aim
+  // multiplier at the exact multiply boundary in FUN_80030fa4.
+  std::uint32_t agent_accuracy_boundary{0x80031214U};
+  std::uint32_t agent_accuracy_instruction{0x00880018U};
+  std::int32_t agent_accuracy_bonus{3};
+  // FUN_80062220 already remembers the last visible target point for forty
+  // retail frames. Agent only widens that original unsigned age test; the
+  // cached point, pathing and firing decisions remain entirely guest-owned.
+  std::uint32_t agent_target_memory_boundary{0x800622a4U};
+  std::uint32_t agent_target_memory_instruction{0x2c420028U};
+  std::uint32_t player_pointer{0x80116b9cU};
+  std::uint32_t actor_target_controller_offset{0x14U};
+  std::uint32_t instance_slot_offset{0x02U};
+  std::uint32_t target_slot_offset{};
+  std::uint32_t retail_target_memory_frames{40U};
+  std::uint32_t agent_target_memory_frames{80U};
+  std::uint32_t flashlight_target_memory_frames{100U};
+  std::uint32_t mission_index{0x80130c88U};
+  std::uint32_t flashlight_source{0x8012f9b8U};
+  std::uint32_t dynamic_light_list{0x80116464U};
+  std::uint32_t maximum_vertex_lights{4U};
+  std::uint16_t tunnel_blackout_mission{18U};
+  // FUN_800630c0 stores the retail post-shot cooldown here. Agent shortens
+  // only Kravitch's validated ITHACA cooldown and primes the retail route
+  // counter once, so LOS, route choice, locomotion and firing stay guest-owned.
+  std::uint32_t kravitch_post_shot_boundary{0x800633c8U};
+  std::uint32_t kravitch_post_shot_instruction{0xa243004cU};
+  std::uint32_t object_records_pointer{0x80115cccU};
+  std::uint32_t object_count{0x80116a5cU};
+  std::uint32_t object_definition_count{0x80116b14U};
+  std::uint32_t object_definitions_pointer{0x80116b98U};
+  std::uint32_t object_handler_table{0x801028a4U};
+  std::uint32_t common_npc_handler{0x80061874U};
+  std::uint32_t maximum_objects{2048U};
+  std::uint32_t maximum_definitions{1024U};
 };
 
-[[nodiscard]] constexpr LegacyEnemyCloseAimProfile
-syphonFilterUsaV11EnemyCloseAimProfile() noexcept {
+[[nodiscard]] constexpr LegacyAgentEnemyAimProfile
+syphonFilterUsaV11AgentEnemyAimProfile() noexcept {
+  return {};
+}
+
+struct LegacyAgentGrenadeAwarenessProfile {
+  // FUN_80059574 is the retail route chooser used by armed NPCs. Agent widens
+  // its live-grenade check, then validates the chosen first edge against the
+  // grenade itself: retail scores a ring around a blended threat point, which
+  // can otherwise send a distant actor toward the grenade.
+  std::uint32_t alert_entry{0x800591fcU};
+  std::uint32_t danger_mask{0x8011691cU};
+  std::uint32_t player_projectile_pointer{0x801169d8U};
+  std::array<std::uint32_t, 2U> boundaries{{
+      0x800592fcU, // initial nearby-NPC alert in FUN_800591fc
+      0x800595f8U, // route-node escape check in FUN_80059574
+  }};
+  std::uint32_t instruction{0x28420a00U}; // slti v0,v0,0xa00
+  std::int32_t retail_distance{0x0a00};
+  std::int32_t agent_distance{0x1400};
+  std::uint32_t route_return_boundary{0x80059cc0U};
+  std::uint32_t route_return_instruction{0x8fbf009cU};
+  std::int32_t retail_standoff_distance{0x0780};
+  // Only FUN_80059cf4's normal route-selection caller may receive tactical
+  // bias. FUN_80059ec0 reaches the same epilogue while probing a reversal.
+  std::uint32_t route_selection_return_address{0x80059df4U};
+  std::uint32_t player_pointer{0x80116b9cU};
+  std::uint32_t object_records_pointer{0x80115cccU};
+  std::uint32_t object_definition_count{0x80116b14U};
+  std::uint32_t object_definitions_pointer{0x80116b98U};
+  std::uint32_t object_handler_table{0x801028a4U};
+  std::uint32_t common_npc_handler{0x80061874U};
+  // Preferred XZ engagement radii use the same guest world units as authored
+  // route nodes. Unknown and scripted weapons keep the exact retail choice.
+  std::int32_t shotgun_distance{0x0500};
+  std::int32_t pistol_distance{0x0700};
+  std::int32_t automatic_distance{0x0900};
+  std::int32_t sniper_distance{0x0c00};
+  std::int32_t tactical_distance_band{0x0180};
+  std::int32_t tactical_minimum_improvement{0x0100};
+  std::int32_t flank_distance_tolerance{0x0100};
+  std::int32_t flank_minimum_step{0x0080};
+};
+
+[[nodiscard]] constexpr LegacyAgentGrenadeAwarenessProfile
+syphonFilterUsaV11AgentGrenadeAwarenessProfile() noexcept {
   return {};
 }
 
@@ -680,6 +801,15 @@ struct LegacyWeaponEventHookProfile {
   std::uint32_t aimed_target_slot{0x80115e94U};
   std::uint32_t ray_origin{0x80119550U};
   std::uint32_t ray_endpoint{0x80119560U};
+  // Observational entry hook for FUN_8006784c. At this point a3 is the exact
+  // accepted impact point and O32 stack argument 4 is its retail vector.
+  std::uint32_t impact_boundary{0x8006784cU};
+  std::array<std::uint32_t, 4U> impact_instructions{{
+      0x27bdfde8U,
+      0xafb5020cU,
+      0x0080a821U,
+      0xafb40208U,
+  }};
   std::uint32_t maximum_events{legacy_weapon_events_per_frame};
 };
 
@@ -752,6 +882,11 @@ struct LegacyNativeMissionBridgeProfile {
   std::uint32_t player_pointer{0x80116b9cU};
   std::uint32_t object_records_pointer{0x80115cccU};
   std::uint32_t object_count{0x80116a5cU};
+  std::uint32_t object_definition_count{0x80116b14U};
+  std::uint32_t object_definitions_pointer{0x80116b98U};
+  std::uint32_t object_handler_table{0x801028a4U};
+  std::uint32_t gameplay_frame{0x80116a88U};
+  std::uint32_t mission_index{0x80130c88U};
   std::uint32_t processed_pad0{0x80122478U};
   std::uint32_t raw_pad0{0x80122658U};
   std::uint32_t raw_pad1{0x8012267aU};
@@ -820,6 +955,7 @@ struct LegacyNativeMissionBridgeProfile {
   std::uint32_t mission_timer_remaining{0x80116690U};
   std::uint32_t mission_timer_handle{0x80115f22U};
   std::uint32_t maximum_objects{2048U};
+  std::uint32_t maximum_definitions{1024U};
 };
 
 [[nodiscard]] constexpr LegacyNativeMissionBridgeProfile
@@ -929,6 +1065,8 @@ struct LegacyGameplayVmSnapshot {
   std::vector<AttachedTextSource> attached_text_sources;
   std::vector<LegacyUiMessageBridgeState> ui_messages;
   std::vector<PendingActorDrop> pending_actor_drops;
+  std::optional<std::uint32_t> agent_cbdc_friendly_fire_frame;
+  std::uint32_t agent_cbdc_friendly_fire_pending_penalties{};
   bool video_timing_baseline_initialized{};
   bool audio_frame_tick_initialized{};
   std::optional<LegacyVirtualCd::Snapshot> virtual_cd;
@@ -996,18 +1134,31 @@ public:
       std::shared_ptr<LegacyVirtualCd> virtual_cd);
   void bindSyphonFilterUsaV11PlatformCalls();
   void bindSyphonFilterUsaV11BootstrapPlatformCalls();
+  void bindSyphonFilterUsaV11Park2FlameLosHook(
+      const LegacyPark2FlameLosProfile &profile =
+          syphonFilterUsaV11Park2FlameLosProfile());
   void bindSyphonFilterUsaV11HostAimRayHook(
       const LegacyHostAimRayProfile &profile =
           syphonFilterUsaV11HostAimRayProfile());
-  void bindSyphonFilterUsaV11EnemyCloseAimHook(
-      const LegacyEnemyCloseAimProfile &profile =
-          syphonFilterUsaV11EnemyCloseAimProfile());
+  void bindSyphonFilterUsaV11AgentEnemyAimHooks(
+      const LegacyAgentEnemyAimProfile &profile =
+          syphonFilterUsaV11AgentEnemyAimProfile());
+  void bindSyphonFilterUsaV11AgentGrenadeAwarenessHook(
+      const LegacyAgentGrenadeAwarenessProfile &profile =
+          syphonFilterUsaV11AgentGrenadeAwarenessProfile());
   void bindSyphonFilterUsaV11WeaponEventHooks(
       const LegacyWeaponEventHookProfile &profile =
           syphonFilterUsaV11WeaponEventHookProfile());
   void bindSyphonFilterUsaV11GameplayTextHooks(
       const LegacyGameplayTextHookProfile &profile =
           syphonFilterUsaV11GameplayTextHookProfile());
+  void bindAgentDifficultyDamageHook(
+      const LegacyNativeMissionBridgeProfile &profile =
+          syphonFilterUsaV11NativeMissionBridgeProfile());
+  void bindSyphonFilterUsaV11AgentMissionNpcSpawnHook(
+      const LegacyNativeMissionBridgeProfile &profile =
+          syphonFilterUsaV11NativeMissionBridgeProfile());
+  void bindSyphonFilterUsaV11AgentAramovSpeedHook();
   void clearWeaponEvents() noexcept { weapon_events_.clear(); }
   void clearUiMessages() noexcept { ui_messages_.clear(); }
   [[nodiscard]] std::span<const LegacyWeaponEventBridgeState>
@@ -1077,12 +1228,13 @@ public:
       const LegacyNativeMissionBridgeProfile &profile =
           syphonFilterUsaV11NativeMissionBridgeProfile()) noexcept;
   void setHostAimRay(std::optional<LegacyHostAimRay> ray) noexcept;
+  void setPark2FlameLineOfSight(std::optional<bool> clear) noexcept {
+    park2_flame_line_of_sight_clear_ = clear;
+  }
   [[nodiscard]] std::uint64_t hostAimRayPatchCount() const noexcept {
     return host_aim_ray_patch_count_;
   }
-  [[nodiscard]] std::uint64_t enemyCloseAimPatchCount() const noexcept {
-    return enemy_close_aim_patch_count_;
-  }
+
   [[nodiscard]] bool writeHostPadState(
       const LegacyHostPadState &state,
       const LegacyNativeMissionBridgeProfile &profile =
@@ -1092,6 +1244,42 @@ public:
       const LegacyNativeMissionBridgeProfile &profile =
           syphonFilterUsaV11NativeMissionBridgeProfile()) noexcept;
   [[nodiscard]] bool setRetailHardMode(bool enabled) noexcept;
+  [[nodiscard]] bool setAgentDifficulty(bool enabled) noexcept;
+  [[nodiscard]] bool applyAgentMissionNpcOverrides(
+      std::uint32_t mission_index, bool enabled,
+      const LegacyNativeMissionBridgeProfile &profile =
+          syphonFilterUsaV11NativeMissionBridgeProfile()) noexcept;
+  [[nodiscard]] bool applyAgentMissionTimer(
+      std::uint32_t mission_index,
+      const LegacyNativeMissionBridgeProfile &profile =
+          syphonFilterUsaV11NativeMissionBridgeProfile()) noexcept;
+  [[nodiscard]] bool applyAgentWashingtonParkTimer(
+      const LegacyNativeMissionBridgeProfile &profile =
+          syphonFilterUsaV11NativeMissionBridgeProfile()) noexcept;
+  // PARK2's BOMB death callback enters this resident story-failure wrapper.
+  // Keeping the same path preserves its sound, failed-parameter text,
+  // 0xc8-tick delay and authored fade instead of synthesizing host latches.
+  [[nodiscard]] LegacyGameplayVmResult
+  invokeRetailPark2BombFailure(std::uint64_t execution_budget = 5'000'000U);
+  [[nodiscard]] bool updateAgentGrenadeAwareness(
+      const LegacyGameplayBridgeState &state,
+      const LegacyAgentGrenadeAwarenessProfile &profile =
+          syphonFilterUsaV11AgentGrenadeAwarenessProfile(),
+      std::uint64_t execution_budget = 1'000'000U) noexcept;
+  [[nodiscard]] bool updateAgentHeadshotThreat(
+      const LegacyGameplayBridgeState &state, std::int16_t player_slot,
+      const LegacyNativeMissionBridgeProfile &profile =
+          syphonFilterUsaV11NativeMissionBridgeProfile()) noexcept;
+  void clearAgentHeadshotThreat() noexcept;
+  [[nodiscard]] bool agentHeadshotThreatActive() const noexcept {
+    return agent_headshot_shooter_slot_ >= 0;
+  }
+  [[nodiscard]] std::int16_t agentHeadshotThreatShooter() const noexcept {
+    return agent_headshot_shooter_slot_;
+  }
+  [[nodiscard]] std::uint32_t agentHeadshotThreatReadyFrame() const noexcept {
+    return agent_headshot_ready_frame_;
+  }
   [[nodiscard]] bool setRetailOneShotKills(bool enabled) noexcept;
   [[nodiscard]] bool weakenRetailEnemySlots(
       std::span<const std::uint32_t> slots,
@@ -1256,6 +1444,7 @@ private:
   std::array<std::uint32_t, LegacyGameplayVmSnapshot::interrupt_callback_count>
       interrupt_callbacks_{};
   std::optional<LegacyHostAimRay> host_aim_ray_;
+  std::optional<bool> park2_flame_line_of_sight_clear_;
   std::vector<LegacyWeaponEventBridgeState> weapon_events_;
   mutable std::vector<LegacyGameplayVmSnapshot::AttachedTextSource>
       attached_text_sources_;
@@ -1266,7 +1455,23 @@ private:
   LegacyGameplayBridgeReadStage last_bridge_read_stage_{
       LegacyGameplayBridgeReadStage::none};
   std::uint64_t host_aim_ray_patch_count_{};
-  std::uint64_t enemy_close_aim_patch_count_{};
+
+  struct AgentHeadshotEngagement {
+    std::uint32_t instance{};
+    std::uint32_t ai_controller{};
+    std::uint8_t weapon{};
+    bool consumed{};
+  };
+
+  bool agent_difficulty_{};
+  std::optional<std::uint32_t> agent_cbdc_friendly_fire_frame_;
+  std::uint32_t agent_cbdc_friendly_fire_pending_penalties_{};
+  std::vector<AgentHeadshotEngagement> agent_headshot_engagements_;
+  std::int16_t agent_headshot_shooter_slot_{-1};
+  std::uint32_t agent_headshot_shooter_instance_{};
+  std::uint32_t agent_headshot_shooter_ai_controller_{};
+  std::uint8_t agent_headshot_weapon_{};
+  std::uint32_t agent_headshot_ready_frame_{};
   bool video_timing_baseline_initialized_{};
   bool audio_frame_tick_initialized_{};
 };

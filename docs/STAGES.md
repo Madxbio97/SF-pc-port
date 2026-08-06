@@ -1,4 +1,4 @@
-# Work stages and test gates
+# Historical work stages and test gates
 
 > Historical native-port plan. It is retained as an implementation record; the
 > active hybrid-emulation sequence is `H0`-`H5` in `ROADMAP.md`.
@@ -70,7 +70,7 @@ command dispatch and exit path.
 - Remaining: enemy AI, interactive objects, mission triggers/objectives/checkpoints,
   weapon-specific effects/audio and deterministic frame regressions.
 
-Current test gate: start New Game, confirm the opening movie, enter Georgia Street,
+Historical test gate: start New Game, confirm the opening movie, enter Georgia Street,
 move through the initial rooms, and verify terrain, wall layers, fire occlusion and
 near-plane integrity, actor/camera heading, animation, HUD, in-game menu, props and
 fullscreen toggles.

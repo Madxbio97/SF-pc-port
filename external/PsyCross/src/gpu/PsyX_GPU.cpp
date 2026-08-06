@@ -992,6 +992,13 @@ void DrawAllSplits()
 	}
 #endif // _DEBUG
 
+	// Empty ordering tables carry no drawable state. Avoid a zero-byte VBO
+	// orphan/upload for optional presentation passes.
+	if(g_vertexIndex == 0)
+	{
+		ClearSplits();
+		return;
+	}
 	// next code ideally should be called before EndScene
 	GR_UpdateVertexBuffer(g_vertexBuffer, g_vertexIndex);
 

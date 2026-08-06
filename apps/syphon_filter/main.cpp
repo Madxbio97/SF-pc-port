@@ -112,8 +112,10 @@ void printUsage() {
       << "Gameplay test option: --all-weapons-test\n"
       << "Graphics options: --fullscreen --no-launcher "
          "--resolution=WIDTHxHEIGHT "
-         "--msaa=0|2|4|8 --bilinear --nearest --anisotropic "
-         "--no-anisotropic --aspect-adaptive --aspect-4-3 "
+         "--msaa=0|2|4|8 --bilinear --nearest --trilinear "
+         "--no-trilinear --anisotropic --no-anisotropic --smaa --no-smaa "
+         "--volumetric-fog --no-volumetric-fog "
+         "--aspect-adaptive --aspect-4-3 "
          "--vsync --no-vsync --fps-limit=0|20..1000\n";
   std::cerr << "Language options: --language=en --language=ru\n";
 }
@@ -152,10 +154,23 @@ int main(int argc, char **argv) {
         graphics.bilinear_filtering = true;
       } else if (argument == "--nearest") {
         graphics.bilinear_filtering = false;
+      } else if (argument == "--trilinear") {
+        graphics.trilinear_filtering = true;
+      } else if (argument == "--no-trilinear") {
+        graphics.trilinear_filtering = false;
       } else if (argument == "--anisotropic") {
         graphics.anisotropic_filtering = true;
       } else if (argument == "--no-anisotropic") {
         graphics.anisotropic_filtering = false;
+      } else if (argument == "--smaa") {
+        graphics.smaa = true;
+        graphics.msaa_samples = 0;
+      } else if (argument == "--no-smaa") {
+        graphics.smaa = false;
+      } else if (argument == "--volumetric-fog") {
+        graphics.volumetric_fog = true;
+      } else if (argument == "--no-volumetric-fog") {
+        graphics.volumetric_fog = false;
       } else if (argument == "--vsync") {
         graphics.vsync = true;
       } else if (argument == "--no-vsync") {
@@ -193,6 +208,7 @@ int main(int argc, char **argv) {
           return 64;
         }
         graphics.msaa_samples = *samples;
+        graphics.smaa = false;
       } else if (argument.starts_with("--mission=") ||
                  argument.starts_with("--level=")) {
         const auto separator = argument.find('=');

@@ -458,6 +458,7 @@ void PsyX_GetWindowName(char* buffer)
 }
 
 FILE* g_logStream = NULL;
+static int g_logStreamDirty = 0;
 
 // intialise logging
 void PsyX_Log_Initialise()
@@ -469,6 +470,7 @@ void PsyX_Log_Initialise()
 
 	if (!g_logStream)
 		eprinterr("Error - cannot create log file '%s'\n", appLogFilename);
+	g_logStreamDirty = 0;
 }
 
 void PsyX_Log_Finalise()
@@ -479,12 +481,16 @@ void PsyX_Log_Finalise()
 		fclose(g_logStream);
 
 	g_logStream = NULL;
+	g_logStreamDirty = 0;
 }
 
 void PsyX_Log_Flush()
 {
-	if (g_logStream)
+	if (g_logStream && g_logStreamDirty)
+	{
 		fflush(g_logStream);
+		g_logStreamDirty = 0;
+	}
 }
 
 // spew types
@@ -637,7 +643,10 @@ void PrintMessageToOutput(SpewType_t spewtype, char const* pMsgFormat,
 #endif
 
 	if (g_logStream)
+	{
 		fprintf(g_logStream, pTempBuffer);
+		g_logStreamDirty = 1;
+	}
 }
 
 void PsyX_Log(const char* fmt, ...)

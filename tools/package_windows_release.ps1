@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "0.1.0-public-test.22",
+    [string]$Version = "0.1.0-public-test.24",
     [string]$Configuration = "Release"
 )
 
@@ -130,6 +130,7 @@ $licenseSources = @{
     "FFmpeg.txt" = Join-Path $vcpkgShare "ffmpeg\copyright"
     "fmt.txt" = Join-Path $vcpkgShare "fmt\copyright"
     "OpenAL-Soft.txt" = Join-Path $vcpkgShare "openal-soft\copyright"
+    "SMAA.txt" = Join-Path $repoRoot "external\PsyCross\src\render\smaa\LICENSE.txt"
     "Industry-Font-COPYRIGHT.txt" = Join-Path $repoRoot "tools\fonts\industry\COPYRIGHT.txt"
     "SDL2.txt" = Join-Path $vcpkgShare "sdl2\copyright"
 }
@@ -208,44 +209,11 @@ if ($repairScriptLiterals) {
     $readme = [Text.Encoding]::UTF8.GetString([Text.Encoding]::Default.GetBytes($readme))
 }
 
-$notes = @"
-PUBLIC TEST $Version
-=====================
-
-- Восстановлена оригинальная затемнённость уровней: постоянные нативные
-  источники больше не пересвечивают запечённую геометрию PS1; вспышки, огонь,
-  взрывы и фонарик продолжают динамически освещать окружение.
-- Увеличена дистанция представления на одно портальное кольцо. Дополнительный
-  чанк подгружается только для рендера, плавно проявляется за PS1 depth cue и
-  не меняет коллизии, объекты или авторитетное состояние оригинальной игры.
-- Ламповые ореолы и светящиеся билборды всегда остаются яркими, а корпуса
-  источников корректно получают освещение и туман.
-- Исправлена маршрутизация огня, дыма и взрывов: оригинальные SPFX-пакеты и
-  нативный fallback больше не дублируются, не исчезают вдали и сохраняют
-  корректный размер.
-- HUD и letterbox получили упорядоченные плавные переходы, синхронизированные
-  с оригинальным viewport/радиосостоянием без случайных срабатываний от
-  прицеливания, выстрелов или смены чанка.
-- Сохранена оригинальная retail-резидентность моделей во всех 20 миссиях;
-  устранена регрессия, при которой presentation-lookahead мог активировать
-  лишние игровые объекты или вытеснять always-resident модели.
-- Расширены тесты динамического света, глубинного тумана, плавной подгрузки,
-  SPFX, HUD/letterbox и R3000 runtime.
-- Проведена полная проверка MSVC/PsyCross, всех поддерживаемых ROM-проб,
-  манифеста, внутренних хешей и запрещённых файлов релизного архива.
-
-Архив не содержит образ игры, сохранения, настройки или syphon_filter_cheats.
-"@
-
-if ($repairScriptLiterals) {
-    $notes = [Text.Encoding]::UTF8.GetString([Text.Encoding]::Default.GetBytes($notes))
-}
-
 $releaseNotesPath = Join-Path $repoRoot "docs\releases\$Version.md"
-if (Test-Path -LiteralPath $releaseNotesPath -PathType Leaf) {
-    $notes = [IO.File]::ReadAllText($releaseNotesPath, [Text.Encoding]::UTF8)
+if (-not (Test-Path -LiteralPath $releaseNotesPath -PathType Leaf)) {
+    throw "Required release notes are missing: $releaseNotesPath"
 }
-
+$notes = [IO.File]::ReadAllText($releaseNotesPath, [Text.Encoding]::UTF8)
 $commit = try { (& git -C $repoRoot rev-parse --short HEAD 2>$null).Trim() } catch { "unknown" }
 if (-not $commit) { $commit = "unknown" }
 
@@ -272,6 +240,7 @@ SDL2 — zlib license.
 OpenAL Soft — LGPL license.
 fmt — MIT license.
 PsyCross — MIT license.
+SMAA — MIT license.
 Industry Bold (RUS by Slavchansky) — used to generate the Russian font atlas;
 the source TTF is not included in this package.
 Microsoft Visual C++ Runtime — redistributed under the applicable Microsoft

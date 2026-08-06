@@ -24,8 +24,8 @@ public:
     constexpr std::uint32_t flashlight_toggle_entry = 0x80024190U;
     constexpr std::uint64_t callback_budget = 5'000'000U;
     const std::array arguments{enabled ? 1U : 0U};
-    return runtime.vm_->invoke(flashlight_toggle_entry, arguments,
-                               callback_budget)
+    return runtime.vm_
+               ->invoke(flashlight_toggle_entry, arguments, callback_budget)
                .completed() &&
            runtime.publishPresentationFrame();
   }
@@ -34,6 +34,57 @@ public:
     gameplay.checkpoint_pending_ = true;
     gameplay.captureCheckpoint();
     return gameplay.checkpoint_valid_;
+  }
+
+  [[nodiscard]] static bool
+  writeInventory(GameplaySession &gameplay,
+                 const LegacyInventoryBridgeState &inventory) {
+    auto *runtime = gameplay.legacy_first_mission_.get();
+    if (runtime == nullptr || !runtime->ready_ || runtime->faulted_ ||
+        runtime->finished_ || runtime->vm_ == nullptr ||
+        !runtime->vm_->writeHostInventoryState(inventory) ||
+        !runtime->publishPresentationFrame()) {
+      return false;
+    }
+    gameplay.syncLegacyGameplayBridge();
+    return !gameplay.runtimeFaulted();
+  }
+
+  [[nodiscard]] static bool writePlayerVitals(GameplaySession &gameplay,
+                                              std::int16_t health,
+                                              std::int16_t armor) {
+    auto *runtime = gameplay.legacy_first_mission_.get();
+    if (runtime == nullptr || !runtime->ready_ || runtime->faulted_ ||
+        runtime->finished_ || runtime->vm_ == nullptr ||
+        !runtime->vm_->writeHostPlayerVitals(health, armor) ||
+        !runtime->publishPresentationFrame()) {
+      return false;
+    }
+    gameplay.syncLegacyGameplayBridge();
+    return !gameplay.runtimeFaulted();
+  }
+
+  [[nodiscard]] static bool
+  seedAgentPark2BombDetonation(GameplaySession &gameplay,
+                               std::uint8_t percent) noexcept {
+    auto *runtime = gameplay.legacy_first_mission_.get();
+    if (runtime == nullptr || !runtime->ready_ || runtime->faulted_ ||
+        runtime->finished_ || !runtime->agent_difficulty_ ||
+        runtime->mission_index_ != 4U || percent > 100U) {
+      return false;
+    }
+    runtime->agent_park2_bomb_detonation_percent_ = percent;
+    return true;
+  }
+
+  [[nodiscard]] static std::optional<std::uint8_t>
+  agentPark2BombDetonationState(const GameplaySession &gameplay) noexcept {
+    const auto *runtime = gameplay.legacy_first_mission_.get();
+    if (runtime == nullptr || !runtime->ready_ || runtime->faulted_ ||
+        !runtime->agent_difficulty_ || runtime->mission_index_ != 4U) {
+      return std::nullopt;
+    }
+    return runtime->agent_park2_bomb_detonation_percent_;
   }
 
   [[nodiscard]] static bool invokeRetailFailure(GameplaySession &gameplay) {

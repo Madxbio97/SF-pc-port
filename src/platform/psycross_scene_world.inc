@@ -5,6 +5,51 @@ isSvdThermalSubject(const RenderPresentationSnapshot &presentation,
          authored_actor;
 }
 
+inline constexpr std::uint32_t retail_keycard_pickup_class = 0x63U;
+
+[[nodiscard]] bool
+retailKeycardPickupObject(const game::SceneObject &object,
+                          std::string_view model_name) noexcept {
+  return object.class_id == retail_keycard_pickup_class &&
+         model_name == "KEYCARD.GMD";
+}
+
+[[nodiscard]] long objectChunkDepthCueFloor(
+    const game::GameplaySession &gameplay, std::uint16_t object_index,
+    const game::SceneObject &object,
+    const WorldChunkAppearance &appearance) noexcept {
+  auto floor = retail_depth_cue_q12_one;
+  auto found_owner = false;
+  for (const auto room : gameplay.authoredObjectRooms(object_index)) {
+    if (!appearance.isActive(room)) {
+      continue;
+    }
+    floor = std::min(floor, appearance.depthCueFloorQ12(room));
+    found_owner = true;
+  }
+  if (found_owner) {
+    return floor;
+  }
+
+  // Recycled or moved guest objects can outlive their BIN room ownership.
+  // Fall back to the active world bounds at their presented position.
+  for (const auto model : gameplay.presentationModels()) {
+    if (model >= gameplay.models().size() || !appearance.isActive(model)) {
+      continue;
+    }
+    const auto &bounds = gameplay.models()[model].bounds;
+    if (object.transform.x < bounds.minimum_x ||
+        object.transform.x > bounds.maximum_x ||
+        object.transform.z < bounds.minimum_z ||
+        object.transform.z > bounds.maximum_z) {
+      continue;
+    }
+    floor = std::min(floor, appearance.depthCueFloorQ12(model));
+    found_owner = true;
+  }
+  return found_owner ? floor : 0L;
+}
+
 void renderObjects(const game::GameplaySession &gameplay,
                    const FireAnimation &fire_animation,
                    const FireTexturePlacement &fire_texture_placement,
@@ -17,6 +62,7 @@ void renderObjects(const game::GameplaySession &gameplay,
                    std::vector<OT_TAG> &fire_ordering_table,
                    ActorShadowPresentationCache &shadow_cache,
                    LocalSceneLightingCache &local_scene_lighting_cache,
+                   const WorldChunkAppearance &world_chunk_appearance,
                    HmdPoseScratch &pose_scratch, PrimitiveBuffer &primitives,
                    RenderStats &stats) {
   const WorldSectionFrustum object_frustum{view,
@@ -50,6 +96,12 @@ void renderObjects(const game::GameplaySession &gameplay,
       continue;
     }
     const auto &object_model = *displayed_model;
+    // Retail class 0x63 is the mission keycard pickup. Its KEYCARD.GMD is
+    // placement/size metadata; the visible pickup is the authored two-part
+    // KEYCARDA/B interface sprite rendered below.
+    if (retailKeycardPickupObject(source_object, object_model.name)) {
+      continue;
+    }
     const auto &geometry = object_model.geometry;
     // GMD and EMD props carry stable authored bounds. Cull the complete
     // transformed object before pose, lighting, shadow and triangle work.
@@ -61,6 +113,8 @@ void renderObjects(const game::GameplaySession &gameplay,
     }
     const auto texture_bank = gameplay.displayedObjectTextureBank(object_index);
     if (const auto *model = std::get_if<assets::GmdModel>(&geometry)) {
+      const auto depth_cue_floor = objectChunkDepthCueFloor(
+          gameplay, object_index, object, world_chunk_appearance);
       // The guest display-light pointer is reliable for the two weapon-crate
       // classes. Several flat GMD signs reuse that field for material state;
       // interpreting it as RGB tinted those sprites magenta.
@@ -82,7 +136,8 @@ void renderObjects(const game::GameplaySession &gameplay,
               : guest_back_color;
       renderGmdObject(*model, object, object_model.visual_effect, texture_bank,
                       presentation.camera, view, ordering_table, primitives,
-                      stats, back_color, false, scanner_material_active);
+                      stats, back_color, false, scanner_material_active,
+                      depth_cue_floor);
     } else if (const auto *hmd_model =
                    std::get_if<assets::HmdModel>(&geometry)) {
       const auto *state = gameplay.npcState(object_index);
@@ -108,9 +163,12 @@ void renderObjects(const game::GameplaySession &gameplay,
           dedicated_presentation && !exact_guest_pose ? nullptr : &pose;
       const auto *resolved_pose =
           prepareHmdWorldVertices(*hmd_model, object, render_pose, pose_scratch,
-                                  primitives.actor_scratch.hmd_world_vertices);
+                                  primitives.actor_scratch.hmd_world_vertices,
+                                  &primitives.actor_scratch.hmd_world_normals);
       const auto world_vertices =
           std::span<const Vector3>{primitives.actor_scratch.hmd_world_vertices};
+      const auto world_normals =
+          std::span<const Vector3>{primitives.actor_scratch.hmd_world_normals};
       // Animated HMD actors have no stable authored bounds, but their exact
       // posed vertices are already available here. Cull fully off-screen
       // actors before weapon attachment, shadow receivers, dynamic lighting
@@ -176,9 +234,17 @@ void renderObjects(const game::GameplaySession &gameplay,
                              OpticSubjectStyle::virus_scanner, view,
                              ordering_table, primitives, stats, 1U, 0);
       } else {
+        const auto guest_slots = gameplay.legacyGuestSlotsBySceneObject();
+        const auto guest_slot =
+            object_index < guest_slots.size()
+                ? static_cast<std::int16_t>(guest_slots[object_index])
+                : std::int16_t{-1};
+        const auto wound_vertices =
+            legacyHmdWoundVertices(gameplay, guest_slot, *hmd_model);
         renderHmdObject(*hmd_model, object, render_pose, texture_bank,
                         pose_scratch, view, ordering_table, primitives, stats,
-                        back_color, world_vertices);
+                        back_color, world_vertices, world_normals, false, true,
+                        &wound_vertices);
       }
       if (weapon_presentation) {
         if (thermal_subject) {
@@ -207,9 +273,11 @@ void renderObjects(const game::GameplaySession &gameplay,
                          primitives, stats);
       }
     } else {
+      const auto depth_cue_floor = objectChunkDepthCueFloor(
+          gameplay, object_index, object, world_chunk_appearance);
       renderEmdObject(std::get<assets::EmdScene>(geometry), object,
                       texture_bank, view, ordering_table, primitives, stats,
-                      false, scanner_material_active);
+                      false, scanner_material_active, depth_cue_floor);
     }
   }
 }
@@ -387,7 +455,6 @@ void renderDroppedItemSprites(const HudTextureAtlas &textures,
   const auto projection = static_cast<double>(std::max(camera.projection, 1));
   constexpr auto center_x = static_cast<double>(screen_width) * 0.5;
   constexpr auto center_y = static_cast<double>(screen_height) * 0.5;
-  constexpr double pickup_world_extent = 96.0;
   constexpr double maximum_screen_extent = 34.0;
   constexpr double pickup_center_clearance = 72.0;
   constexpr double fallback_visual_lift = 96.0;
@@ -404,23 +471,24 @@ void renderDroppedItemSprites(const HudTextureAtlas &textures,
       pickup_minimum_brightness +
       pickup_brightness_range * pickup_pulse_rise / pickup_pulse_half_ticks);
 
-  for (const auto &item : presentation.dropped_items) {
-    const auto layers = game::droppedItemIconLayers(item.item);
+  const auto render_pickup =
+      [&](std::uint16_t item, double position_x, double raw_world_y,
+          double position_z, std::uint16_t room,
+          const game::ObjectModel *pickup_model, double screen_offset_x,
+          double screen_offset_y) {
+    const auto layers = game::droppedItemIconLayers(item);
     if (layers.empty()) {
-      continue;
+      return;
     }
-    const auto &position = item.transform.translation;
-    const auto raw_world_y = -static_cast<double>(position.y);
-    const auto ground_y = gameplay.droppedItemGroundY(
-        static_cast<double>(position.x), static_cast<double>(position.z),
-        raw_world_y, item.room);
-    const auto world = Vector3{static_cast<double>(position.x),
+    const auto ground_y =
+        gameplay.droppedItemGroundY(position_x, position_z, raw_world_y, room);
+    const auto world = Vector3{position_x,
                                ground_y ? *ground_y - pickup_center_clearance
                                         : raw_world_y - fallback_visual_lift,
-                               static_cast<double>(position.z)};
+                               position_z};
     if (!gameplay.droppedItemVisibleFrom(camera.x, camera.y, camera.z, world.x,
-                                         world.y, world.z, item.room)) {
-      continue;
+                                         world.y, world.z, room)) {
+      return;
     }
     const auto delta =
         Vector3{world.x - camera.x, world.y - camera.y, world.z - camera.z};
@@ -429,15 +497,15 @@ void renderDroppedItemSprites(const HudTextureAtlas &textures,
     };
     const auto depth = preciseCameraDepth(view, world.x, world.y, world.z);
     if (depth <= active_near_clip_depth) {
-      continue;
+      return;
     }
     const auto projected_x =
-        center_x + component(basis[0]) * projection / depth;
+        center_x + component(basis[0]) * projection / depth + screen_offset_x;
     const auto projected_y =
-        center_y + component(basis[1]) * projection / depth;
+        center_y + component(basis[1]) * projection / depth + screen_offset_y;
     if (projected_x < -64.0 || projected_x > screen_width + 64.0 ||
         projected_y < -64.0 || projected_y > screen_height + 64.0) {
-      continue;
+      return;
     }
 
     std::array<int, game::maximum_weapon_icon_layers> widths{};
@@ -463,11 +531,22 @@ void renderDroppedItemSprites(const HudTextureAtlas &textures,
         heights.begin() + static_cast<std::ptrdiff_t>(layers.size()));
     const auto source_extent =
         static_cast<double>(std::max(group_width, maximum_height));
-    const auto category_scale = game::droppedItemPresentationScale(item.item);
+    auto authored_world_extent = source_extent;
+    // Bounds preserve retail size hierarchy only. No GMD vertices or
+    // primitives are ever submitted by this sprite-only renderer.
+    if (pickup_model != nullptr && pickup_model->bounds) {
+      const auto &bounds = *pickup_model->bounds;
+      const auto width = static_cast<double>(bounds.maximum_x) -
+                         static_cast<double>(bounds.minimum_x);
+      const auto height = static_cast<double>(bounds.maximum_y) -
+                          static_cast<double>(bounds.minimum_y);
+      const auto depth_extent = static_cast<double>(bounds.maximum_z) -
+                                static_cast<double>(bounds.minimum_z);
+      authored_world_extent = std::max({width, height, depth_extent, 1.0});
+    }
     const auto scale =
-        std::min({projection * pickup_world_extent * category_scale /
-                      (depth * source_extent),
-                  maximum_screen_extent * category_scale / source_extent, 1.0});
+        std::min({projection * authored_world_extent / (depth * source_extent),
+                  maximum_screen_extent / source_extent, 1.0});
     const auto sort_depth =
         std::clamp(static_cast<int>(std::lround(depth * 0.25)), 1,
                    ordering_table_size - 1);
@@ -475,10 +554,16 @@ void renderDroppedItemSprites(const HudTextureAtlas &textures,
     for (std::size_t layer = 0U; layer < layers.size(); ++layer) {
       const auto &image = textures.image(layers[layer]);
       const auto armor_pickup = layers[layer] == armor_pickup_texture;
-      const auto resident_x =
-          armor_pickup ? pickup_resident_x : hudResidentX(image.pixels().x);
-      const auto resident_y =
-          armor_pickup ? pickup_resident_y : image.pixels().y;
+      const auto chopper_gun_pickup =
+          layers[layer] == chopper_gun_pickup_texture;
+      const auto resident_x = armor_pickup ? pickup_resident_x
+                              : chopper_gun_pickup
+                                  ? chopper_gun_pickup_resident_x
+                                  : hudResidentX(image.pixels().x);
+      const auto resident_y = armor_pickup ? pickup_resident_y
+                              : chopper_gun_pickup
+                                  ? chopper_gun_pickup_resident_y
+                                  : image.pixels().y;
       const auto page_x =
           static_cast<int>(resident_x & static_cast<std::uint16_t>(~63U));
       const auto page_y =
@@ -506,8 +591,10 @@ void renderDroppedItemSprites(const HudTextureAtlas &textures,
       setPolyFT4(&polygon);
       polygon.tpage = texture_page;
       polygon.clut =
-          GetClut(hud_resident_clut_x,
-                  armor_pickup ? pickup_resident_clut_y : hud_resident_clut_y);
+          GetClut(hud_resident_clut_x, armor_pickup ? pickup_resident_clut_y
+                                       : chopper_gun_pickup
+                                           ? chopper_gun_pickup_resident_clut_y
+                                           : hud_resident_clut_y);
       setRGB0(&polygon, pickup_brightness, pickup_brightness,
               pickup_brightness);
       setXY4(&polygon, static_cast<float>(left), static_cast<float>(top),
@@ -543,6 +630,85 @@ void renderDroppedItemSprites(const HudTextureAtlas &textures,
       addPrim(&ordering_table[sort_depth], &polygon);
       ++stats.submitted;
     }
+  };
+
+  constexpr auto pile_columns = std::size_t{5U};
+  constexpr double pile_horizontal_spacing = 18.0;
+  constexpr double pile_vertical_spacing = 14.0;
+  const auto same_pile = [](const auto &left, const auto &right) {
+    constexpr std::int64_t horizontal_tolerance = 128;
+    constexpr std::int64_t vertical_tolerance = 192;
+    const auto within = [](std::int32_t first, std::int32_t second,
+                           std::int64_t tolerance) {
+      const auto difference = static_cast<std::int64_t>(first) -
+                              static_cast<std::int64_t>(second);
+      return difference >= -tolerance && difference <= tolerance;
+    };
+    return left.room == right.room &&
+           within(left.transform.translation.x, right.transform.translation.x,
+                  horizontal_tolerance) &&
+           within(left.transform.translation.y, right.transform.translation.y,
+                  vertical_tolerance) &&
+           within(left.transform.translation.z, right.transform.translation.z,
+                  horizontal_tolerance);
+  };
+  const auto pile_offset = [&](std::size_t rank, std::size_t count) {
+    if (count <= 1U) {
+      return std::array{0.0, 0.0};
+    }
+    const auto row = rank / pile_columns;
+    const auto row_start = row * pile_columns;
+    const auto row_count = std::min(pile_columns, count - row_start);
+    const auto column = rank - row_start;
+    const auto centered_column =
+        static_cast<double>(column) -
+        static_cast<double>(row_count - 1U) * 0.5;
+    return std::array{centered_column * pile_horizontal_spacing,
+                      -static_cast<double>(row) * pile_vertical_spacing};
+  };
+
+  for (std::size_t item_index = 0U;
+       item_index < presentation.dropped_items.size(); ++item_index) {
+    const auto &item = presentation.dropped_items[item_index];
+    auto pile_count = std::size_t{};
+    auto pile_rank = std::size_t{};
+    for (std::size_t candidate_index = 0U;
+         candidate_index < presentation.dropped_items.size();
+         ++candidate_index) {
+      const auto &candidate = presentation.dropped_items[candidate_index];
+      if (game::droppedItemIconLayers(candidate.item).empty() ||
+          !same_pile(item, candidate)) {
+        continue;
+      }
+      pile_rank += candidate_index < item_index ? 1U : 0U;
+      ++pile_count;
+    }
+    const auto offset = pile_offset(pile_rank, pile_count);
+    const auto &position = item.transform.translation;
+    render_pickup(item.item, static_cast<double>(position.x),
+                  -static_cast<double>(position.y),
+                  static_cast<double>(position.z), item.room,
+                  gameplay.droppedItemModel(item.item), offset[0], offset[1]);
+  }
+
+  constexpr auto inferred_room = std::numeric_limits<std::uint16_t>::max();
+  for (const auto object_index : gameplay.activeObjects()) {
+    if (object_index >= presentation.objects.size() ||
+        object_index >= gameplay.objects().size()) {
+      continue;
+    }
+    const auto &source_object = gameplay.objects()[object_index];
+    const auto *displayed_model = gameplay.displayedObjectModel(object_index);
+    if (displayed_model == nullptr ||
+        !retailKeycardPickupObject(source_object, displayed_model->name)) {
+      continue;
+    }
+    const auto &transform = presentation.objects[object_index].transform;
+    render_pickup(
+        static_cast<std::uint16_t>(game::WeaponId::key_card),
+        static_cast<double>(transform.x), static_cast<double>(transform.y),
+        static_cast<double>(transform.z), inferred_room, displayed_model, 0.0,
+        0.0);
   }
 }
 
@@ -700,9 +866,12 @@ void renderPresentedPlayer(
     }();
     const auto *resolved_pose = prepareHmdWorldVertices(
         *player_model, player_object, &pose, pose_scratch,
-        primitives.actor_scratch.hmd_world_vertices);
+        primitives.actor_scratch.hmd_world_vertices,
+        &primitives.actor_scratch.hmd_world_normals);
     const auto world_vertices =
         std::span<const Vector3>{primitives.actor_scratch.hmd_world_vertices};
+    const auto world_normals =
+        std::span<const Vector3>{primitives.actor_scratch.hmd_world_normals};
     auto support_player_object = game::SceneObject{
         0, playerTransform(gameplay.player(), gameplay.playerModelHeading())};
     if (const auto *authoritative_guest_player =
@@ -738,10 +907,13 @@ void renderPresentedPlayer(
             : PlayerCameraVisibility::opaque;
     const auto translucent = visibility == PlayerCameraVisibility::translucent;
     if (visibility != PlayerCameraVisibility::hidden) {
+      const auto wound_vertices = legacyHmdWoundVertices(
+          gameplay, presentation.player_guest_slot, *player_model);
       renderHmdObject(*player_model, player_object, &pose,
                       game::resident_hmd_texture_bank, pose_scratch, view,
                       ordering_table, primitives, stats, std::nullopt,
-                      world_vertices, translucent);
+                      world_vertices, world_normals, translucent, true,
+                      &wound_vertices);
     }
     if (gameplay.playerAlive() &&
         visibility != PlayerCameraVisibility::hidden && weapon_presentation) {
@@ -789,6 +961,8 @@ void setPacketColor(std::uint32_t word, std::uint8_t &red, std::uint8_t &green,
 void renderGuestCameraLists(
     const game::GameplaySession &gameplay, const TextureStreamer &textures,
     const RenderPresentationSnapshot &presentation,
+    const game::ActorAnimationBank &actor_animations, std::uint64_t actor_tick,
+    HmdPoseScratch &pose_scratch,
     std::span<const game::LegacyGuestSpritePresentationState> retained_sprites,
     std::span<const game::LegacyGuestRawPacketPresentationState>
         retained_raw_packets,
@@ -809,13 +983,12 @@ void renderGuestCameraLists(
           gameplay.legacyEffectParticlesAuthoritative());
   constexpr auto center_x = static_cast<double>(screen_width) * 0.5;
   constexpr auto center_y = static_cast<double>(screen_height) * 0.5;
-  const auto project_world = [](const game::CameraState &camera,
-                                const game::LegacyNativePoint &point)
+  const auto project_position = [](const game::CameraState &camera,
+                                   const Vector3 &point)
       -> std::optional<std::array<double, 3U>> {
     const auto basis = viewBasis(camera);
-    const auto delta = Vector3{static_cast<double>(point.x) - camera.x,
-                               -static_cast<double>(point.y) - camera.y,
-                               static_cast<double>(point.z) - camera.z};
+    const auto delta = Vector3{point.x - camera.x, point.y - camera.y,
+                               point.z - camera.z};
     const auto component = [&delta](const Vector3 &axis) {
       return delta.x * axis.x + delta.y * axis.y + delta.z * axis.z;
     };
@@ -829,6 +1002,14 @@ void renderGuestCameraLists(
         center_y + component(basis[1]) * projection / depth,
         depth,
     };
+  };
+  const auto project_world = [&project_position](
+                                 const game::CameraState &camera,
+                                 const game::LegacyNativePoint &point) {
+    return project_position(camera,
+                            Vector3{static_cast<double>(point.x),
+                                    -static_cast<double>(point.y),
+                                    static_cast<double>(point.z)});
   };
 
   const auto bridge_camera = [](const game::LegacyCameraBridgeState &camera) {
@@ -1064,7 +1245,9 @@ void renderGuestCameraLists(
     ++stats.submitted;
   }
 
-  for (const auto &line : presentation.guest_lines) {
+  for (std::size_t index = 0U; index < presentation.guest_lines.size();
+       ++index) {
+    const auto &line = presentation.guest_lines[index];
     if ((line.attribute & 0x80000000U) != 0U) {
       continue;
     }
@@ -1114,10 +1297,285 @@ void renderGuestCameraLists(
     }
     ++stats.submitted;
   };
+
+  struct RetailTaserPacketWarp {
+    std::int16_t controller{-1};
+    std::uint16_t segment_count{};
+    std::uint16_t first_segment{};
+    std::uint16_t last_segment{};
+    double raw_source_x{};
+    double raw_source_y{};
+    double presented_source_x{};
+    double presented_source_y{};
+    double scale_cosine{1.0};
+    double scale_sine{};
+    double source_depth{};
+    double target_depth{};
+  };
+  struct RetailTaserPacketWarpSet {
+    std::array<RetailTaserPacketWarp,
+               game::legacy_effect_particle_capacity> entries{};
+    std::size_t count{};
+  };
+  const auto taser_warp_for = [](const RetailTaserPacketWarpSet &warps,
+                                 const auto &packet)
+      -> const RetailTaserPacketWarp * {
+    for (std::size_t index = 0U; index < warps.count; ++index) {
+      const auto &warp = warps.entries[index];
+      if (warp.controller == packet.effect_controller &&
+          warp.segment_count == packet.taser_segment_count) {
+        return &warp;
+      }
+    }
+    return nullptr;
+  };
+  const auto taser_endpoint_amount = [](const RetailTaserPacketWarp &warp,
+                                        std::uint16_t endpoint) {
+    const auto first = static_cast<std::uint32_t>(warp.first_segment);
+    const auto last = static_cast<std::uint32_t>(warp.last_segment) + 1U;
+    const auto bounded = std::clamp<std::uint32_t>(endpoint, first, last);
+    return static_cast<double>(bounded - first) /
+           static_cast<double>(last - first);
+  };
+  const auto transform_taser_point = [](const RetailTaserPacketWarp &warp,
+                                        double x, double y) {
+    const auto local_x = x - warp.raw_source_x;
+    const auto local_y = y - warp.raw_source_y;
+    return std::array{
+        warp.presented_source_x + warp.scale_cosine * local_x -
+            warp.scale_sine * local_y,
+        warp.presented_source_y + warp.scale_sine * local_x +
+            warp.scale_cosine * local_y,
+    };
+  };
+
+  const auto taser_target_object = gameplay.taserTarget();
+  auto taser_target_position = std::optional<Vector3>{};
+  if (const auto &retail_point = gameplay.retailAimPoint();
+      retail_point &&
+      (presentation.first_person_aim ||
+       (taser_target_object &&
+        gameplay.aimTarget() == taser_target_object))) {
+    taser_target_position = Vector3{
+        static_cast<double>(retail_point->x),
+        -static_cast<double>(retail_point->y),
+        static_cast<double>(retail_point->z),
+    };
+  }
+  if (!taser_target_position && taser_target_object) {
+    taser_target_position = sceneObjectCalloutAnchor(
+        gameplay, actor_animations, actor_tick,
+        std::span<const game::SceneObject>{presentation.objects},
+        *taser_target_object, false, pose_scratch);
+  }
+  const auto projected_taser_target =
+      taser_target_position
+          ? project_position(presentation.camera, *taser_target_position)
+          : std::nullopt;
+  auto projected_taser_muzzle =
+      std::optional<std::array<double, 3U>>{};
+  if (!presentation.first_person_aim) {
+    if (const auto muzzle = playerWeaponMuzzleAnchor(
+            gameplay, actor_animations, presentedPlayerObject(presentation),
+            game::WeaponId::taser)) {
+      projected_taser_muzzle =
+          project_position(presentation.camera, *muzzle);
+    }
+  }
+
+  const auto build_retail_taser_warps =
+      [&](const auto &entries,
+          const auto &packet_for) -> RetailTaserPacketWarpSet {
+    auto result = RetailTaserPacketWarpSet{};
+    for (const auto &entry : entries) {
+      const auto &candidate = packet_for(entry);
+      if (!game::legacyGuestRawPacketIsRetailTaserConductor(candidate) ||
+          candidate.taser_segment_count >
+              game::legacy_effect_particle_capacity ||
+          std::ranges::any_of(
+              result.entries.begin(), result.entries.begin() + result.count,
+              [&](const auto &warp) {
+                return warp.controller == candidate.effect_controller &&
+                       warp.segment_count == candidate.taser_segment_count;
+              })) {
+        continue;
+      }
+      std::array<const game::LegacyGuestRawPacketBridgeState *,
+                 game::legacy_effect_particle_capacity>
+          segments{};
+      for (const auto &segment_entry : entries) {
+        const auto &segment = packet_for(segment_entry);
+        if (!game::legacyGuestRawPacketHasProjectedTaserSegment(segment) ||
+            segment.effect_controller != candidate.effect_controller ||
+            segment.taser_segment_count != candidate.taser_segment_count ||
+            static_cast<std::uint16_t>(segment.taser_segment_index) >=
+                candidate.taser_segment_count) {
+          continue;
+        }
+        segments[static_cast<std::uint16_t>(segment.taser_segment_index)] =
+            &segment;
+      }
+
+      std::size_t best_first{};
+      std::size_t best_length{};
+      std::size_t run_first{};
+      std::size_t run_length{};
+      for (std::size_t segment = 0U;
+           segment < candidate.taser_segment_count; ++segment) {
+        if (segments[segment] == nullptr) {
+          run_length = 0U;
+          continue;
+        }
+        if (run_length == 0U) {
+          run_first = segment;
+        }
+        ++run_length;
+        if (run_length > best_length) {
+          best_first = run_first;
+          best_length = run_length;
+        }
+      }
+      if (best_length == 0U || result.count == result.entries.size()) {
+        continue;
+      }
+      const auto first_segment = best_first;
+      const auto last_segment = best_first + best_length - 1U;
+      const auto *source_packet = segments[first_segment];
+      const auto *target_packet = segments[last_segment];
+      const auto raw_source_x = reprojectGuestCoordinate(
+        static_cast<double>(packedScreenX(source_packet->words[1])),
+        guest_draw_offset_x, 0.0);
+      const auto raw_source_y = reprojectGuestCoordinate(
+        static_cast<double>(packedScreenY(source_packet->words[1])),
+        guest_draw_offset_y, 0.0);
+      const auto raw_target_x = reprojectGuestCoordinate(
+        static_cast<double>(packedScreenX(target_packet->words[3])),
+        guest_draw_offset_x, 0.0);
+      const auto raw_target_y = reprojectGuestCoordinate(
+        static_cast<double>(packedScreenY(target_packet->words[3])),
+        guest_draw_offset_y, 0.0);
+
+      auto presented_source_x = raw_source_x;
+      auto presented_source_y = raw_source_y;
+      auto presented_target_x = raw_target_x;
+      auto presented_target_y = raw_target_y;
+      const auto safe_source_depth = active_near_clip_depth + 8.0;
+      auto source_depth = safe_source_depth;
+      auto target_depth = std::max(
+          safe_source_depth + 1.0,
+          static_cast<double>(target_packet->ordering_depth) * 4.0);
+      if (presentation.first_person_aim) {
+        // Gabe's model muzzle is at/behind the FP eye. Retail already clipped
+        // the invisible prefix; keep its first valid screen endpoint and
+        // constrain near-overflow to the visible canvas edge.
+        constexpr auto screen_margin = 8.0;
+        presented_source_x = std::clamp(
+            raw_source_x, screen_margin,
+            static_cast<double>(screen_width) - screen_margin);
+        presented_source_y = std::clamp(
+            raw_source_y, screen_margin,
+            static_cast<double>(screen_height) - screen_margin);
+        if (projected_taser_target) {
+          presented_target_x = (*projected_taser_target)[0];
+          presented_target_y = (*projected_taser_target)[1];
+          target_depth = (*projected_taser_target)[2];
+        }
+      } else {
+        const auto full_source_x = projected_taser_muzzle
+                                       ? (*projected_taser_muzzle)[0]
+                                       : raw_source_x;
+        const auto full_source_y = projected_taser_muzzle
+                                       ? (*projected_taser_muzzle)[1]
+                                       : raw_source_y;
+        const auto full_target_x = projected_taser_target
+                                       ? (*projected_taser_target)[0]
+                                       : raw_target_x;
+        const auto full_target_y = projected_taser_target
+                                       ? (*projected_taser_target)[1]
+                                       : raw_target_y;
+        const auto full_source_depth = projected_taser_muzzle
+                                           ? (*projected_taser_muzzle)[2]
+                                           : safe_source_depth;
+        const auto full_target_depth = projected_taser_target
+                                           ? (*projected_taser_target)[2]
+                                           : target_depth;
+        const auto first_amount =
+            static_cast<double>(first_segment) /
+            static_cast<double>(candidate.taser_segment_count);
+        const auto last_amount =
+            static_cast<double>(last_segment + 1U) /
+            static_cast<double>(candidate.taser_segment_count);
+        presented_source_x =
+            std::lerp(full_source_x, full_target_x, first_amount);
+        presented_source_y =
+            std::lerp(full_source_y, full_target_y, first_amount);
+        presented_target_x =
+            std::lerp(full_source_x, full_target_x, last_amount);
+        presented_target_y =
+            std::lerp(full_source_y, full_target_y, last_amount);
+        source_depth =
+            std::lerp(full_source_depth, full_target_depth, first_amount);
+        target_depth =
+            std::lerp(full_source_depth, full_target_depth, last_amount);
+      }
+
+      const auto raw_delta_x = raw_target_x - raw_source_x;
+      const auto raw_delta_y = raw_target_y - raw_source_y;
+      const auto presented_delta_x = presented_target_x - presented_source_x;
+      const auto presented_delta_y = presented_target_y - presented_source_y;
+      const auto raw_length_squared =
+          raw_delta_x * raw_delta_x + raw_delta_y * raw_delta_y;
+      const auto presented_length_squared =
+          presented_delta_x * presented_delta_x +
+          presented_delta_y * presented_delta_y;
+      if (raw_length_squared < 1.0 || presented_length_squared < 1.0 ||
+          !std::isfinite(raw_length_squared) ||
+          !std::isfinite(presented_length_squared)) {
+        continue;
+      }
+      const auto scale_cosine =
+          (presented_delta_x * raw_delta_x +
+           presented_delta_y * raw_delta_y) /
+          raw_length_squared;
+      const auto scale_sine =
+          (presented_delta_y * raw_delta_x -
+           presented_delta_x * raw_delta_y) /
+          raw_length_squared;
+      const auto scale_squared = scale_cosine * scale_cosine +
+                                 scale_sine * scale_sine;
+      if (!std::isfinite(scale_squared) || scale_squared < 0.0001 ||
+          scale_squared > 64.0) {
+        continue;
+      }
+      result.entries[result.count++] = RetailTaserPacketWarp{
+          .controller = source_packet->effect_controller,
+          .segment_count = source_packet->taser_segment_count,
+          .first_segment = static_cast<std::uint16_t>(first_segment),
+          .last_segment = static_cast<std::uint16_t>(last_segment),
+          .raw_source_x = raw_source_x,
+          .raw_source_y = raw_source_y,
+          .presented_source_x = presented_source_x,
+          .presented_source_y = presented_source_y,
+          .scale_cosine = scale_cosine,
+          .scale_sine = scale_sine,
+          .source_depth = source_depth,
+          .target_depth = target_depth,
+      };
+    }
+    return result;
+  };
+  const auto current_taser_warps = build_retail_taser_warps(
+      presentation.guest_raw_packets,
+      [](const auto &packet) -> const auto & { return packet; });
+  const auto retained_taser_warps = build_retail_taser_warps(
+      retained_raw_packets,
+      [](const auto &entry) -> const auto & { return entry.packet; });
+
   const auto render_raw_packet = [&](const game::LegacyGuestRawPacketBridgeState
                                          &packet,
                                      const game::CameraState &authored_camera,
-                                     bool suppress_reconstructed_particle) {
+                                     bool suppress_reconstructed_particle,
+                                     const RetailTaserPacketWarpSet &taser_warps) {
     if (suppress_reconstructed_particle &&
         (game::legacyGuestRawPacketHasWorldLine(
              packet, presentation.current_line_particles) ||
@@ -1129,7 +1587,22 @@ void renderGuestCameraLists(
     if (packet.opcode == 0U || (packet.opcode & 0x80U) != 0U) {
       return;
     }
-    const auto world_effect = game::legacyGuestRawPacketUsesWorldDepth(packet);
+    const auto retail_taser_packet =
+        game::legacyGuestRawPacketIsRetailTaserConductor(packet);
+    const auto *active_taser_warp = retail_taser_packet
+                                        ? taser_warp_for(taser_warps, packet)
+                                        : nullptr;
+    if (retail_taser_packet &&
+        (active_taser_warp == nullptr ||
+         !game::legacyGuestRawPacketHasProjectedTaserSegment(packet) ||
+         static_cast<std::uint16_t>(packet.taser_segment_index) <
+             active_taser_warp->first_segment ||
+         static_cast<std::uint16_t>(packet.taser_segment_index) >
+             active_taser_warp->last_segment)) {
+      return;
+    }
+    const auto world_effect = retail_taser_packet ||
+                              game::legacyGuestRawPacketUsesWorldDepth(packet);
     const auto scope_packet =
         game::legacyGuestRawPacketIsRetailScopeOverlay(packet);
     const auto scanner_packet =
@@ -1162,21 +1635,32 @@ void renderGuestCameraLists(
     auto raw_offset_x = 0.0;
     auto raw_offset_y = 0.0;
     if (world_effect) {
-      const auto authored =
+      if (retail_taser_packet) {
+        raw_view_depth = active_taser_warp != nullptr
+                             ? active_taser_warp->source_depth
+                             : std::max(active_near_clip_depth + 1.0,
+                                        static_cast<double>(
+                                            packet.ordering_depth) * 4.0);
+        target_table = presentation.first_person_aim
+                           ? &overlay_ordering_table
+                           : &ordering_table;
+      } else {
+        const auto authored =
           project_world(authored_camera, packet.effect_position);
-      const auto presented =
+        const auto presented =
           project_world(presentation.camera, packet.effect_position);
-      if (!authored || !presented) {
-        ++stats.rejected;
-        return;
+        if (!authored || !presented) {
+          ++stats.rejected;
+          return;
+        }
+        raw_offset_x = (*presented)[0] - (*authored)[0];
+        raw_offset_y = (*presented)[1] - (*authored)[1];
+        raw_view_depth =
+            preciseCameraDepth(view, packet.effect_position.x,
+                               -static_cast<double>(packet.effect_position.y),
+                               packet.effect_position.z);
+        target_table = &ordering_table;
       }
-      raw_offset_x = (*presented)[0] - (*authored)[0];
-      raw_offset_y = (*presented)[1] - (*authored)[1];
-      raw_view_depth =
-          preciseCameraDepth(view, packet.effect_position.x,
-                             -static_cast<double>(packet.effect_position.y),
-                             packet.effect_position.z);
-      target_table = &ordering_table;
     }
     const auto raw_x = [raw_offset_x](std::uint32_t word) {
       return static_cast<float>(
@@ -1188,13 +1672,36 @@ void renderGuestCameraLists(
           reprojectGuestCoordinate(static_cast<double>(packedScreenY(word)),
                                    guest_draw_offset_y, raw_offset_y));
     };
+    const std::uint16_t segment_index =
+        retail_taser_packet
+            ? static_cast<std::uint16_t>(packet.taser_segment_index)
+            : std::uint16_t{};
+    const auto first_taser_amount =
+        active_taser_warp != nullptr
+            ? taser_endpoint_amount(*active_taser_warp, segment_index)
+            : 0.0;
+    const auto second_taser_amount =
+        active_taser_warp != nullptr
+            ? taser_endpoint_amount(
+                  *active_taser_warp,
+                  static_cast<std::uint16_t>(segment_index + 1U))
+            : 0.0;
+    const auto raw_sort_depth = active_taser_warp != nullptr
+                                    ? std::lerp(
+                                          active_taser_warp->source_depth,
+                                          active_taser_warp->target_depth,
+                                          (first_taser_amount +
+                                           second_taser_amount) * 0.5)
+                                    : raw_view_depth;
     const auto raw_depth =
         world_effect ? static_cast<std::uint32_t>(std::clamp(
-                           static_cast<int>(std::lround(raw_view_depth * 0.25)),
+                           static_cast<int>(std::lround(raw_sort_depth * 0.25)),
                            1, ordering_table_size - 1))
                      : packet.ordering_depth;
-    const auto emit_raw_pgxp = [&](VERTTYPE &x, VERTTYPE &y) {
-      if (!world_effect) {
+    const auto emit_raw_pgxp = [&](VERTTYPE &x, VERTTYPE &y,
+                                   double vertex_depth) {
+      if (!world_effect ||
+          (retail_taser_packet && presentation.first_person_aim)) {
         return;
       }
       const auto projection =
@@ -1203,11 +1710,11 @@ void renderGuestCameraLists(
       const auto screen_y = static_cast<float>(y);
       PGXPVData data{};
       data.lookup = PGXP_LOOKUP_VALUE(x, y);
-      data.px = static_cast<float>((screen_x - center_x) * raw_view_depth /
+      data.px = static_cast<float>((screen_x - center_x) * vertex_depth /
                                    projection / 128.0);
-      data.py = static_cast<float>((screen_y - center_y) * raw_view_depth /
+      data.py = static_cast<float>((screen_y - center_y) * vertex_depth /
                                    projection / 128.0);
-      data.pz = static_cast<float>(raw_view_depth / 128.0);
+      data.pz = static_cast<float>(vertex_depth / 128.0);
       data.sx = screen_x;
       data.sy = screen_y;
       data.scr_h = projection;
@@ -1221,7 +1728,7 @@ void renderGuestCameraLists(
       setPacketColor(packet.words[0], primitive.r0, primitive.g0, primitive.b0);
       primitive.code = packet.opcode;
       setXY0(&primitive, raw_x(packet.words[1]), raw_y(packet.words[1]));
-      emit_raw_pgxp(primitive.x0, primitive.y0);
+      emit_raw_pgxp(primitive.x0, primitive.y0, raw_view_depth);
       add_raw(primitive, raw_depth, packet.opcode, *target_table);
     } else if (packet.word_count == 3U && base_opcode == 0x40U) {
       auto &primitive = primitives.guest_raw_flat_lines.emplace_back();
@@ -1230,8 +1737,8 @@ void renderGuestCameraLists(
       primitive.code = packet.opcode;
       setXY2(&primitive, raw_x(packet.words[1]), raw_y(packet.words[1]),
              raw_x(packet.words[2]), raw_y(packet.words[2]));
-      emit_raw_pgxp(primitive.x0, primitive.y0);
-      emit_raw_pgxp(primitive.x1, primitive.y1);
+      emit_raw_pgxp(primitive.x0, primitive.y0, raw_view_depth);
+      emit_raw_pgxp(primitive.x1, primitive.y1, raw_view_depth);
       add_raw(primitive, raw_depth, packet.opcode, *target_table);
     } else if (packet.word_count == 4U && base_opcode == 0x20U) {
       auto &primitive = primitives.guest_raw_flat_triangles.emplace_back();
@@ -1241,21 +1748,45 @@ void renderGuestCameraLists(
       setXY3(&primitive, raw_x(packet.words[1]), raw_y(packet.words[1]),
              raw_x(packet.words[2]), raw_y(packet.words[2]),
              raw_x(packet.words[3]), raw_y(packet.words[3]));
-      emit_raw_pgxp(primitive.x0, primitive.y0);
-      emit_raw_pgxp(primitive.x1, primitive.y1);
-      emit_raw_pgxp(primitive.x2, primitive.y2);
+      emit_raw_pgxp(primitive.x0, primitive.y0, raw_view_depth);
+      emit_raw_pgxp(primitive.x1, primitive.y1, raw_view_depth);
+      emit_raw_pgxp(primitive.x2, primitive.y2, raw_view_depth);
       add_raw(primitive, raw_depth, packet.opcode, *target_table);
     } else if (packet.word_count == 4U && base_opcode == 0x50U) {
       auto &primitive = primitives.guest_raw_gouraud_lines.emplace_back();
       setLineG2(&primitive);
       setPacketColor(packet.words[0], primitive.r0, primitive.g0, primitive.b0);
       primitive.code = packet.opcode;
-      setXY0(&primitive, raw_x(packet.words[1]), raw_y(packet.words[1]));
+      auto first_x = raw_x(packet.words[1]);
+      auto first_y = raw_y(packet.words[1]);
+      auto second_x = raw_x(packet.words[3]);
+      auto second_y = raw_y(packet.words[3]);
+      auto first_depth = raw_view_depth;
+      auto second_depth = raw_view_depth;
+      if (active_taser_warp != nullptr) {
+        const auto first = transform_taser_point(
+            *active_taser_warp, static_cast<double>(first_x),
+            static_cast<double>(first_y));
+        const auto second = transform_taser_point(
+            *active_taser_warp, static_cast<double>(second_x),
+            static_cast<double>(second_y));
+        first_x = static_cast<float>(first[0]);
+        first_y = static_cast<float>(first[1]);
+        second_x = static_cast<float>(second[0]);
+        second_y = static_cast<float>(second[1]);
+        first_depth = std::lerp(active_taser_warp->source_depth,
+                                active_taser_warp->target_depth,
+                                first_taser_amount);
+        second_depth = std::lerp(active_taser_warp->source_depth,
+                                 active_taser_warp->target_depth,
+                                 second_taser_amount);
+      }
+      setXY0(&primitive, first_x, first_y);
       setPacketColor(packet.words[2], primitive.r1, primitive.g1, primitive.b1);
-      primitive.x1 = raw_x(packet.words[3]);
-      primitive.y1 = raw_y(packet.words[3]);
-      emit_raw_pgxp(primitive.x0, primitive.y0);
-      emit_raw_pgxp(primitive.x1, primitive.y1);
+      primitive.x1 = second_x;
+      primitive.y1 = second_y;
+      emit_raw_pgxp(primitive.x0, primitive.y0, first_depth);
+      emit_raw_pgxp(primitive.x1, primitive.y1, second_depth);
       add_raw(primitive, raw_depth, packet.opcode, *target_table);
     } else if (packet.word_count == 5U && base_opcode == 0x28U) {
       auto &primitive = primitives.guest_raw_flat_quads.emplace_back();
@@ -1266,10 +1797,10 @@ void renderGuestCameraLists(
              raw_x(packet.words[2]), raw_y(packet.words[2]),
              raw_x(packet.words[3]), raw_y(packet.words[3]),
              raw_x(packet.words[4]), raw_y(packet.words[4]));
-      emit_raw_pgxp(primitive.x0, primitive.y0);
-      emit_raw_pgxp(primitive.x1, primitive.y1);
-      emit_raw_pgxp(primitive.x2, primitive.y2);
-      emit_raw_pgxp(primitive.x3, primitive.y3);
+      emit_raw_pgxp(primitive.x0, primitive.y0, raw_view_depth);
+      emit_raw_pgxp(primitive.x1, primitive.y1, raw_view_depth);
+      emit_raw_pgxp(primitive.x2, primitive.y2, raw_view_depth);
+      emit_raw_pgxp(primitive.x3, primitive.y3, raw_view_depth);
       add_raw(primitive, raw_depth, packet.opcode, *target_table);
     } else if (packet.word_count == 6U && base_opcode == 0x30U) {
       auto &primitive = primitives.guest_raw_gouraud_triangles.emplace_back();
@@ -1283,9 +1814,9 @@ void renderGuestCameraLists(
       setPacketColor(packet.words[4], primitive.r2, primitive.g2, primitive.b2);
       primitive.x2 = raw_x(packet.words[5]);
       primitive.y2 = raw_y(packet.words[5]);
-      emit_raw_pgxp(primitive.x0, primitive.y0);
-      emit_raw_pgxp(primitive.x1, primitive.y1);
-      emit_raw_pgxp(primitive.x2, primitive.y2);
+      emit_raw_pgxp(primitive.x0, primitive.y0, raw_view_depth);
+      emit_raw_pgxp(primitive.x1, primitive.y1, raw_view_depth);
+      emit_raw_pgxp(primitive.x2, primitive.y2, raw_view_depth);
       add_raw(primitive, raw_depth, packet.opcode, *target_table);
     }
   };
@@ -1301,7 +1832,7 @@ void renderGuestCameraLists(
     if (game::legacyGuestRawPacketUsesWorldDepth(packet) && retained(packet)) {
       continue;
     }
-    render_raw_packet(packet, packet_camera, true);
+    render_raw_packet(packet, packet_camera, true, current_taser_warps);
   }
   for (const auto &entry : retained_raw_packets) {
     const auto &camera = entry.camera;
@@ -1317,7 +1848,8 @@ void renderGuestCameraLists(
     // Source-tick semantic duplicates were discarded by the queue. A newer
     // guest tick may already have reused the same particle index, so it must
     // not suppress this retained retail packet.
-    render_raw_packet(entry.packet, authored_camera, false);
+    render_raw_packet(entry.packet, authored_camera, false,
+                      retained_taser_warps);
   }
 }
 
@@ -1409,7 +1941,10 @@ void updateDynamicLightFrame(
   active_retail_vertex_lights.clear();
   active_retail_vertex_lights.reserve(presentation.vertex_lights.size());
   for (const auto &source : presentation.vertex_lights) {
-    active_retail_vertex_lights.push_back(retailVertexLightState(source));
+    if (auto light =
+            game::prepareRetailVertexLight(retailVertexLightState(source))) {
+      active_retail_vertex_lights.push_back(*light);
+    }
   }
   active_retail_light_projection = std::max(presentation.camera.projection, 1);
 
@@ -1791,11 +2326,15 @@ void renderProjectileSprites(const HudTextureAtlas &textures,
 template <std::size_t Count>
 const std::array<VertexColor, 4U> &cachedWorldPolygonLighting(
     WorldPolygonLightingCache &cache, WorldPolygonLightingCacheEntry &entry,
-    const std::array<SVECTOR, Count> &positions,
     const assets::EmdSection &section, const assets::EmdPolygon &polygon,
     std::span<const std::uint16_t> live_colors) {
   if (cache.current(entry)) {
     return entry.colors;
+  }
+  auto positions = std::array<SVECTOR, Count>{};
+  for (auto corner = std::size_t{}; corner < Count; ++corner) {
+    positions[corner] =
+        makeVertex(section.vertices[polygon.vertex_indices[corner]]);
   }
   const auto normal = visibleSurfaceNormal(positions);
   for (auto corner = std::size_t{}; corner < Count; ++corner) {
@@ -1859,6 +2398,7 @@ RenderStats renderWorld(
     const RenderPresentationSnapshot &guest_presentation,
     const RenderPresentationSnapshot &presentation, const MATRIX &view,
     std::vector<OT_TAG> &ordering_table,
+    std::vector<OT_TAG> &prefetch_ordering_table,
     std::vector<OT_TAG> &optic_trail_ordering_table,
     std::vector<OT_TAG> &optic_subject_ordering_table,
     std::vector<OT_TAG> &shadow_ordering_table,
@@ -1873,18 +2413,30 @@ RenderStats renderWorld(
     const WorldChunkAppearance &world_chunk_appearance,
     WeaponEffectsScratch &weapon_effects_scratch, HmdPoseScratch &pose_scratch,
     PrimitiveBuffer &primitives, bool collect_render_stats) {
+  const auto scanner_active = presentation.retail_virus_scanner_overlay;
+  const auto svd_active =
+      presentation.first_person_aim && presentation.optic_mode == 3U;
+
   ClearOTagR(reinterpret_cast<u_long *>(ordering_table.data()),
              ordering_table_size);
-  ClearOTagR(reinterpret_cast<u_long *>(optic_trail_ordering_table.data()),
+  ClearOTagR(reinterpret_cast<u_long *>(prefetch_ordering_table.data()),
              ordering_table_size);
-  ClearOTagR(reinterpret_cast<u_long *>(optic_subject_ordering_table.data()),
-             ordering_table_size);
+  if (svd_active) {
+    ClearOTagR(reinterpret_cast<u_long *>(optic_trail_ordering_table.data()),
+               ordering_table_size);
+    ClearOTagR(reinterpret_cast<u_long *>(optic_subject_ordering_table.data()),
+               ordering_table_size);
+  }
   ClearOTagR(reinterpret_cast<u_long *>(shadow_ordering_table.data()),
              ordering_table_size);
-  ClearOTagR(reinterpret_cast<u_long *>(scrim_ordering_table.data()),
-             ordering_table_size);
-  ClearOTagR(reinterpret_cast<u_long *>(scanner_xray_ordering_table.data()),
-             ordering_table_size);
+  if (presentation.scrim.visible) {
+    ClearOTagR(reinterpret_cast<u_long *>(scrim_ordering_table.data()),
+               ordering_table_size);
+  }
+  if (scanner_active) {
+    ClearOTagR(reinterpret_cast<u_long *>(scanner_xray_ordering_table.data()),
+               ordering_table_size);
+  }
   ClearOTagR(reinterpret_cast<u_long *>(guest_overlay_ordering_table.data()),
              ordering_table_size);
   ClearOTagR(reinterpret_cast<u_long *>(fire_ordering_table.data()),
@@ -1904,10 +2456,7 @@ RenderStats renderWorld(
   const auto presented_player_weapon =
       presentation.flashlight_enabled ? game::WeaponId::flashlight
                                       : gameplay.hud().inventory().current();
-  const auto scanner_active = presentation.retail_virus_scanner_overlay;
   constexpr auto scanner_world_color = VertexColor{249U, 135U, 0U};
-  const auto svd_active =
-      presentation.first_person_aim && presentation.optic_mode == 3U;
   if (!svd_active) {
     optic_history.reset();
   }
@@ -1934,7 +2483,7 @@ RenderStats renderWorld(
       budget += amount;
     };
     std::size_t polygon_count = 0;
-    for (const auto model_index : gameplay.presentationModels()) {
+    for (const auto model_index : gameplay.terrainModels()) {
       add_to_budget(polygon_count,
                     gameplay.models()[model_index].scene.polygonCount(),
                     "Terrain");
@@ -2180,6 +2729,7 @@ RenderStats renderWorld(
     primitives.combat_effect_lines.reserve(256U);
     primitives.combat_effect_triangles.reserve(256U);
     primitives.effect_sprite_quads.reserve(2048U);
+    primitives.world_decals.reserve(game::legacy_world_decal_capacity);
     primitives.park2_flamethrower_ribbons.reserve(
         gameplay.legacyPark2FlamethrowerRibbons().size());
     std::size_t pickup_sprite_budget{};
@@ -2187,6 +2737,22 @@ RenderStats renderWorld(
       add_to_budget(pickup_sprite_budget,
                     game::droppedItemIconLayers(item.item).size(),
                     "Pickup sprite");
+    }
+    const auto keycard_layers = game::droppedItemIconLayers(
+        static_cast<std::uint16_t>(game::WeaponId::key_card));
+    for (const auto object_index : gameplay.activeObjects()) {
+      if (object_index >= presentation.objects.size() ||
+          object_index >= gameplay.objects().size()) {
+        continue;
+      }
+      const auto &source_object = gameplay.objects()[object_index];
+      const auto *displayed_model = gameplay.displayedObjectModel(object_index);
+      if (displayed_model == nullptr ||
+          !retailKeycardPickupObject(source_object, displayed_model->name)) {
+        continue;
+      }
+      add_to_budget(pickup_sprite_budget, keycard_layers.size(),
+                    "Keycard pickup sprite");
     }
     primitives.pickup_sprites.reserve(pickup_sprite_budget);
     std::size_t projectile_sprite_budget{};
@@ -2251,10 +2817,41 @@ RenderStats renderWorld(
       PGXP_MatrixLookupTranslation(&view, exact_translation.data()) != 0;
   // Bound temporary PGXP records so surviving packets retain 16-bit indices.
   auto projection_cache_vertex_budget = std::size_t{8192U};
-  for (const auto model_index : gameplay.presentationModels()) {
-    const auto &scene = gameplay.models()[model_index].scene;
-    const auto chunk_depth_cue_floor =
-        world_chunk_appearance.depthCueFloorQ12(model_index);
+  for (const auto model_index : gameplay.terrainModels()) {
+    const auto &world_model = gameplay.models()[model_index];
+    const auto &scene = world_model.scene;
+    const auto model_active = world_chunk_appearance.isActive(model_index);
+    if (!model_active &&
+        !textures.worldLookaheadAdmitted(model_index)) {
+      world_lighting_cache.advance(scene.polygonCount());
+      stats.rejected += scene.polygonCount();
+      continue;
+    }
+    const auto chunk_reveal =
+        world_chunk_appearance.revealProgress(model_index);
+    if (!model_active && chunk_reveal <= 0.0) {
+      world_lighting_cache.advance(scene.polygonCount());
+      stats.rejected += scene.polygonCount();
+      continue;
+    }
+    const auto &bounds = world_model.bounds;
+    const std::array reveal_bounds{
+        world_chunk_appearance.revealCoordinate(
+            model_index, bounds.minimum_x, bounds.minimum_z),
+        world_chunk_appearance.revealCoordinate(
+            model_index, bounds.minimum_x, bounds.maximum_z),
+        world_chunk_appearance.revealCoordinate(
+            model_index, bounds.maximum_x, bounds.minimum_z),
+        world_chunk_appearance.revealCoordinate(
+            model_index, bounds.maximum_x, bounds.maximum_z),
+    };
+    const auto [minimum_reveal, maximum_reveal] =
+        std::ranges::minmax(reveal_bounds);
+    const auto chunk_near_coordinate = minimum_reveal;
+    const auto chunk_far_coordinate =
+        std::max(chunk_near_coordinate + 1.0, maximum_reveal);
+    auto &terrain_ordering_table =
+        model_active ? ordering_table : prefetch_ordering_table;
     const auto texture_bank = scene.textureBank();
     for (auto section_index = std::size_t{};
          section_index < scene.sections().size(); ++section_index) {
@@ -2267,10 +2864,13 @@ RenderStats renderWorld(
         continue;
       }
       auto &precise_depths = primitives.world_vertex_scratch.precise_depths;
+      auto &chunk_depth_cues =
+          primitives.world_vertex_scratch.chunk_depth_cues;
       auto &depth_cues = primitives.world_vertex_scratch.depth_cues;
       auto &projected_vertices =
           primitives.world_vertex_scratch.projected_vertices;
       precise_depths.resize(section.vertices.size());
+      chunk_depth_cues.resize(section.vertices.size());
       depth_cues.resize(section.vertices.size());
       const auto cache_index = PGXP_GetIndex(0);
       const auto estimated_section_records =
@@ -2305,8 +2905,15 @@ RenderStats renderWorld(
                  static_cast<std::int64_t>(view.m[2][2]) * vertex.z) >>
                 12U) +
             view.t[2];
-        depth_cues[vertex_index] = std::max(
-            chunk_depth_cue_floor, retailTerrainDepthCue(integer_depth));
+        chunk_depth_cues[vertex_index] =
+            worldChunkSpatialDepthCueFloorQ12(
+                chunk_reveal,
+                world_chunk_appearance.revealCoordinate(
+                    model_index, vertex.x, vertex.z),
+                chunk_near_coordinate, chunk_far_coordinate);
+        depth_cues[vertex_index] = static_cast<int>(std::max<long>(
+            chunk_depth_cues[vertex_index],
+            retailTerrainDepthCue(integer_depth)));
         if (cache_section_projection) {
           auto source = makeVertex(vertex);
           auto &projected = projected_vertices[vertex_index];
@@ -2339,6 +2946,19 @@ RenderStats renderWorld(
         if (!polygon.renderable || polygon.degenerate) {
           continue;
         }
+        const auto vertex_count = polygon.quad ? 4U : 3U;
+        auto chunk_fully_hidden = chunk_reveal < 1.0;
+        for (auto corner = std::size_t{}; corner < vertex_count; ++corner) {
+          if (chunk_depth_cues[polygon.vertex_indices[corner]] <
+              retail_depth_cue_q12_one) {
+            chunk_fully_hidden = false;
+            break;
+          }
+        }
+        if (chunk_fully_hidden) {
+          ++stats.rejected;
+          continue;
+        }
         const auto near_status_for = [&](std::size_t vertex_count) {
           auto behind = std::size_t{};
           for (auto corner = std::size_t{}; corner < vertex_count; ++corner) {
@@ -2353,10 +2973,15 @@ RenderStats renderWorld(
           return behind == vertex_count ? NearPlaneStatus::outside
                                         : NearPlaneStatus::intersecting;
         };
+        const auto clipped_chunk_floor = [&](std::size_t count) {
+          auto floor = 0L;
+          for (auto corner = std::size_t{}; corner < count; ++corner) {
+            floor = std::max<long>(
+                floor, chunk_depth_cues[polygon.vertex_indices[corner]]);
+          }
+          return floor;
+        };
         const auto texture_source_page = emdTextureSourcePage(scene, polygon);
-        auto v0 = makeVertex(section.vertices[polygon.vertex_indices[0]]);
-        auto v1 = makeVertex(section.vertices[polygon.vertex_indices[1]]);
-        auto v2 = makeVertex(section.vertices[polygon.vertex_indices[2]]);
         long xy0{};
         long xy1{};
         long xy2{};
@@ -2376,17 +3001,23 @@ RenderStats renderWorld(
         };
 
         if (polygon.quad) {
-          auto v3 = makeVertex(section.vertices[polygon.vertex_indices[3]]);
-          const std::array positions{v0, v1, v2, v3};
           const auto near_status = near_status_for(4U);
           if (near_status == NearPlaneStatus::outside) {
             ++stats.rejected;
             continue;
           }
           if (near_status == NearPlaneStatus::intersecting) {
-            const auto &lit = cachedWorldPolygonLighting(
-                world_lighting_cache, lighting_entry, positions, section,
-                polygon, live_colors);
+            const auto v0 =
+                makeVertex(section.vertices[polygon.vertex_indices[0]]);
+            const auto v1 =
+                makeVertex(section.vertices[polygon.vertex_indices[1]]);
+            const auto v2 =
+                makeVertex(section.vertices[polygon.vertex_indices[2]]);
+            const auto v3 =
+                makeVertex(section.vertices[polygon.vertex_indices[3]]);
+            const auto &lit = cachedWorldPolygonLighting<4U>(
+                world_lighting_cache, lighting_entry, section, polygon,
+                live_colors);
             const auto t0 = cachedWorldTexturedVertex(
                 v0, polygon.uv[0],
                 scanner_active ? scanner_world_color : lit[0]);
@@ -2410,13 +3041,15 @@ RenderStats renderWorld(
                 texture_source_page,
             };
             submitClippedTriangle(first_triangle, material, false, false, view,
-                                  ordering_table, primitives.triangles, stats,
+                                  terrain_ordering_table, primitives.triangles,
+                                  stats,
                                   worldOrderingDepth, true, true,
-                                  chunk_depth_cue_floor);
+                                  clipped_chunk_floor(4U));
             submitClippedTriangle(second_triangle, material, false, false, view,
-                                  ordering_table, primitives.triangles, stats,
+                                  terrain_ordering_table, primitives.triangles,
+                                  stats,
                                   worldOrderingDepth, true, true,
-                                  chunk_depth_cue_floor);
+                                  clipped_chunk_floor(4U));
             continue;
           }
           if (cache_section_projection) {
@@ -2440,6 +3073,10 @@ RenderStats renderWorld(
             }
             static_cast<void>(emit_cached_projection(4U));
           } else {
+            auto v0 = makeVertex(section.vertices[polygon.vertex_indices[0]]);
+            auto v1 = makeVertex(section.vertices[polygon.vertex_indices[1]]);
+            auto v2 = makeVertex(section.vertices[polygon.vertex_indices[2]]);
+            auto v3 = makeVertex(section.vertices[polygon.vertex_indices[3]]);
             depth = RotTransPers4(&v0, &v1, &v2, &v3, &xy0, &xy1, &xy2, &xy3,
                                   &depth_cue, &flags);
             if (depth <= 0 || !frontFacing(xy0, xy1, xy2, 4U) ||
@@ -2452,8 +3089,8 @@ RenderStats renderWorld(
           auto &primitive = primitives.quads.emplace_back();
           configurePrimitive(primitive, section, polygon, texture_bank,
                              texture_source_page, live_colors);
-          const auto &lit = cachedWorldPolygonLighting(
-              world_lighting_cache, lighting_entry, positions, section, polygon,
+          const auto &lit = cachedWorldPolygonLighting<4U>(
+              world_lighting_cache, lighting_entry, section, polygon,
               live_colors);
           applyCachedWorldLighting(primitive, lit);
           setProjected(&primitive.x0, xy0);
@@ -2476,21 +3113,27 @@ RenderStats renderWorld(
                     scanner_world_color.green, scanner_world_color.blue);
           }
           addPrim(
-              &ordering_table[std::clamp(depth, 1, ordering_table_size - 1)],
+              &terrain_ordering_table[
+                  std::clamp(depth, 1, ordering_table_size - 1)],
               &primitive);
           const std::array projected{xy0, xy1, xy2, xy3};
           submitStats(stats, depth, projected);
         } else {
-          const std::array positions{v0, v1, v2};
           const auto near_status = near_status_for(3U);
           if (near_status == NearPlaneStatus::outside) {
             ++stats.rejected;
             continue;
           }
           if (near_status == NearPlaneStatus::intersecting) {
-            const auto &lit = cachedWorldPolygonLighting(
-                world_lighting_cache, lighting_entry, positions, section,
-                polygon, live_colors);
+            const auto v0 =
+                makeVertex(section.vertices[polygon.vertex_indices[0]]);
+            const auto v1 =
+                makeVertex(section.vertices[polygon.vertex_indices[1]]);
+            const auto v2 =
+                makeVertex(section.vertices[polygon.vertex_indices[2]]);
+            const auto &lit = cachedWorldPolygonLighting<3U>(
+                world_lighting_cache, lighting_entry, section, polygon,
+                live_colors);
             const std::array textured{
                 cachedWorldTexturedVertex(v0, polygon.uv[0],
                                           scanner_active ? scanner_world_color
@@ -2508,8 +3151,9 @@ RenderStats renderWorld(
                                  scanner_active, false,
                                  static_cast<std::uint8_t>(texture_bank),
                                  texture_source_page},
-                false, false, view, ordering_table, primitives.triangles, stats,
-                worldOrderingDepth, true, true, chunk_depth_cue_floor);
+                false, false, view, terrain_ordering_table,
+                primitives.triangles, stats, worldOrderingDepth, true, true,
+                clipped_chunk_floor(3U));
             continue;
           }
           if (cache_section_projection) {
@@ -2531,6 +3175,9 @@ RenderStats renderWorld(
             }
             static_cast<void>(emit_cached_projection(3U));
           } else {
+            auto v0 = makeVertex(section.vertices[polygon.vertex_indices[0]]);
+            auto v1 = makeVertex(section.vertices[polygon.vertex_indices[1]]);
+            auto v2 = makeVertex(section.vertices[polygon.vertex_indices[2]]);
             depth = RotTransPers3(&v0, &v1, &v2, &xy0, &xy1, &xy2, &depth_cue,
                                   &flags);
             if (depth <= 0 || !frontFacing(xy0, xy1, xy2, 3U) ||
@@ -2542,8 +3189,8 @@ RenderStats renderWorld(
           auto &primitive = primitives.triangles.emplace_back();
           configurePrimitive(primitive, section, polygon, texture_bank,
                              texture_source_page, live_colors);
-          const auto &lit = cachedWorldPolygonLighting(
-              world_lighting_cache, lighting_entry, positions, section, polygon,
+          const auto &lit = cachedWorldPolygonLighting<3U>(
+              world_lighting_cache, lighting_entry, section, polygon,
               live_colors);
           applyCachedWorldLighting(primitive, lit);
           setProjected(&primitive.x0, xy0);
@@ -2562,7 +3209,8 @@ RenderStats renderWorld(
                     scanner_world_color.green, scanner_world_color.blue);
           }
           addPrim(
-              &ordering_table[std::clamp(depth, 1, ordering_table_size - 1)],
+              &terrain_ordering_table[
+                  std::clamp(depth, 1, ordering_table_size - 1)],
               &primitive);
           const std::array projected{xy0, xy1, xy2};
           submitStats(stats, depth, projected);
@@ -2594,7 +3242,7 @@ RenderStats renderWorld(
                 presentation, view, ordering_table,
                 optic_subject_ordering_table, shadow_ordering_table,
                 fire_ordering_table, shadow_cache, local_scene_lighting_cache,
-                pose_scratch, primitives, stats);
+                world_chunk_appearance, pose_scratch, primitives, stats);
   if (svd_active) {
     constexpr std::array styles{
         OpticSubjectStyle::nightvision_trail_oldest,
@@ -2617,11 +3265,13 @@ RenderStats renderWorld(
   renderGlassShards(glass_shards, interpolation_amount, view, ordering_table,
                     primitives, stats);
   renderWeaponEffects(gameplay, actor_tick, weapon_edges, retail_muzzle_flashes,
-                      native_muzzle_flashes, retail_lines, combat_particles,
-                      fire_texture_placement, effect_textures, actor_animations,
-                      presentation, view, ordering_table, fire_ordering_table,
-                      primitives, stats, weapon_effects_scratch);
-  renderGuestCameraLists(gameplay, textures, presentation, retained_sprites,
+                      native_muzzle_flashes, guest_presentation.world_decals,
+                      retail_lines, combat_particles, fire_texture_placement,
+                      effect_textures, actor_animations, presentation, view,
+                      ordering_table, fire_ordering_table, primitives, stats,
+                      weapon_effects_scratch);
+  renderGuestCameraLists(gameplay, textures, presentation, actor_animations,
+                         actor_tick, pose_scratch, retained_sprites,
                          retained_raw_packets, view, ordering_table,
                          guest_overlay_ordering_table, primitives, stats);
   renderVirusScannerFallbackObjects(gameplay, presentation, view,

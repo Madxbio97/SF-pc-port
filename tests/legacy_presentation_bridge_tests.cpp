@@ -81,47 +81,61 @@ void testDroppedItemPresentationCache() {
            actual.transform.translation.z == expected.transform.translation.z;
   };
   std::vector items{pistol};
+  const auto pistol_owner_mask = std::uint32_t{1U} << pistol.slot;
 
-  cache.reconcile(10U, items);
+  cache.reconcile(10U, pistol_owner_mask, items);
   require(items.size() == 1U && same_item(items[0], pistol),
           "Validated retail pickup was not published");
 
   items.clear();
-  cache.reconcile(11U, items);
+  cache.reconcile(11U, pistol_owner_mask, items);
   require(items.size() == 1U && same_item(items[0], pistol),
           "One transitional allocator tick lost a live pickup");
 
   // Re-presenting the same immutable guest frame must not age the cache at
   // 60/120/240 Hz.
   items.clear();
-  cache.reconcile(11U, items);
+  cache.reconcile(11U, pistol_owner_mask, items);
   require(items.size() == 1U && same_item(items[0], pistol),
           "Native presentation refresh aged a retail pickup");
 
   items.clear();
-  cache.reconcile(12U, items);
+  cache.reconcile(12U, pistol_owner_mask, items);
   require(items.empty(),
-          "Collected or despawned pickup became host-owned state");
+          "Invalid floor descriptor outlived its one-tick grace");
 
   sf::game::LegacyDroppedItemBridgeState rifle = pistol;
   rifle.slot = 8U;
   rifle.item = 13U;
+  const auto rifle_owner_mask = std::uint32_t{1U} << rifle.slot;
   items = {rifle};
-  cache.reconcile(20U, items);
+  cache.reconcile(20U, rifle_owner_mask, items);
   require(items.size() == 1U && same_item(items[0], rifle),
           "New pickup did not replace the expired cache contents");
+
+  auto armor = rifle;
+  armor.item = 0x80U;
+  items = {armor};
+  cache.reconcile(20U, rifle_owner_mask, items);
+  require(items.size() == 1U && same_item(items[0], armor),
+          "Same-frame retail slot reuse retained the old pickup");
+
+  items.clear();
+  cache.reconcile(20U, 0U, items);
+  require(items.empty(),
+          "Collected pickup survived a same-frame owner clear");
 
   // Checkpoint/mission time can regress while the same viewer survives.
   // Old room pickups must never leak into the restarted timeline.
   items.clear();
-  cache.reconcile(3U, items);
+  cache.reconcile(3U, 0U, items);
   require(items.empty(), "Regressed guest time retained a future pickup");
 
   items = {pistol};
-  cache.reconcile(4U, items);
+  cache.reconcile(4U, pistol_owner_mask, items);
   cache.reset();
   items.clear();
-  cache.reconcile(5U, items);
+  cache.reconcile(5U, 0U, items);
   require(items.empty(), "Explicit presentation reset retained a pickup");
 }
 
@@ -220,6 +234,8 @@ void testAtomicDeepCopy() {
       4096, 0, 0, 0, 4096, 0, 0, 0, 4096,
   };
   dropped_item.transform.translation = {120, -340, 560};
+  render.dropped_item_floor_owner_mask =
+      std::uint32_t{1U} << dropped_item.slot;
   render.dropped_items.push_back(dropped_item);
   sf::game::LegacyThrownProjectileBridgeState thrown_projectile;
   thrown_projectile.age = 7U;
@@ -392,6 +408,7 @@ void testAtomicDeepCopy() {
   render.guest_sprites[0].tpage = 0U;
   render.renderer_sprite_fast_path = false;
   render.guest_raw_packets[0].words[0] = 0x20112233U;
+  render.dropped_item_floor_owner_mask = 0U;
   render.dropped_items[0].transform.translation.x = 999;
   render.thrown_projectile->transform.translation = {};
   ui.player_health = 1;
@@ -416,6 +433,8 @@ void testAtomicDeepCopy() {
                   120 &&
               frame->renderer->state.dropped_items[0].transform.rotation[4] ==
                   4096 &&
+              frame->renderer->state.dropped_item_floor_owner_mask ==
+                  (std::uint32_t{1U} << 3U) &&
               frame->renderer->state.line_particles[0].first.y == -800 &&
               frame->renderer->state.line_particles[0].first_color ==
                   sf::game::LegacyRgbBridgeState{255U, 255U, 192U} &&
@@ -531,13 +550,23 @@ void testInvalidAndFaultFrames() {
   };
   dropped_item.transform.translation = {100, -200, 300};
   render.dropped_items.push_back(dropped_item);
+  require(!sf::game::buildLegacyPresentationFrame(1U, 0U, render, ui),
+          "Presentation bridge accepted a pickup without a floor owner");
+  render.dropped_item_floor_owner_mask =
+      std::uint32_t{1U} << dropped_item.slot;
   require(static_cast<bool>(
               sf::game::buildLegacyPresentationFrame(1U, 0U, render, ui)),
           "Presentation bridge rejected a valid 3D pickup transform");
+  render.dropped_item_floor_owner_mask |= std::uint32_t{1U} << 30U;
+  require(!sf::game::buildLegacyPresentationFrame(1U, 0U, render, ui),
+          "Presentation bridge accepted owner bits outside retail capacity");
+  render.dropped_item_floor_owner_mask =
+      std::uint32_t{1U} << dropped_item.slot;
   render.dropped_items[0].transform.rotation = {};
   require(!sf::game::buildLegacyPresentationFrame(1U, 0U, render, ui),
           "Presentation bridge accepted an empty pickup transform");
   render.dropped_items.clear();
+  render.dropped_item_floor_owner_mask = 0U;
 
   sf::game::LegacyThrownProjectileBridgeState thrown_projectile;
   thrown_projectile.age = 7U;
@@ -859,6 +888,60 @@ void testWeaponEffectPresentationQueue() {
               queue.muzzleFlashes().size() == 1U,
           "Sequence rollback retained weapon effects from a newer frame");
   queue.reset();
+
+  const auto taser_frame = [](std::uint64_t sequence,
+                              std::uint32_t packet_base,
+                              std::int16_t particle_base,
+                              bool include_taser) {
+    auto frame = std::make_shared<sf::game::LegacyPresentationFrame>();
+    frame->sequence = sequence;
+    frame->renderer.emplace();
+    if (!include_taser) {
+      return frame;
+    }
+    for (std::int16_t segment = 0; segment < 2; ++segment) {
+      auto packet = sf::game::LegacyGuestRawPacketBridgeState{};
+      packet.source_address =
+          packet_base + static_cast<std::uint32_t>(segment) * 0x68U;
+      packet.word_count = 4U;
+      packet.opcode = 0x50U;
+      packet.effect_particle = particle_base + segment;
+      packet.effect_controller = 5;
+      packet.taser_segment_index = segment;
+      packet.taser_segment_count = 2U;
+      packet.effect_world_position_valid = true;
+      packet.words[1] = static_cast<std::uint32_t>(segment + 1);
+      packet.words[3] = static_cast<std::uint32_t>(segment + 2);
+      frame->renderer->state.guest_raw_packets.push_back(packet);
+    }
+    return frame;
+  };
+  auto taser_first = taser_frame(10U, 0x80010000U, 20, true);
+  auto normal_packet = one_tick_raw;
+  normal_packet.source_address = 0x80020000U;
+  normal_packet.effect_particle = 30;
+  taser_first->renderer->state.guest_raw_packets.push_back(normal_packet);
+  const auto taser_second =
+      taser_frame(11U, 0x80011000U, 40, true);
+  const auto taser_stopped = taser_frame(12U, 0U, 0, false);
+  sf::game::LegacyWeaponEffectPresentationQueue taser_queue;
+  taser_queue.observe(taser_first);
+  taser_queue.observe(taser_second);
+  require(taser_queue.rawPackets().size() == 3U &&
+              std::ranges::count_if(
+                  taser_queue.rawPackets(), [](const auto &entry) {
+                    return sf::game::
+                        legacyGuestRawPacketIsRetailTaserConductor(
+                            entry.packet);
+                  }) == 2 &&
+              taser_queue.rawPackets()[1].packet.effect_particle >= 40,
+          "Catch-up mixed two generations of the retail taser chain");
+  taser_queue.observe(taser_stopped);
+  require(taser_queue.rawPackets().size() == 1U &&
+              !sf::game::legacyGuestRawPacketIsRetailTaserConductor(
+                  taser_queue.rawPackets()[0].packet),
+          "Stopped retail taser retained a stale conductor generation");
+
   require(queue.events().empty() && queue.lines().empty() &&
               queue.particles().empty() && queue.sprites().empty() &&
               queue.rawPackets().empty() && queue.muzzleFlashes().empty(),

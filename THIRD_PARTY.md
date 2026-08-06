@@ -7,6 +7,7 @@ the vcpkg manifest.
 | Component | Use | License source |
 | --- | --- | --- |
 | PsyCross | PS1-compatible platform/rendering backend | `external/PsyCross/LICENSE` |
+| SMAA 2.8 | Morphological antialiasing shader and lookup textures | external/PsyCross/src/render/smaa/LICENSE.txt |
 | SDL2 | Window, input and platform services | vcpkg package copyright file |
 | OpenAL Soft | Native audio output | vcpkg package copyright file |
 | FFmpeg | STR/FM​​V demux/decode and audio conversion | vcpkg package copyright file |

@@ -468,12 +468,10 @@ struct RetailProjection {
 };
 
 [[nodiscard]] std::optional<RetailProjection>
-projectIntoRetailLight(const RetailVertexLightState &light,
+projectIntoRetailLight(const PreparedRetailVertexLight &prepared,
                        DynamicLightPoint world_point,
                        std::int32_t projection) noexcept {
-  if (projection <= 0 || projection > 0xffff || light.extent <= 0 ||
-      light.threshold < 0 || light.screen_shift > 31U ||
-      light.depth_shift > 31U || (light.channel_mask & 0xff000000U) != 0U) {
+  if (projection <= 0 || projection > 0xffff) {
     return std::nullopt;
   }
 
@@ -486,28 +484,8 @@ projectIntoRetailLight(const RetailVertexLightState &light,
     return std::nullopt;
   }
 
-  // GsSetView2 transposes the source rotation and separately computes
-  // -ApplyMatrixLV(R^T, t). RTPT then performs a second Q12 multiply/add.
-  // Keeping those two rounding points is observable at light boundaries.
-  std::array<std::int16_t, 9U> view_rotation{};
-  for (std::size_t row = 0U; row < 3U; ++row) {
-    for (std::size_t column = 0U; column < 3U; ++column) {
-      auto value = light.matrix.rotation[column * 3U + row];
-      // FUN_800c973c reverses the raw X/Z columns for the attached light
-      // before GsSetView2 builds the inverse view matrix.
-      if ((light.flags & 1U) != 0U && (row == 0U || row == 2U)) {
-        value = wrappedNegate(value);
-      }
-      view_rotation[row * 3U + column] = value;
-    }
-  }
-
-  auto inverse_translation =
-      applyRetailMatrixLong(view_rotation, light.matrix.translation);
-  for (auto &component : inverse_translation) {
-    component = std::bit_cast<std::int32_t>(
-        0U - std::bit_cast<std::uint32_t>(component));
-  }
+  const auto &view_rotation = prepared.view_rotation;
+  const auto &inverse_translation = prepared.inverse_translation;
 
   const std::array<std::int16_t, 3U> vertex{
       lowSignedHalf(guest_x),
@@ -1230,6 +1208,35 @@ applyDynamicLighting(DynamicLightVertexColor base,
       apply(graded_base.blue, modulation.blue, modulation.functional_blue)};
 }
 
+std::optional<PreparedRetailVertexLight>
+prepareRetailVertexLight(const RetailVertexLightState &light) noexcept {
+  if (light.extent <= 0 || light.threshold < 0 || light.screen_shift > 31U ||
+      light.depth_shift > 31U || (light.channel_mask & 0xff000000U) != 0U) {
+    return std::nullopt;
+  }
+
+  auto result = PreparedRetailVertexLight{};
+  result.state = light;
+  // GsSetView2 transposes the source rotation and computes
+  // -ApplyMatrixLV(R^T, t) once per light.
+  for (std::size_t row = 0U; row < 3U; ++row) {
+    for (std::size_t column = 0U; column < 3U; ++column) {
+      auto value = light.matrix.rotation[column * 3U + row];
+      if ((light.flags & 1U) != 0U && (row == 0U || row == 2U)) {
+        value = wrappedNegate(value);
+      }
+      result.view_rotation[row * 3U + column] = value;
+    }
+  }
+  result.inverse_translation =
+      applyRetailMatrixLong(result.view_rotation, light.matrix.translation);
+  for (auto &component : result.inverse_translation) {
+    component = std::bit_cast<std::int32_t>(
+        0U - std::bit_cast<std::uint32_t>(component));
+  }
+  return result;
+}
+
 std::optional<RetailVertexLightRay>
 retailVertexLightRay(const RetailVertexLightState &light) noexcept {
   const auto direction_sign = (light.flags & 1U) != 0U ? -1.0 : 1.0;
@@ -1260,15 +1267,36 @@ retailVertexLightRay(const RetailVertexLightState &light) noexcept {
 std::uint32_t applyRetailVertexLightingPacked(
     std::uint32_t packed_color, std::span<const RetailVertexLightState> lights,
     DynamicLightPoint world_point, std::int32_t projection) noexcept {
+  if (lights.size() > maximum_retail_vertex_lights) {
+    return packed_color;
+  }
+  auto prepared =
+      std::array<PreparedRetailVertexLight, maximum_retail_vertex_lights>{};
+  auto count = std::size_t{};
+  for (const auto &light : lights) {
+    if (auto value = prepareRetailVertexLight(light)) {
+      prepared[count++] = *value;
+    }
+  }
+  return applyRetailVertexLightingPacked(
+      packed_color,
+      std::span<const PreparedRetailVertexLight>{prepared}.first(count),
+      world_point, projection);
+}
+
+std::uint32_t applyRetailVertexLightingPacked(
+    std::uint32_t packed_color,
+    std::span<const PreparedRetailVertexLight> lights,
+    DynamicLightPoint world_point, std::int32_t projection) noexcept {
   if (lights.size() > maximum_retail_vertex_lights || projection <= 0 ||
       !finite(world_point)) {
     return packed_color;
   }
   auto result = packed_color;
-  for (const auto &light : lights) {
+  for (const auto &prepared : lights) {
     if (const auto projected =
-            projectIntoRetailLight(light, world_point, projection)) {
-      result = applyRetailProjectedLight(result, light, *projected);
+            projectIntoRetailLight(prepared, world_point, projection)) {
+      result = applyRetailProjectedLight(result, prepared.state, *projected);
     }
   }
   return result;
@@ -1277,6 +1305,21 @@ std::uint32_t applyRetailVertexLightingPacked(
 DynamicLightVertexColor
 applyRetailVertexLighting(DynamicLightVertexColor base,
                           std::span<const RetailVertexLightState> lights,
+                          DynamicLightPoint world_point,
+                          std::int32_t projection) noexcept {
+  const auto packed = static_cast<std::uint32_t>(base.red) |
+                      (static_cast<std::uint32_t>(base.green) << 8U) |
+                      (static_cast<std::uint32_t>(base.blue) << 16U);
+  const auto lit =
+      applyRetailVertexLightingPacked(packed, lights, world_point, projection);
+  return DynamicLightVertexColor{static_cast<std::uint8_t>(lit),
+                                 static_cast<std::uint8_t>(lit >> 8U),
+                                 static_cast<std::uint8_t>(lit >> 16U)};
+}
+
+DynamicLightVertexColor
+applyRetailVertexLighting(DynamicLightVertexColor base,
+                          std::span<const PreparedRetailVertexLight> lights,
                           DynamicLightPoint world_point,
                           std::int32_t projection) noexcept {
   const auto packed = static_cast<std::uint32_t>(base.red) |

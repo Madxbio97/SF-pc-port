@@ -10,25 +10,19 @@ a native Windows host for rendering, input, menus, audio and FMV playback.
 
 ## Public test
 
-The current build is
-[Public Test 0.1.0-PT15](https://github.com/Madxbio97/SF-pc-port/releases/tag/v0.1.0-public-test.15).
-Download the Windows x64 ZIP from the release page and verify it against the
-published `.sha256` file before extracting it.
-
-PT15 restores PS1-authored darkness while retaining bounded dynamic effects,
-extends presentation by one fog-hidden portal ring without changing gameplay
-residency, fixes lamp and SPFX rendering, and makes HUD/letterbox transitions
-follow the original retail viewport and radio state.
-
-See [CHANGELOG.md](CHANGELOG.md) for the complete release summary.
+Download the latest Windows x64 build from
+[GitHub Releases](https://github.com/Madxbio97/SF-pc-port/releases/latest).
+Release-specific changes and checksums are published with each release. See
+[CHANGELOG.md](CHANGELOG.md) for the aggregate history.
 
 ## Quick start
 
-1. Download `SyphonFilterPC-0.1.0-public-test.15-win64.zip` from the release page.
+1. Download `SyphonFilterPC-<version>-win64.zip` from the release page.
 2. Verify its SHA-256 checksum:
 
    ```powershell
-   Get-FileHash .\SyphonFilterPC-0.1.0-public-test.15-win64.zip -Algorithm SHA256
+   $Version = '<version>'
+   Get-FileHash ".\SyphonFilterPC-$Version-win64.zip" -Algorithm SHA256
    ```
 
 3. Extract the ZIP into a new folder.
@@ -62,7 +56,7 @@ revisions, repacks and modified images are not expected to work.
   unlock progress.
 - Integrated English launcher with game-image selection, arbitrary internal
   resolution, aspect mode, fullscreen, MSAA, bilinear and anisotropic filtering.
-- Optional Russian ViT Co. text pack for all 20 missions, menus, briefings,
+- Optional Russian text pack for all 20 missions, menus, briefings,
   weapon descriptions and baked map labels, with a unified Industry Bold 2x
   pixel atlas matching the original Industria-style interface for Latin and
   Cyrillic text.
@@ -100,7 +94,7 @@ Saves and launcher settings are stored outside the installation directory:
 
 The release archive contains no saves, settings or mission unlocks. Mission
 selection normally follows campaign progress. The original PS1 button cheats are
-available in their original title/pause-menu contexts and their current state is
+available in their original pause-menu contexts and their current state is
 shown under **Options > Cheats**. Creating an empty file
 named `syphon_filter_cheats` beside `syphon_filter.exe` enables every persistent
 cheat and unlocks the complete in-game mission list automatically. The launcher
@@ -182,12 +176,17 @@ Selected options can also be specified directly:
 --fullscreen
 --msaa=0|2|4|8
 --bilinear | --nearest
+--trilinear | --no-trilinear
 --anisotropic | --no-anisotropic
+--smaa | --no-smaa
 --aspect-adaptive | --aspect-4-3
 --vsync | --no-vsync
 --fps-limit=0|20..1000
 --language=en | --language=ru
 ```
+
+--smaa and --msaa=N select alternative antialiasing paths; the last one
+specified wins.
 
 Development modes:
 
@@ -210,13 +209,15 @@ Development modes:
 
 ## Documentation
 
+- [Documentation index](docs/README.md)
 - [Build and validation workflow](docs/BUILDING.md)
 - [User guide](docs/USER_GUIDE.md)
 - [Controls](docs/CONTROLS.md)
+- [Performance validation](docs/PERFORMANCE.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Release process](docs/RELEASING.md)
 - [Architecture](docs/ARCHITECTURE.md)
-- [Current stages](docs/STAGES.md)
+- [Historical work stages](docs/STAGES.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Third-party components](THIRD_PARTY.md)
 - [Contributing](CONTRIBUTING.md)

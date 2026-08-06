@@ -26,21 +26,23 @@ run the interactive game as part of automated packaging.
 ## 3. Package
 
 ```powershell
+$Version = '<version>'
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File tools/package_windows_release.ps1 `
-  -Version 0.1.0-public-test.15 `
+  -Version $Version `
   -Configuration Release
 ```
 
 Expected outputs:
 
 ```text
-dist/SyphonFilterPC-0.1.0-public-test.15-win64/
-dist/SyphonFilterPC-0.1.0-public-test.15-win64.zip
-dist/SyphonFilterPC-0.1.0-public-test.15-win64.zip.sha256
+dist/SyphonFilterPC-<version>-win64/
+dist/SyphonFilterPC-<version>-win64.zip
+dist/SyphonFilterPC-<version>-win64.zip.sha256
 ```
 
-The script fails instead of overwriting any existing output.
+The script fails instead of overwriting output or packaging a version without
+`docs/releases/<version>.md`.
 
 ## 4. Audit the archive
 

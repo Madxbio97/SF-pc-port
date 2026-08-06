@@ -45,13 +45,10 @@ legacyRetailDangerPercent(std::span<const LegacyUiThreatCommand> threats,
 
 void LegacyDroppedItemPresentationCache::reconcile(
     std::uint64_t guest_frame,
+    std::uint32_t floor_owner_mask,
     std::vector<LegacyDroppedItemBridgeState> &items) {
   if (observed_ && guest_frame < observed_guest_frame_) {
     reset();
-  }
-  if (observed_ && guest_frame == observed_guest_frame_) {
-    items = stable_items_;
-    return;
   }
 
   std::array<bool, capacity> published{};
@@ -73,10 +70,16 @@ void LegacyDroppedItemPresentationCache::reconcile(
     if (!entry.valid) {
       continue;
     }
-    if (!published[slot] && (guest_frame <= entry.last_valid_guest_frame ||
-                             guest_frame - entry.last_valid_guest_frame > 1U)) {
-      entry = {};
-      continue;
+    if (!published[slot]) {
+      const auto owner_is_floor =
+          (floor_owner_mask & (std::uint32_t{1U} << slot)) != 0U;
+      const auto grace_expired =
+          guest_frame > entry.last_valid_guest_frame &&
+          guest_frame - entry.last_valid_guest_frame > 1U;
+      if (!owner_is_floor || grace_expired) {
+        entry = {};
+        continue;
+      }
     }
     stable_items_.push_back(entry.item);
   }
@@ -108,6 +111,21 @@ bool validObjectSlot(std::int16_t slot, std::size_t object_count) noexcept {
   return slot >= 0 && static_cast<std::size_t>(slot) < object_count;
 }
 
+bool validWorldDecals(
+    std::span<const LegacyWorldDecalBridgeState> decals) noexcept {
+  if (decals.size() > legacy_world_decal_capacity) {
+    return false;
+  }
+  std::array<bool, legacy_world_decal_capacity> seen{};
+  for (const auto &decal : decals) {
+    if (decal.slot >= seen.size() || seen[decal.slot]) {
+      return false;
+    }
+    seen[decal.slot] = true;
+  }
+  return true;
+}
+
 bool validWeaponEvent(const LegacyWeaponEventBridgeState &event,
                       std::int16_t player_slot,
                       std::size_t object_count) noexcept {
@@ -119,6 +137,16 @@ bool validWeaponEvent(const LegacyWeaponEventBridgeState &event,
       (event.enabled &&
        event.type != LegacyWeaponEventType::flashlight_toggle)) {
     return false;
+  }
+  if (event.impact_count > event.impacts.size()) {
+    return false;
+  }
+  for (std::size_t index = 0U; index < event.impact_count; ++index) {
+    const auto &impact = event.impacts[index];
+    if ((impact.world && impact.target_slot != -1) ||
+        (!impact.world && !validObjectSlot(impact.target_slot, object_count))) {
+      return false;
+    }
   }
   switch (event.type) {
   case LegacyWeaponEventType::shot:
@@ -308,9 +336,13 @@ bool validWorldVertexColors(
 }
 
 bool validDroppedItems(std::span<const LegacyDroppedItemBridgeState> items,
-                       std::uint16_t world_model_count) noexcept {
+                       std::uint16_t world_model_count,
+                       std::uint32_t floor_owner_mask) noexcept {
   constexpr std::size_t retail_capacity = 30U;
-  if (items.size() > retail_capacity) {
+  constexpr auto valid_owner_mask =
+      (std::uint32_t{1U} << retail_capacity) - 1U;
+  if (items.size() > retail_capacity ||
+      (floor_owner_mask & ~valid_owner_mask) != 0U) {
     return false;
   }
   std::array<bool, retail_capacity> seen{};
@@ -318,6 +350,7 @@ bool validDroppedItems(std::span<const LegacyDroppedItemBridgeState> items,
     const auto valid_selector =
         item.item < legacy_inventory_weapon_count || item.item == 0x80U;
     if (item.slot >= seen.size() || seen[item.slot] ||
+        (floor_owner_mask & (std::uint32_t{1U} << item.slot)) == 0U ||
         item.room >= world_model_count || !valid_selector ||
         item.transform.translation.y ==
             std::numeric_limits<std::int32_t>::min() ||
@@ -741,6 +774,12 @@ void LegacyWeaponEffectPresentationQueue::observe(
     raw_packets.push_back(LegacyGuestRawPacketPresentationState{
         frame->renderer->state.camera, packet});
   }
+  // update5/render3 is a continuously sampled 32-segment conductor, not a
+  // one-tick weapon edge. Pool slots can rotate during catch-up; retaining by
+  // source address mixed several generations into one broken FP chain.
+  std::erase_if(pending_raw_packets_, [](const auto &entry) {
+    return legacyGuestRawPacketIsRetailTaserConductor(entry.packet);
+  });
   upsertRawEffectPackets(pending_raw_packets_, raw_packets,
                          legacy_effect_particle_capacity);
   latest_events_ = frame->renderer->state.weapon_events;
@@ -844,7 +883,9 @@ std::shared_ptr<const LegacyPresentationFrame> buildLegacyPresentationFrame(
       !validVertexLights(renderer.vertex_lights) ||
       !validWorldVertexColors(renderer.world_vertex_colors,
                               renderer.world_model_count) ||
-      !validDroppedItems(renderer.dropped_items, renderer.world_model_count) ||
+      !validWorldDecals(renderer.world_decals) ||
+      !validDroppedItems(renderer.dropped_items, renderer.world_model_count,
+                         renderer.dropped_item_floor_owner_mask) ||
       !validGrenadeTrajectory(renderer.grenade_trajectory) ||
       !validThrownProjectile(renderer.thrown_projectile) ||
       !validThrownProjectile(renderer.enemy_thrown_projectile) ||

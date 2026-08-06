@@ -122,14 +122,15 @@ struct LegacyMuzzleFlashPresentationState {
 // The retail pickup allocator publishes owner, descriptor and MATRIX through
 // separate stores. At a room transition the host can sample the single 20 Hz
 // tick between those stores and briefly lose an otherwise live pickup. Keep
-// only the last validated value for that one missing guest tick. A collected
-// or genuinely despawned item is therefore gone on the following tick rather
-// than becoming a host-owned persistent object.
+// only the last validated value for one missing guest tick while the retail
+// owner still names a floor room. Collected, attached and vacant slots clear
+// immediately, including a second capture of the same guest tick.
 class LegacyDroppedItemPresentationCache final {
 public:
   static constexpr std::size_t capacity = 30U;
 
   void reconcile(std::uint64_t guest_frame,
+                 std::uint32_t floor_owner_mask,
                  std::vector<LegacyDroppedItemBridgeState> &items);
   void reset() noexcept;
 

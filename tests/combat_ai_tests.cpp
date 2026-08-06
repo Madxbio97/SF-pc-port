@@ -1,3 +1,6 @@
+#include "sf/game/agent_bomb_challenge.hpp"
+#include "sf/game/agent_mission_rules.hpp"
+#include "sf/game/agent_park_timer.hpp"
 #include "sf/game/combat.hpp"
 #include "sf/game/effects.hpp"
 #include "sf/game/mission_scripts.hpp"
@@ -18,6 +21,160 @@ void require(bool condition, std::string_view message) {
   if (!condition) {
     throw std::runtime_error{std::string{message}};
   }
+}
+
+void testAgentPark2BombDetonationPolicy() {
+  using namespace sf::game;
+  struct Case {
+    LegacyWeaponEventType type;
+    WeaponId weapon;
+    std::uint8_t increment;
+  };
+  constexpr std::array cases{
+      Case{LegacyWeaponEventType::shot, WeaponId::combat_shotgun, 50U},
+      Case{LegacyWeaponEventType::shot, WeaponId::shotgun, 50U},
+      Case{LegacyWeaponEventType::shot, WeaponId::pistol_45, 40U},
+      Case{LegacyWeaponEventType::shot, WeaponId::m_16, 10U},
+      Case{LegacyWeaponEventType::shot, WeaponId::silenced_9mm, 2U},
+      Case{LegacyWeaponEventType::shot, WeaponId::pistol_9mm, 2U},
+      Case{LegacyWeaponEventType::shot, WeaponId::g_18, 2U},
+      Case{LegacyWeaponEventType::shot, WeaponId::pk_102, 2U},
+      Case{LegacyWeaponEventType::shot, WeaponId::biz_2, 2U},
+      Case{LegacyWeaponEventType::shot, WeaponId::hk_5, 2U},
+      Case{LegacyWeaponEventType::shot, WeaponId::nightvision_rifle, 2U},
+      Case{LegacyWeaponEventType::shot, WeaponId::sniper_rifle, 2U},
+      Case{LegacyWeaponEventType::shot, WeaponId::k3g4, 2U},
+      Case{LegacyWeaponEventType::shot, WeaponId::m_79, 100U},
+      Case{LegacyWeaponEventType::thrown, WeaponId::fragmentation_grenade,
+           100U},
+      Case{LegacyWeaponEventType::thrown, WeaponId::gas_grenade, 100U},
+      Case{LegacyWeaponEventType::shot, WeaponId::taser, 0U},
+      Case{LegacyWeaponEventType::flashlight_toggle, WeaponId::flashlight, 0U},
+      Case{LegacyWeaponEventType::shot, WeaponId::flamethrower, 0U},
+      Case{LegacyWeaponEventType::thrown, WeaponId::m_79, 0U},
+  };
+  for (const auto &test : cases) {
+    require(agentPark2BombDetonationIncrement(test.type, test.weapon) ==
+                test.increment,
+            "Agent PARK2 bomb detonation weapon table mismatch");
+  }
+  require(applyAgentPark2BombDetonation(40U, LegacyWeaponEventType::shot,
+                                        WeaponId::combat_shotgun) == 90U &&
+              applyAgentPark2BombDetonation(90U, LegacyWeaponEventType::shot,
+                                            WeaponId::pistol_45) == 100U &&
+              applyAgentPark2BombDetonation(100U, LegacyWeaponEventType::shot,
+                                            WeaponId::pistol_9mm) == 100U,
+          "Agent PARK2 bomb detonation did not saturate at 100 percent");
+
+  const auto detonation_after_shots = [](WeaponId weapon, std::uint8_t shots) {
+    auto percent = std::uint8_t{};
+    for (std::uint8_t shot = 0U; shot < shots; ++shot) {
+      percent = applyAgentPark2BombDetonation(
+          percent, LegacyWeaponEventType::shot, weapon);
+    }
+    return percent;
+  };
+  // Retail Girdeux needs about three shotgun, five .45 or ten 9 mm tank
+  // hits. The first two are intentionally unsuitable for this Agent
+  // challenge: their requested risk reaches 100 before retail's unchanged
+  // kill threshold. 9 mm and rifles retain a large, demonstrably passable
+  // budget without changing the boss's HP or damage response.
+  require(detonation_after_shots(WeaponId::combat_shotgun, 3U) == 100U &&
+              detonation_after_shots(WeaponId::shotgun, 3U) == 100U &&
+              detonation_after_shots(WeaponId::pistol_45, 5U) == 100U,
+          "Agent PARK2 high-risk weapons no longer preserve their requested "
+          "detonation pressure");
+  require(detonation_after_shots(WeaponId::silenced_9mm, 10U) == 20U &&
+              detonation_after_shots(WeaponId::pistol_9mm, 10U) == 20U &&
+              detonation_after_shots(WeaponId::nightvision_rifle, 10U) == 20U &&
+              detonation_after_shots(WeaponId::sniper_rifle, 10U) == 20U &&
+              detonation_after_shots(WeaponId::k3g4, 10U) == 20U,
+          "Agent PARK2 lost its passable 9 mm/rifle detonation budget");
+  require(agentWashingtonParkTimerAdjustedTicks(24000) == 18000 &&
+              agentWashingtonParkTimerAdjustedTicks(23999) == 17999 &&
+              agentWashingtonParkTimerAdjustedTicks(18000) == 18000 &&
+              agentWashingtonParkTimerAdjustedTicks(12000) == 12000 &&
+              agentWashingtonParkTimerAdjustedTicks(-1) == -1,
+          "Agent Washington Park timer did not preserve its retail phase");
+  require(agent_mission_timer_rules.size() == 3U &&
+              agentMissionTimerRule(3U) == &agent_mission_timer_rules[0] &&
+              agentMissionTimerRule(10U) == &agent_mission_timer_rules[1] &&
+              agentMissionTimerRule(16U) == &agent_mission_timer_rules[2] &&
+              agentMissionTimerRule(19U) == nullptr &&
+              agent_base_escape_timer_callback == 0x80148824U &&
+              agentBaseEscapeTimerAdjustedTicks(3600) == 2880 &&
+              agentBaseEscapeTimerAdjustedTicks(3599) == 2879 &&
+              agentBaseEscapeTimerAdjustedTicks(2880) == 2880 &&
+              agent_warehouse_76_timer_callback == 0x80146eb0U &&
+              agentWarehouse76TimerAdjustedTicks(18000) == 14400 &&
+              agentWarehouse76TimerAdjustedTicks(17999) == 14399 &&
+              agentWarehouse76TimerAdjustedTicks(14400) == 14400,
+          "Agent mission timer rules lost an exact callback or phase");
+  constexpr std::string_view warehouse_retail =
+      "Get out before the building collapses in 15 minutes";
+  require(agentMissionParameterText(16U, true, warehouse_retail) ==
+              "Get out before the building collapses in 12 minutes" &&
+              agentMissionParameterText(16U, false, warehouse_retail) ==
+                  warehouse_retail &&
+              agentMissionParameterText(10U, true, warehouse_retail) ==
+                  warehouse_retail,
+          "Agent Warehouse 76 parameter replacement leaked across mode or mission");
+  require(agentKravitchAttributes(0xc102U, true) == 0xc107U &&
+              agentKravitchAttributes(0xc107U, true) == 0xc107U &&
+              agentKravitchAttributes(0xc109U, true) == 0xc107U &&
+              agentKravitchAttributes(0xc107U, false) == 0xc102U &&
+              agentKravitchAttributes(0xc109U, false) == 0xc102U &&
+              agentKravitchAttributes(0xc105U, true) == 0xc105U,
+          "Agent Kravitch weapon override did not preserve retail flags");
+  require(agentKravitchPostShotCooldown(35U, true) == 18U &&
+              agentKravitchPostShotCooldown(66U, true) == 33U &&
+              agentKravitchPostShotCooldown(15U, true) == 15U &&
+              agentKravitchPostShotCooldown(66U, false) == 66U &&
+              agentKravitchPostShotDecisionCounter(0U, true) == 0x28U &&
+              agentKravitchPostShotDecisionCounter(0x29U, true) == 0x29U &&
+              agentKravitchPostShotDecisionCounter(0U, false) == 0U,
+          "Agent Kravitch retail shot/reposition cadence changed");
+  require(agent_gabrek_identity.mission == 7U &&
+              agent_gabrek_identity.slot == 98U &&
+              agent_gabrek_identity.definition == 38U &&
+              agent_gabrek_identity.room == 41 &&
+              agentGabrekAttributes(0xe102U, true) == 0xd109U &&
+              agentGabrekAttributes(0xd109U, true) == 0xd109U &&
+              agentGabrekAttributes(0xd109U, false) == 0xe102U &&
+              agentGabrekAttributes(0xe105U, true) == 0xe105U,
+          "Agent Gabrek identity or M-16/frag override changed");
+  require(agent_chapel_guard_identities.size() == 3U &&
+              agent_chapel_guard_identities[0].slot == 179U &&
+              agent_chapel_guard_identities[1].slot == 181U &&
+              agent_chapel_guard_identities[2].slot == 182U &&
+              agentChapelGuardAttributes(0x8308U, 0x8308U, true) == 0x8307U &&
+              agentChapelGuardAttributes(0x8105U, 0x8105U, true) == 0x8107U &&
+              agentChapelGuardAttributes(0x8307U, 0x8308U, false) == 0x8308U &&
+              agentChapelGuardAttributes(0x8107U, 0x8105U, false) == 0x8105U &&
+              agentChapelGuardAttributes(0xc105U, 0x8105U, true) == 0xc105U &&
+              agentChapelGuardMaintainedAttributesEligible(0x8308U,
+                                                            0x8308U) &&
+              agentChapelGuardMaintainedAttributesEligible(0x8307U,
+                                                            0x8308U) &&
+              !agentChapelGuardMaintainedAttributesEligible(0xc105U,
+                                                             0x8105U),
+          "Agent chapel-guard identities or shotgun override changed");
+  require(agentMarcosAttributes(0x4104U, true) == 0x5104U &&
+              agentMarcosAttributes(0x6104U, true) == 0x5104U &&
+              agentMarcosAttributes(0x6114U, true) == 0x5113U &&
+              agentMarcosAttributes(0x5104U, false) == 0x4104U &&
+              agentMarcosAttributes(0x6104U, false) == 0x4104U &&
+              agentMarcosAttributes(0x6114U, false) == 0x4113U &&
+              agentMarcosGrenadeDecisionCounter(0U, true) == 0x24U &&
+              agentMarcosGrenadeDecisionCounter(0x30U, true) == 0x30U &&
+              agentMarcosGrenadeDecisionCounter(0U, false) == 0U,
+          "Agent Marcos frag-grenade override or faster retail cadence failed");
+  require(agentAramovRootMotionDelta(120) == 150 &&
+              agentAramovRootMotionDelta(-120) == -150 &&
+              agentAramovRootMotionDelta(3) == 3 &&
+              agentAramovRootMotionDelta(-3) == -3 &&
+              agentAramovRootMotionDelta(0) == 0,
+          "Agent Aramov root-motion scale is not signed and deterministic");
 }
 
 sf::game::NpcState hostile() {
@@ -791,6 +948,7 @@ void testOpeningCameraAndMapFadeRuntime() {
 int main() {
   try {
     testOriginalWeaponRecords();
+    testAgentPark2BombDetonationPolicy();
     testArmorFirstDamage();
     testHostileReactionAndFire();
     testPatrolCoverReloadAndAccuracy();

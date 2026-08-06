@@ -11,7 +11,8 @@ SceneViewerResult PsyCrossSceneViewer::run(
   SetGeomScreen(320);
 
   if (!preloaded_gameplay) {
-    preloaded_gameplay = std::make_unique<game::GameplaySession>(mission);
+    preloaded_gameplay = std::make_unique<game::GameplaySession>(
+        mission, difficulty_ == game::CampaignDifficulty::agent);
   }
   auto &gameplay = *preloaded_gameplay;
   // The retail terminal transition can retire the live mission/inventory
@@ -19,12 +20,19 @@ SceneViewerResult PsyCrossSceneViewer::run(
   // carry snapshot while those tables are still coherent so campaign flow
   // never depends on reading already-unloaded guest pointers.
   auto latest_campaign_carry = gameplay.campaignCarryState();
-  const auto apply_retail_cheats = [&] {
+  const auto apply_gameplay_modes = [&] {
+    const auto hard_mode =
+        difficulty_ != game::CampaignDifficulty::original;
+    if (!gameplay.setRetailHardMode(hard_mode)) {
+      PsyX_Log_Error("Campaign difficulty hard-mode state failed\n");
+    }
+    const auto agent_mode =
+        difficulty_ == game::CampaignDifficulty::agent;
+    if (!gameplay.setAgentDifficulty(agent_mode)) {
+      PsyX_Log_Error("Campaign Agent policy failed\n");
+    }
     if (cheats_.all_weapons && !gameplay.activateRetailAllWeaponsCheat()) {
       PsyX_Log_Error("Retail all-weapons cheat activation failed\n");
-    }
-    if (cheats_.hard_mode && !gameplay.setRetailHardMode(true)) {
-      PsyX_Log_Error("Retail hard-mode cheat activation failed\n");
     }
     if (cheats_.one_shot_kills && !gameplay.setRetailOneShotKills(true)) {
       PsyX_Log_Error("Retail one-shot cheat activation failed\n");
@@ -33,7 +41,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
       PsyX_Log_Error("Retail weak-enemies cheat activation failed\n");
     }
   };
-  apply_retail_cheats();
+  apply_gameplay_modes();
   auto gameplay_audio = preloaded_audio
                             ? std::move(preloaded_audio)
                             : std::make_unique<PsyCrossAudioOutput>();
@@ -54,9 +62,13 @@ SceneViewerResult PsyCrossSceneViewer::run(
   // reserved page. Reconcile only bank-specific scene data here; invalidating
   // and restoring both atlases doubled the synchronous startup transfer.
   textures.ensure(gameplay);
-  const auto *world_filter = g_cfg_anisotropicFiltering ? "anisotropic"
-                             : g_cfg_bilinearFiltering  ? "bilinear"
-                                                        : "nearest";
+  const auto *world_filter =
+      g_cfg_anisotropicFiltering
+          ? (g_cfg_trilinearFiltering ? "anisotropic trilinear"
+                                      : "anisotropic")
+      : g_cfg_trilinearFiltering ? "trilinear"
+      : g_cfg_bilinearFiltering  ? "bilinear"
+                                 : "nearest";
   PsyX_Log_Info("Renderer: stable PGXP geometry, perspective-correct textures, "
                 "%s world filtering, Z-buffer, no PS1 dither\n",
                 world_filter);
@@ -68,6 +80,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
                 gameplay.player().yaw);
 
   std::vector<OT_TAG> ordering_table(ordering_table_size);
+  std::vector<OT_TAG> prefetch_ordering_table(ordering_table_size);
   std::vector<OT_TAG> optic_trail_ordering_table(ordering_table_size);
   std::vector<OT_TAG> optic_subject_ordering_table(ordering_table_size);
   std::vector<OT_TAG> shadow_ordering_table(ordering_table_size);
@@ -184,6 +197,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
   };
   std::uint64_t actor_tick = 0U;
   std::uint64_t submitted_presentation_sequence = 0U;
+  std::uint64_t render_capture_serial = 0U;
   game::LegacyWeaponEffectPresentationQueue weapon_presentation_edges;
   game::GameplayMuzzleFlashPresentationQueue muzzle_flash_edges;
   game::LegacyScrimCopyPresentationQueue scrim_copy_edges;
@@ -191,9 +205,11 @@ SceneViewerResult PsyCrossSceneViewer::run(
   game::LegacyDroppedItemPresentationCache dropped_item_presentation;
   glass_shatter.reset(gameplay);
   RenderPresentationSnapshot current_render_presentation;
-  captureRenderPresentation(gameplay, current_render_presentation);
+  captureRenderPresentation(gameplay, current_render_presentation,
+                            ++render_capture_serial);
   dropped_item_presentation.reconcile(
       current_render_presentation.guest_frame,
+      current_render_presentation.dropped_item_floor_owner_mask,
       current_render_presentation.dropped_items);
   auto current_weapon_switch_countdown = gameplay.hud().weaponSwitchFrames();
   auto previous_weapon_switch_countdown = current_weapon_switch_countdown;
@@ -205,9 +221,11 @@ SceneViewerResult PsyCrossSceneViewer::run(
   auto native_aim_held = current_render_presentation.first_person_aim;
   const auto reset_render_presentation = [&] {
     dropped_item_presentation.reset();
-    captureRenderPresentation(gameplay, current_render_presentation);
+    captureRenderPresentation(gameplay, current_render_presentation,
+                              ++render_capture_serial);
     dropped_item_presentation.reconcile(
         current_render_presentation.guest_frame,
+        current_render_presentation.dropped_item_floor_owner_mask,
         current_render_presentation.dropped_items);
     previous_render_presentation = current_render_presentation;
     interpolated_render_presentation = current_render_presentation;
@@ -270,9 +288,6 @@ SceneViewerResult PsyCrossSceneViewer::run(
     switch (cheat) {
     case game::RetailCheat::all_weapons:
       accepted = gameplay.setRetailAllWeaponsCheat(enabled);
-      break;
-    case game::RetailCheat::hard_mode:
-      accepted = gameplay.setRetailHardMode(enabled);
       break;
     case game::RetailCheat::one_shot_kills:
       accepted = gameplay.setRetailOneShotKills(enabled);
@@ -369,6 +384,18 @@ SceneViewerResult PsyCrossSceneViewer::run(
         presentation.environment.nightvision_clear_override_enabled = false;
       }
     }
+    // SVD night vision is enabled by the camera's retail 0x10 flag. CAVE2
+    // does not keep the unrelated atmospheric screen-filter descriptor live,
+    // so synthesize only the missing post-composition TILE. Average blending
+    // preserves the level's authored fog, lighting and distance gradient.
+    if (native_aim_held && presentation.first_person_aim &&
+        presentation.optic_mode == 3U &&
+        presentation.environment.nightvision_enabled &&
+        !presentation.environment.screen_filter_enabled) {
+      presentation.environment.screen_filter_enabled = true;
+      presentation.environment.screen_filter_material = 0U;
+      presentation.environment.screen_filter_color = {0U, 112U, 0U};
+    }
     // Keep the authoritative optic camera until the guest publishes its chase
     // cut, but retire all scope HUD immediately on the native release edge.
     const auto presented_first_person_aim =
@@ -391,6 +418,15 @@ SceneViewerResult PsyCrossSceneViewer::run(
     worldCalloutAnchors(gameplay, actor_animations, actor_tick,
                         presentation.objects, hmd_pose_scratch,
                         world_callout_scratch);
+    if (gameplay.agentHeadshotThreatActive()) {
+      if (const auto head = playerHeadshotCalloutAnchor(
+              gameplay, actor_animations, gameplay.playerAnimationTick(),
+              presentation, hmd_pose_scratch)) {
+        world_callout_scratch.push_back(
+            WorldCalloutAnchor{*head, std::numeric_limits<std::uint16_t>::max(),
+                               "Head Shot", false});
+      }
+    }
     const auto target_anchor = [&]() -> std::optional<Vector3> {
       if (const auto target = gameplay.aimTarget()) {
         const auto existing = std::ranges::find_if(
@@ -405,16 +441,40 @@ SceneViewerResult PsyCrossSceneViewer::run(
       return aimTargetAnchor(gameplay, actor_animations, actor_tick,
                              presentation.objects, hmd_pose_scratch);
     }();
+    const auto mission_keycard_pickup_active = std::ranges::any_of(
+        gameplay.activeObjects(), [&](const auto object_index) {
+          if (object_index >= gameplay.objects().size()) {
+            return false;
+          }
+          const auto *displayed_model =
+              gameplay.displayedObjectModel(object_index);
+          return displayed_model != nullptr &&
+                 retailKeycardPickupObject(gameplay.objects()[object_index],
+                                           displayed_model->name);
+        });
     auto view = makeViewMatrix(camera);
     registerPreciseViewMatrix(view, camera);
     // Retail pickups and flying grenade billboards use interface art but are
     // inserted into the world OT. Their TIMs must already be resident when
     // that OT executes; a late HUD upload would lose scene depth ordering.
     hud_textures.restoreGameplay(gameplay.hud(), presented_first_person_aim,
+                                 mission_keycard_pickup_active,
                                  presentation.dropped_items,
                                  presentation.projectiles);
-    world_chunk_appearance.advance(gameplay.presentationModels(),
-                                   presentation_delta_seconds);
+    const auto prefetched_models = gameplay.prefetchedModels();
+    auto admitted_prefetch_count = std::size_t{};
+    for (const auto model : prefetched_models) {
+      if (!textures.worldLookaheadAdmitted(model)) {
+        break;
+      }
+      ++admitted_prefetch_count;
+    }
+    const auto admitted_prefetch =
+        prefetched_models.first(admitted_prefetch_count);
+    world_chunk_appearance.advance(
+        gameplay.presentationModels(), presentation_delta_seconds,
+        admitted_prefetch, presentation.player.x,
+        presentation.player.z);
     const auto stats = renderWorld(
         gameplay, textures, hud_textures, fire_animation,
         textures.firePlacement(), effect_textures, actor_animations, actor_tick,
@@ -426,6 +486,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
         weapon_presentation_edges.rawPackets(), glass_shatter.shards(),
         interpolation_amount, previous_render_presentation,
         current_render_presentation, presentation, view, ordering_table,
+        prefetch_ordering_table,
         optic_trail_ordering_table, optic_subject_ordering_table,
         shadow_ordering_table, scrim_ordering_table,
         scanner_xray_ordering_table, guest_overlay_ordering_table,
@@ -438,47 +499,63 @@ SceneViewerResult PsyCrossSceneViewer::run(
       glass_shatter.advance(effect_updates);
       ++actor_tick;
     }
-    // SCRIM is an unconditional background. Draw it first without reading or
-    // writing depth; the opaque world then starts against the pristine frame
-    // depth and overwrites the sky wherever real scene geometry exists.
+    // Draw an active SCRIM first without reading or writing depth; the opaque
+    // world then starts against pristine frame depth and overwrites the sky
+    // wherever real scene geometry exists.
     GR_SetBlendMode(BM_NONE);
-    GR_EnableDepth(0);
-    GR_SetDepthState(0, 0);
-    DrawOTag(reinterpret_cast<u_long *>(&scrim_ordering_table.back()));
+    if (presentation.scrim.visible) {
+      GR_EnableDepth(0);
+      GR_SetDepthState(0, 0);
+      DrawOTag(reinterpret_cast<u_long *>(&scrim_ordering_table.back()));
+    }
     GR_EnableDepth(1);
     GR_SetDepthState(1, 1);
+    GR_EnableSceneFog(1);
+    // Build the lookahead against its own temporary depth image. The active
+    // world is drawn after a clear, so it owns final colour/depth while the
+    // prefetched chunk still self-occludes instead of exposing interiors.
+    GR_ClearDepthBuffer();
+    DrawOTag(reinterpret_cast<u_long *>(&prefetch_ordering_table.back()));
+    GR_ClearDepthBuffer();
+    GR_SetDepthState(1, 1);
     DrawOTag(reinterpret_cast<u_long *>(&ordering_table.back()));
+    GR_EnableSceneFog(0);
     // Retail SVD replays three opaque projected packet snapshots at -8 depth
     // steps. They read world depth without writing it; the live lime subject
     // then owns depth and cleanly covers the overlapping newest echo.
     GR_SetBlendMode(BM_NONE);
-    GR_SetDepthState(1, 0);
-    DrawOTag(reinterpret_cast<u_long *>(&optic_trail_ordering_table.back()));
+    const auto svd_active =
+        presentation.first_person_aim && presentation.optic_mode == 3U;
+    if (svd_active && primitives.optic_trails.size() != 0U) {
+      GR_SetDepthState(1, 0);
+      DrawOTag(reinterpret_cast<u_long *>(&optic_trail_ordering_table.back()));
+    }
     GR_SetDepthState(1, 1);
-    DrawOTag(reinterpret_cast<u_long *>(&optic_subject_ordering_table.back()));
+    if (svd_active && primitives.optic_subjects.size() != 0U) {
+      DrawOTag(
+          reinterpret_cast<u_long *>(&optic_subject_ordering_table.back()));
+    }
     GR_SetBlendMode(BM_NONE);
     // Posed silhouettes are projected onto exact gameplay receiver surfaces.
-    // First union their model triangles into a dedicated stencil bit, then
-    // shade that union once. This preserves limbs and equipment detail without
-    // exposing overlapping internal geometry through darker patches.
-    GR_SetBlendMode(BM_SUBTRACT);
-    GR_SetDepthState(1, 0);
-    GR_SetPolygonOffset(0.0F, -1.0F);
-    // Semi-transparent untextured PSX primitives inherit ABR from the active
-    // texture page. Pin ABR=2 here; otherwise the final world texture chosen
-    // by camera/OT order can turn subtractive shadows additive and white.
-    DR_TPAGE shadow_blend_page{};
-    SetDrawTPage(&shadow_blend_page, 1, 0, GetTPage(0, 2, 0, 0));
-    DrawPrim(&shadow_blend_page);
-    GR_BeginShadowMask();
-    DrawOTag(reinterpret_cast<u_long *>(&shadow_ordering_table.back()));
-    GR_BeginShadowShade();
-    DrawPrim(&shadow_blend_page);
-    DrawOTag(reinterpret_cast<u_long *>(&shadow_ordering_table.back()));
-    GR_EndShadowMask();
-    GR_SetPolygonOffset(0.0F, 0.0F);
-    GR_SetDepthState(1, 1);
-    GR_SetBlendMode(BM_NONE);
+    // Stencil admits only the first visible fragment at a receiver pixel, so
+    // overlapping limbs shade once without replaying the complete shadow OT.
+    if (primitives.actor_shadows.size() != 0U) {
+      GR_SetBlendMode(BM_SUBTRACT);
+      GR_SetDepthState(1, 0);
+      GR_SetPolygonOffset(0.0F, -1.0F);
+      // Semi-transparent untextured PSX primitives inherit ABR from the active
+      // texture page. Pin ABR=2 here; otherwise the final world texture chosen
+      // by camera/OT order can turn subtractive shadows additive and white.
+      DR_TPAGE shadow_blend_page{};
+      SetDrawTPage(&shadow_blend_page, 1, 0, GetTPage(0, 2, 0, 0));
+      DrawPrim(&shadow_blend_page);
+      GR_BeginShadowMask();
+      DrawOTag(reinterpret_cast<u_long *>(&shadow_ordering_table.back()));
+      GR_EndShadowMask();
+      GR_SetPolygonOffset(0.0F, 0.0F);
+      GR_SetDepthState(1, 1);
+      GR_SetBlendMode(BM_NONE);
+    }
     // Opaque geometry owns PGXP-Z. Fire blends additively against that
     // depth without writing it, so walls occlude particles and lightbars.
     GR_SetBlendMode(BM_ADD);
@@ -494,11 +571,13 @@ SceneViewerResult PsyCrossSceneViewer::run(
     // Static EMD/GMD scanner material stays in the ordinary depth-sorted OT.
     // This late depth-free table is reserved only for a script-hidden
     // GRGLO/GDF fallback marker during a room/visibility handoff.
-    GR_SetBlendMode(BM_AVERAGE);
-    GR_EnableDepth(0);
-    GR_SetDepthState(0, 0);
-    DrawOTag(reinterpret_cast<u_long *>(&scanner_xray_ordering_table.back()));
-    GR_SetBlendMode(BM_NONE);
+    if (presentation.retail_virus_scanner_overlay) {
+      GR_SetBlendMode(BM_AVERAGE);
+      GR_EnableDepth(0);
+      GR_SetDepthState(0, 0);
+      DrawOTag(reinterpret_cast<u_long *>(&scanner_xray_ordering_table.back()));
+      GR_SetBlendMode(BM_NONE);
+    }
     static_cast<void>(retail_scrim_animation.commitFrame(
         gameplay, presentation.scrim, scrim_copy_edges.phases(),
         presentation.guest_frame, textures));
@@ -510,8 +589,13 @@ SceneViewerResult PsyCrossSceneViewer::run(
     // Reserved framebuffer pages are transient. Restore the font, current
     // weapon and complete weapon-specific optic immediately before sampling.
     hud_textures.restoreGameplay(gameplay.hud(), presented_first_person_aim,
+                                 mission_keycard_pickup_active,
                                  presentation.dropped_items,
                                  presentation.projectiles);
+    // Resolve the complete 3D scene, then run morphological AA before any
+    // projected guest overlays or native HUD are submitted. This keeps text,
+    // optic markings and letterbox edges pixel-sharp.
+    GR_ApplySceneSMAA();
     // Remaining non-world packets are already projected presentation. Draw
     // them only after restoring HUD VRAM so the retail SCP-bearing sprites
     // sample their authored TIMs, then let the native HUD add the optic rings.
@@ -566,7 +650,8 @@ SceneViewerResult PsyCrossSceneViewer::run(
           input_, presented_first_person_aim, aim_heading,
           presented_weapon_switch_frames, presentation_delta_seconds,
           pause_settings.screen_center_x, pause_settings.screen_center_y,
-          hud_visibility, normal_hud_phase, gameplay_hud_scratch);
+          hud_visibility, normal_hud_phase, difficulty_,
+          gameplay_hud_scratch);
       if (hud_visibility > 0.5) {
         drawRetailGrenadeTrajectory(presentation,
                                     pause_settings.screen_center_x,
@@ -1201,7 +1286,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
           return SceneViewerResult{previous_buttons,
                                    SceneExitReason::return_to_title};
         }
-        apply_retail_cheats();
+        apply_gameplay_modes();
         discard_gameplay_audio("pause-restart-checkpoint");
         ui_audio.reset();
         paused = false;
@@ -1229,7 +1314,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
       case game::PauseCommandType::restart_mission:
         pause_settings = pause_menu.settings();
         gameplay.reset();
-        apply_retail_cheats();
+        apply_gameplay_modes();
         discard_gameplay_audio("pause-restart-mission");
         ui_audio.reset();
         paused = false;
@@ -1389,9 +1474,11 @@ SceneViewerResult PsyCrossSceneViewer::run(
       weapon_presentation_edges.observe(gameplay.legacyPresentationFrame());
       muzzle_flash_edges.observe(gameplay.effects());
       scrim_copy_edges.observe(gameplay.legacyPresentationFrame());
-      captureRenderPresentation(gameplay, current_render_presentation);
+      captureRenderPresentation(gameplay, current_render_presentation,
+                                ++render_capture_serial);
       dropped_item_presentation.reconcile(
           current_render_presentation.guest_frame,
+          current_render_presentation.dropped_item_floor_owner_mask,
           current_render_presentation.dropped_items);
       ++simulation_updates_this_frame;
       simulation_accumulator_seconds = std::max(
@@ -1430,7 +1517,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
         return SceneViewerResult{previous_buttons,
                                  SceneExitReason::return_to_title};
       }
-      apply_retail_cheats();
+      apply_gameplay_modes();
       discard_gameplay_audio("failure-restart-checkpoint");
       fire_animation = FireAnimation{gameplay};
       actor_tick = 0U;

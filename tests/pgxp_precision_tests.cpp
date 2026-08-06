@@ -270,22 +270,29 @@ void testCacheSaturatesWithoutWrapping() {
 }
 
 void testTextureFilterSelection() {
-  require(GR_ResolveTextureFilterMode(TEXTURE_FILTER_NEAREST, 1, 1) ==
+  require(GR_ResolveTextureFilterMode(TEXTURE_FILTER_NEAREST, 1, 1, 1) ==
               TEXTURE_FILTER_NEAREST,
           "Explicit nearest primitives were filtered");
-  require(GR_ResolveTextureFilterMode(TEXTURE_FILTER_BILINEAR, 1, 1) ==
+  require(GR_ResolveTextureFilterMode(TEXTURE_FILTER_BILINEAR, 1, 1, 1) ==
               TEXTURE_FILTER_BILINEAR,
           "Bilinear UI filtering was not selected");
-  require(GR_ResolveTextureFilterMode(TEXTURE_FILTER_BILINEAR, 0, 1) ==
+  require(GR_ResolveTextureFilterMode(TEXTURE_FILTER_BILINEAR, 0, 1, 1) ==
               TEXTURE_FILTER_NEAREST,
-          "Anisotropy leaked into UI rendering");
-  require(GR_ResolveTextureFilterMode(TEXTURE_FILTER_WORLD_ANISOTROPIC, 1, 0) ==
+          "World-only filtering leaked into UI rendering");
+  require(GR_ResolveTextureFilterMode(TEXTURE_FILTER_WORLD_ANISOTROPIC, 1, 0,
+                                      0) ==
               TEXTURE_FILTER_BILINEAR,
           "World rendering ignored the bilinear selection");
-  require(GR_ResolveTextureFilterMode(TEXTURE_FILTER_WORLD_ANISOTROPIC, 0, 0) ==
+  require(GR_ResolveTextureFilterMode(TEXTURE_FILTER_WORLD_ANISOTROPIC, 0, 0,
+                                      0) ==
               TEXTURE_FILTER_NEAREST,
           "World filtering remained forced on");
-  require(GR_ResolveTextureFilterMode(TEXTURE_FILTER_WORLD_ANISOTROPIC, 0, 1) ==
+  require(GR_ResolveTextureFilterMode(TEXTURE_FILTER_WORLD_ANISOTROPIC, 0, 1,
+                                      0) ==
+              TEXTURE_FILTER_WORLD_TRILINEAR,
+          "Independent trilinear filtering was not selected");
+  require(GR_ResolveTextureFilterMode(TEXTURE_FILTER_WORLD_ANISOTROPIC, 0, 1,
+                                      1) ==
               TEXTURE_FILTER_WORLD_ANISOTROPIC,
           "Independent anisotropic filtering was not selected");
 }

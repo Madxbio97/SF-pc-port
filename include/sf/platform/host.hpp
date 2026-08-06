@@ -24,9 +24,12 @@ enum class AspectRatioMode {
 struct GraphicsSettings {
   int width{1280};
   int height{720};
-  int msaa_samples{4};
+  int msaa_samples{};
   bool bilinear_filtering{true};
+  bool trilinear_filtering{true};
   bool anisotropic_filtering{true};
+  bool smaa{true};
+  bool volumetric_fog{};
   AspectRatioMode aspect_ratio{AspectRatioMode::adaptive};
   bool vsync{true};
   std::uint32_t frame_limit{60U};
