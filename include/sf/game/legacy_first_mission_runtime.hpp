@@ -15,6 +15,37 @@
 
 namespace sf::game {
 
+[[nodiscard]] constexpr LegacyInventoryBridgeState
+mergeRetryInventoryState(const LegacyInventoryBridgeState &restored,
+                         const CampaignCarryState &retry) noexcept {
+  auto result = restored;
+  result.owned_weapons =
+      (restored.owned_weapons & ~campaign_persistent_weapon_mask) |
+      (retry.owned_weapons & campaign_persistent_weapon_mask);
+  for (std::size_t weapon = 0U; weapon < weapon_slot_count; ++weapon) {
+    const auto bit = std::uint32_t{1U} << weapon;
+    if ((campaign_persistent_weapon_mask & bit) == 0U) {
+      continue;
+    }
+    result.magazines[weapon] = retry.magazines[weapon];
+    result.reserves[weapon] = retry.reserves[weapon];
+  }
+  const auto restored_current =
+      static_cast<std::size_t>(restored.current_weapon);
+  const auto restored_current_bit =
+      restored_current < weapon_slot_count
+          ? std::uint32_t{1U} << restored_current
+          : std::uint32_t{};
+  const auto preserve_mission_local_current =
+      restored_current_bit != 0U &&
+      (restored_current_bit & campaign_persistent_weapon_mask) == 0U &&
+      (result.owned_weapons & restored_current_bit) != 0U;
+  if (!preserve_mission_local_current) {
+    result.current_weapon = retry.current_weapon;
+  }
+  return result;
+}
+
 enum class LegacyRuntimeFaultReason {
   none,
   execution,
@@ -277,6 +308,8 @@ public:
   [[nodiscard]] bool activateRetailMovieTheaterCheat() noexcept;
   [[nodiscard]] bool
   applyCampaignCarryState(const CampaignCarryState &state) noexcept;
+  [[nodiscard]] bool
+  applyRetryInventoryState(const CampaignCarryState &state) noexcept;
   [[nodiscard]] bool consumeCheckpointCommit() noexcept;
   [[nodiscard]] std::optional<std::size_t> consumeIntroMovieRequest() noexcept;
   [[nodiscard]] bool consumeEndingMovieRequest() noexcept;

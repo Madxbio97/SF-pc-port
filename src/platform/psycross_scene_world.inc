@@ -50,6 +50,79 @@ retailKeycardPickupObject(const game::SceneObject &object,
   return found_owner ? floor : 0L;
 }
 
+struct LegacyDistantAuthoredFirePresentation {
+  const game::ObjectFireEmitter *emitter{};
+  bool prefetch{};
+  double reveal{};
+};
+
+[[nodiscard]] LegacyDistantAuthoredFirePresentation
+legacyDistantAuthoredFireEmitter(
+    const game::GameplaySession &gameplay,
+    const WorldChunkAppearance &world_chunk_appearance,
+    std::size_t object_index) noexcept {
+  if (!gameplay.legacyEffectParticlesAuthoritative() ||
+      object_index >= gameplay.objects().size() ||
+      object_index > std::numeric_limits<std::uint16_t>::max()) {
+    return {};
+  }
+
+  const auto scene_index = static_cast<std::uint16_t>(object_index);
+  const auto &object = gameplay.objects()[object_index];
+  if (object.model >= gameplay.objectModels().size() ||
+      gameplay.objectDestroyed(scene_index)) {
+    return {};
+  }
+  const auto *fire = std::get_if<game::ObjectFireEmitter>(
+      &gameplay.objectModels()[object.model].geometry);
+  if (fire == nullptr) {
+    return {};
+  }
+
+  const auto authored_rooms = gameplay.authoredObjectRooms(scene_index);
+  auto authored_owner_active = false;
+  auto authored_owner_warm = false;
+  auto active_reveal = 0.0;
+  auto warm_reveal = 0.0;
+  for (const auto room : authored_rooms) {
+    const auto reveal = world_chunk_appearance.revealProgress(room);
+    if (world_chunk_appearance.isActive(room)) {
+      authored_owner_active = true;
+      active_reveal = std::max(active_reveal, reveal);
+      continue;
+    }
+    if (world_chunk_appearance.isWarm(room) && reveal > 0.0) {
+      authored_owner_warm = true;
+      warm_reveal = std::max(warm_reveal, reveal);
+    }
+  }
+  authored_owner_warm = !authored_owner_active && authored_owner_warm;
+  const auto owner_reveal =
+      authored_owner_active ? active_reveal : warm_reveal;
+  const auto scene_active =
+      std::ranges::find(gameplay.activeObjects(), scene_index) !=
+      gameplay.activeObjects().end();
+  const auto guest_slots = gameplay.legacyGuestSlotsBySceneObject();
+  const auto guest_slot =
+      object_index < guest_slots.size() ? guest_slots[object_index] : -1;
+  const auto has_live_owned_particle = std::ranges::any_of(
+      gameplay.legacyExplParticles(),
+      [&](const game::LegacyExplParticle &particle) {
+        return particle.family == game::LegacyEffectSpriteFamily::fire &&
+               game::legacyExplParticleOwnedByGuestSlot(particle.source_slot,
+                                                        guest_slot);
+      });
+  if (!game::legacyDistantFireEmitterAllowed(
+          gameplay.legacyEffectParticlesAuthoritative(),
+          scene_active,
+          authored_owner_active, authored_owner_warm,
+          gameplay.objectInitiallyHidden(scene_index),
+          guest_slot, has_live_owned_particle)) {
+    return {};
+  }
+  return {fire, authored_owner_warm, owner_reveal};
+}
+
 void renderObjects(const game::GameplaySession &gameplay,
                    const FireAnimation &fire_animation,
                    const FireTexturePlacement &fire_texture_placement,
@@ -59,6 +132,7 @@ void renderObjects(const game::GameplaySession &gameplay,
                    const MATRIX &view, std::vector<OT_TAG> &ordering_table,
                    std::vector<OT_TAG> &optic_subject_ordering_table,
                    std::vector<OT_TAG> &shadow_ordering_table,
+                   std::vector<OT_TAG> &prefetch_fire_ordering_table,
                    std::vector<OT_TAG> &fire_ordering_table,
                    ActorShadowPresentationCache &shadow_cache,
                    LocalSceneLightingCache &local_scene_lighting_cache,
@@ -279,6 +353,27 @@ void renderObjects(const game::GameplaySession &gameplay,
                       texture_bank, view, ordering_table, primitives, stats,
                       false, scanner_material_active, depth_cue_floor);
     }
+  }
+
+  // activeObjects only records static guest-object residency. The authoritative
+  // path intentionally skips native CFIRE there, so residency alone is not
+  // proof that a flame is presented. Keep the authored flame visible until the
+  // exact guest-owned EXPL particle appears; that particle then owns either the
+  // guest sprite or the camera-distance native fallback. Warm-chunk flames use
+  // the prefetch depth image and cannot show through unrevealed geometry.
+  for (auto object_index = std::size_t{};
+       object_index < gameplay.objects().size(); ++object_index) {
+    const auto fire = legacyDistantAuthoredFireEmitter(
+        gameplay, world_chunk_appearance, object_index);
+    if (fire.emitter == nullptr) {
+      continue;
+    }
+    auto &target_ordering_table = fire.prefetch
+                                      ? prefetch_fire_ordering_table
+                                      : fire_ordering_table;
+    renderFireObject(*fire.emitter, fire_animation.particles(object_index),
+                     fire_texture_placement, view, target_ordering_table,
+                     primitives, stats, fire.reveal);
   }
 }
 
@@ -2405,6 +2500,7 @@ RenderStats renderWorld(
     std::vector<OT_TAG> &scrim_ordering_table,
     std::vector<OT_TAG> &scanner_xray_ordering_table,
     std::vector<OT_TAG> &guest_overlay_ordering_table,
+    std::vector<OT_TAG> &prefetch_fire_ordering_table,
     std::vector<OT_TAG> &fire_ordering_table, OpticHistory &optic_history,
     ActorShadowPresentationCache &shadow_cache,
     DynamicLightFrameScratch &dynamic_light_scratch,
@@ -2420,6 +2516,8 @@ RenderStats renderWorld(
   ClearOTagR(reinterpret_cast<u_long *>(ordering_table.data()),
              ordering_table_size);
   ClearOTagR(reinterpret_cast<u_long *>(prefetch_ordering_table.data()),
+             ordering_table_size);
+  ClearOTagR(reinterpret_cast<u_long *>(prefetch_fire_ordering_table.data()),
              ordering_table_size);
   if (svd_active) {
     ClearOTagR(reinterpret_cast<u_long *>(optic_trail_ordering_table.data()),
@@ -2605,6 +2703,15 @@ RenderStats renderWorld(
                       std::get<assets::EmdScene>(geometry).polygonCount(),
                       "Object scene");
       }
+    }
+    for (auto object_index = std::size_t{};
+         object_index < gameplay.objects().size(); ++object_index) {
+      if (legacyDistantAuthoredFireEmitter(gameplay, world_chunk_appearance,
+                                           object_index).emitter == nullptr) {
+        continue;
+      }
+      add_to_budget(fire_particle_budget, fire_particle_count,
+                    "Distant authored fire");
     }
     // Scanner bodies and GRGLO/GDF reveals may be script-hidden from
     // activeObjects. Reserve the exact target pair exported by the retail VM.
@@ -3241,8 +3348,9 @@ RenderStats renderWorld(
                 actor_animations, actor_tick, interpolation_amount,
                 presentation, view, ordering_table,
                 optic_subject_ordering_table, shadow_ordering_table,
-                fire_ordering_table, shadow_cache, local_scene_lighting_cache,
-                world_chunk_appearance, pose_scratch, primitives, stats);
+                prefetch_fire_ordering_table, fire_ordering_table, shadow_cache,
+                local_scene_lighting_cache, world_chunk_appearance,
+                pose_scratch, primitives, stats);
   if (svd_active) {
     constexpr std::array styles{
         OpticSubjectStyle::nightvision_trail_oldest,

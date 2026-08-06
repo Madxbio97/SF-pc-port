@@ -47,6 +47,14 @@ readLocalizedAsset(std::string_view relative_path) noexcept;
 [[nodiscard]] std::optional<std::string_view>
 completeGameplayTextSource(std::string_view observed) noexcept;
 
+// English normally presents the guest's exact live prefix. Mission Failed is
+// the sole exception because the retail terminal packet retires at that
+// identifiable prefix and requires the canonical source for its final frame.
+[[nodiscard]] constexpr bool
+completedGameplayTextRequiredInEnglish(std::string_view completed) noexcept {
+  return completed == "Mission Failed";
+}
+
 struct LocalizedMissionBriefing {
   std::string location;
   std::string mission_title;

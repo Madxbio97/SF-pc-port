@@ -82,7 +82,6 @@ The current build enables only these validated mission-specific overrides:
 
 - **Georgia Street:** Kravitch carries an ITHACA-37 shotgun, fires more often
   and repositions through the original route/LOS controller after shooting.
-- **Destroyed subway:** the HUD shows the bomb technician's health.
 - **Main subway line:** the HUD shows Aramov's escape progress, and her
   horizontal movement is 25% faster.
 - **Washington Park:** the timer is 15:00; Marcos uses ordinary fragmentation
@@ -93,7 +92,6 @@ The current build enables only these validated mission-specific overrides:
   hits 40%, M-16 hits 10%, and 9 mm-class weapons and rifles add 2%. An M-79
   hit or a thrown fragmentation/gas grenade fills it immediately; the taser
   and flashlight add nothing. Reaching 100% invokes the retail bomb failure.
-- **Expo Center Reception:** the HUD shows the suspicion meter.
 - **Expo Center Dinorama:** the HUD shows Phagan and Aramov health meters.
 - **Rhoemer's Base:** Gabrek carries an M-16 and fragmentation grenades.
 - **Base Escape:** the escape timer is 2:24.

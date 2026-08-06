@@ -369,16 +369,17 @@ void renderPark2FlamethrowerRibbons(
 
 TexturedVertex fireVertex(const FireParticle &particle, const Vector3 &right,
                           const Vector3 &up, double horizontal, double vertical,
-                          double u, double v) {
+                          double u, double v,
+                          double presentation_amount = 1.0) {
   return TexturedVertex{
       static_cast<double>(particle.x) + right.x * horizontal + up.x * vertical,
       static_cast<double>(particle.y) + right.y * horizontal + up.y * vertical,
       static_cast<double>(particle.z) + right.z * horizontal + up.z * vertical,
       u,
       v,
-      static_cast<double>(particle.red),
-      static_cast<double>(particle.green),
-      static_cast<double>(particle.blue),
+      static_cast<double>(particle.red) * presentation_amount,
+      static_cast<double>(particle.green) * presentation_amount,
+      static_cast<double>(particle.blue) * presentation_amount,
   };
 }
 
@@ -386,7 +387,9 @@ void renderFireObject(const game::ObjectFireEmitter &fire,
                       std::span<const FireParticle> particles,
                       const FireTexturePlacement &texture_placement,
                       const MATRIX &view, std::vector<OT_TAG> &ordering_table,
-                      PrimitiveBuffer &primitives, RenderStats &stats) {
+                      PrimitiveBuffer &primitives, RenderStats &stats,
+                      double presentation_amount = 1.0) {
+  presentation_amount = std::clamp(presentation_amount, 0.0, 1.0);
   const auto right = normalize(Vector3{
       static_cast<double>(view.m[0][0]),
       static_cast<double>(view.m[0][1]),
@@ -411,16 +414,16 @@ void renderFireObject(const game::ObjectFireEmitter &fire,
                                          particle.family, particle.frame);
     const auto top_left =
         fireVertex(particle, right, up, -half_width, half_height,
-                   frame.minimum_u, frame.minimum_v);
+                   frame.minimum_u, frame.minimum_v, presentation_amount);
     const auto top_right =
         fireVertex(particle, right, up, half_width, half_height,
-                   frame.maximum_u, frame.minimum_v);
+                   frame.maximum_u, frame.minimum_v, presentation_amount);
     const auto bottom_left =
         fireVertex(particle, right, up, -half_width, -half_height,
-                   frame.minimum_u, frame.maximum_v);
+                   frame.minimum_u, frame.maximum_v, presentation_amount);
     const auto bottom_right =
         fireVertex(particle, right, up, half_width, -half_height,
-                   frame.maximum_u, frame.maximum_v);
+                   frame.maximum_u, frame.maximum_v, presentation_amount);
     const std::array quad{top_left, top_right, bottom_left, bottom_right};
     const std::array perimeter{top_left, top_right, bottom_right, bottom_left};
     const auto fully_inside = std::all_of(

@@ -851,27 +851,30 @@ buildGameplayMessageLayout(const game::LegacyUiMessageBridgeState &message,
   const auto russian_language = game::russianLanguageActive();
   std::string source;
   std::string presented;
+  std::string reveal_source;
   auto reconstructed_source = false;
   const auto resolve = [&](std::string_view observed, bool reconstructed) {
     if (observed.empty()) {
       return false;
     }
-    source = std::string{observed};
-    presented = game::localizeTextCopy(source);
-    if (!russian_language || presented != source) {
-      reconstructed_source = reconstructed;
-      return true;
-    }
     const auto completed = game::completeGameplayTextSource(observed);
-    if (!completed) {
-      return false;
-    }
-    source = std::string{*completed};
+    const auto use_completed =
+        completed &&
+        (russian_language ||
+         game::completedGameplayTextRequiredInEnglish(*completed));
+    source = std::string{use_completed ? *completed : observed};
     presented = game::localizeTextCopy(source);
+    // Some retail FONT/TEXT builders expose an identifiable source prefix
+    // (for example "MISSION FAI") while their live packet list owns the
+    // complete type-on lifetime. When completion selects canonical wording,
+    // keep the observed packet source as the reveal denominator. Using
+    // the longer completed phrase here left both English and Russian several
+    // glyphs short when the guest retired the message.
+    reveal_source = std::string{observed};
+    reconstructed_source = reconstructed;
     if (russian_language && presented == source) {
       return false;
     }
-    reconstructed_source = reconstructed;
     return true;
   };
   if (!resolve(message.text, false) &&
@@ -901,8 +904,8 @@ buildGameplayMessageLayout(const game::LegacyUiMessageBridgeState &message,
   presented = keyboardMouseHintText(presented, bindings);
 
   const auto source_glyph_count =
-      std::max(std::size_t{1U},
-               originalHudSourceGlyphCount(source, reconstructed_source));
+      std::max(std::size_t{1U}, originalHudSourceGlyphCount(
+                                    reveal_source, reconstructed_source));
   const auto presentation_glyph_count =
       originalHudDrawableGlyphCount(presented);
   if (source_glyph_count == 0U || presentation_glyph_count == 0U) {
@@ -1259,9 +1262,6 @@ game::AgentMissionHudState
 agentMissionHudState(const game::GameplaySession &gameplay) {
   game::AgentMissionHudState state;
   switch (gameplay.missionIndex()) {
-  case 1U:
-    state.bomb_technician_health = agentNpcHealthSample(gameplay, 209U, 0x35U);
-    break;
   case 2U:
     state.aramov_escape = agentNpcRouteProgressSample(gameplay, 13U, 0x02U);
     break;
@@ -1270,10 +1270,6 @@ agentMissionHudState(const game::GameplaySession &gameplay) {
       state.bomb_detonation = game::AgentMissionHudSample{*detonation, 100U};
     }
     state.girdeux_tank_damage = agentGirdeuxTankDamageSample(gameplay);
-    break;
-  case 5U:
-    state.suspicion =
-        game::AgentMissionHudSample{gameplay.hud().dangerBar(), 100U};
     break;
   case 6U:
     state.phagan_health = agentNpcHealthSample(gameplay, 183U, 0x4cU);
@@ -2396,15 +2392,15 @@ void drawGameplayHud(const HudTextureAtlas &textures,
     arrangeStatusMessages(messages, message_layouts, scratch.status_indices);
   }
 
-  auto localized_status_backdrop = false;
-  if (russian_language && status_backdrop != messages.end()) {
-    localized_status_backdrop =
+  auto adaptive_status_backdrop = false;
+  if (status_backdrop != messages.end()) {
+    adaptive_status_backdrop =
         drawStatusBackdrop(messages, message_layouts,
                            *status_backdrop->backdrop, offset_x, offset_y);
   }
   for (const auto &message : messages) {
     if (!message.backdrop ||
-        (localized_status_backdrop &&
+        (adaptive_status_backdrop &&
          message.channel == game::LegacyUiMessageChannel::status)) {
       continue;
     }

@@ -169,7 +169,8 @@ void PsyCrossCampaignSaveRenderer::drawDifficultySelection(
                  state_->input);
   };
 
-  text("Select Difficulty", {28, 70, 264, 12}, selected,
+  drawBorderedRect({42, 60, 236, 23}, {0U, 0U, 0U}, selected);
+  text("Select Difficulty", {48, 67, 224, 10}, selected,
        game::PauseTextAlignment::center);
 
   constexpr std::array labels{

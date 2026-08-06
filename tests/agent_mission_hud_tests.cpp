@@ -118,11 +118,8 @@ void testExactMissionRouting() {
           "Agent HUD leaked a stale meter into another mission");
 
   const auto sapper = makeAgentMissionHudMeters(1U, state);
-  require(sapper.count == 1U &&
-              sapper.values[0].kind ==
-                  AgentMissionHudMeterKind::bomb_technician_health &&
-              sapper.values[0].percent == 50U,
-          "Destroyed Subway did not select the bomb technician meter");
+  require(sapper.count == 0U,
+          "Destroyed Subway retained the redundant CBDC health meter");
 
   const auto chase = makeAgentMissionHudMeters(2U, state);
   require(chase.count == 1U &&
@@ -138,9 +135,8 @@ void testExactMissionRouting() {
           "Freedom Memorial meter order is not deterministic");
 
   const auto reception = makeAgentMissionHudMeters(5U, state);
-  require(reception.count == 1U &&
-              reception.values[0].kind == AgentMissionHudMeterKind::suspicion,
-          "Expo Reception did not select suspicion");
+  require(reception.count == 0U,
+          "Expo Reception retained the redundant suspicion meter");
 
   const auto dinorama = makeAgentMissionHudMeters(6U, state);
   require(

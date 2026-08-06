@@ -363,9 +363,17 @@ legacyLetterboxPresentationActive(bool mission_intro_active,
 }
 
 [[nodiscard]] constexpr bool
-legacyGameplayHudPresentationActive(bool mission_complete,
-                                    bool letterbox_active) noexcept {
-  return !mission_complete && !letterbox_active;
+legacyGameplayHudPresentationActive(bool mission_complete, bool hud_hidden,
+                                    bool mission_failed) noexcept {
+  return !mission_complete && (!hud_hidden || mission_failed);
+}
+
+[[nodiscard]] constexpr bool
+legacyTerminalFailureFrameSubmissionRequired(
+    bool failure_restart_requested, std::uint64_t presentation_sequence,
+    std::uint64_t submitted_sequence) noexcept {
+  return failure_restart_requested && presentation_sequence != 0U &&
+         presentation_sequence > submitted_sequence;
 }
 
 struct LegacyRetailViewportBars {
@@ -889,6 +897,8 @@ public:
   [[nodiscard]] bool
   applyCampaignCarryState(const CampaignCarryState &state) noexcept;
   [[nodiscard]] bool
+  applyRetryInventoryState(const CampaignCarryState &state) noexcept;
+  [[nodiscard]] bool
   setAudioVolumes(const GameplayAudioVolumes &volumes) noexcept;
   [[nodiscard]] std::optional<GameplayAudioVolumes>
   audioVolumes() const noexcept;
@@ -1083,6 +1093,10 @@ public:
   }
   [[nodiscard]] bool objectDestroyed(std::uint16_t index) const noexcept {
     return index < object_destroyed_.size() && object_destroyed_[index];
+  }
+  [[nodiscard]] bool objectInitiallyHidden(std::uint16_t index) const noexcept {
+    return index >= object_spawn_script_hidden_.size() ||
+           object_spawn_script_hidden_[index];
   }
   [[nodiscard]] bool objectDestructible(std::uint16_t index) const noexcept {
     return index < objects_.size() &&
@@ -1431,6 +1445,8 @@ private:
   bool checkpoint_valid_{};
   PlayerController checkpoint_player_controller_{};
   std::vector<std::uint16_t> checkpoint_active_models_;
+  std::vector<std::uint16_t> checkpoint_presentation_models_;
+  std::vector<std::uint16_t> checkpoint_terrain_models_;
   std::vector<LegacyWorldSectionColorsBridgeState>
       checkpoint_legacy_world_vertex_colors_;
   std::optional<WeaponId> checkpoint_pending_equipped_weapon_;

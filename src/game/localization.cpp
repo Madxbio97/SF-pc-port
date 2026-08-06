@@ -1736,9 +1736,6 @@ std::string localizeTextCopy(std::string_view english) {
 
 std::optional<std::string_view>
 completeGameplayTextSource(std::string_view observed) noexcept {
-  if (!russianLanguageActive()) {
-    return std::nullopt;
-  }
   const auto normalized = normalizeMissionText(observed);
   // Short prefixes such as "NO" or "S" are ambiguous with ordinary HUD
   // text. Retail has already shown enough of a status to identify it safely
@@ -1768,6 +1765,7 @@ completeGameplayTextSource(std::string_view observed) noexcept {
       std::string_view{"Scope Pwr On"},
       std::string_view{"No Target Available"},
       std::string_view{"Mission Parameter Failed"},
+      std::string_view{"Mission Failed"},
       std::string_view{"Playing on HARD difficulty"},
       std::string_view{"Mission Objective Failed"},
       std::string_view{"Sniper Rifle"},

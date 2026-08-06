@@ -1463,6 +1463,28 @@ bool GameplaySession::applyCampaignCarryState(
   return !legacy_runtime_faulted_;
 }
 
+bool GameplaySession::applyRetryInventoryState(
+    const CampaignCarryState &state) noexcept {
+  if (!legacy_first_mission_ || !validCampaignCarry(state) ||
+      !legacy_first_mission_->applyRetryInventoryState(state)) {
+    return false;
+  }
+  // The checkpoint may have been captured mid-switch. Its queued retail tape
+  // transaction belongs to the old checkpoint inventory and must not replace
+  // the post-checkpoint weapon restored above on the next guest tick.
+  pending_equipped_weapon_.reset();
+  pending_guest_weapon_requests_.clear();
+  pending_guest_weapon_.reset();
+  pending_guest_weapon_steps_.clear();
+  guest_weapon_in_flight_direction_ = 0;
+  guest_weapon_in_flight_expected_.reset();
+  pending_guest_weapon_menu_ = false;
+  guest_quick_weapon_pending_ = false;
+  legacy_last_synced_guest_frame_.reset();
+  syncLegacyGameplayBridge();
+  return !legacy_runtime_faulted_;
+}
+
 bool GameplaySession::activateRetailAllWeaponsCheat() noexcept {
   if (!legacy_first_mission_ ||
       !legacy_first_mission_->activateRetailAllWeaponsCheat()) {
@@ -1855,7 +1877,8 @@ bool GameplaySession::restartCheckpoint() {
   player_controller_ = checkpoint_player_controller_;
   current_room_ = checkpoint_room_;
   active_models_ = checkpoint_active_models_;
-  rebuildPresentationModels(true);
+  presentation_models_ = checkpoint_presentation_models_;
+  terrain_models_ = checkpoint_terrain_models_;
   legacy_world_vertex_colors_ = checkpoint_legacy_world_vertex_colors_;
   hud_ = checkpoint_hud_;
   object_health_ = checkpoint_object_health_;
@@ -1986,6 +2009,8 @@ void GameplaySession::captureCheckpoint() {
   checkpoint_player_controller_ = player_controller_;
   checkpoint_room_ = current_room_;
   checkpoint_active_models_ = active_models_;
+  checkpoint_presentation_models_ = presentation_models_;
+  checkpoint_terrain_models_ = terrain_models_;
   checkpoint_legacy_world_vertex_colors_ = legacy_world_vertex_colors_;
   checkpoint_hud_ = hud_;
   checkpoint_last_shot_ = last_shot_;

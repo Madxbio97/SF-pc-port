@@ -246,10 +246,6 @@ makeAgentMissionHudMeters(std::uint32_t mission_index,
   };
 
   switch (mission_index) {
-  case 1U:
-    append(AgentMissionHudMeterKind::bomb_technician_health,
-           state.bomb_technician_health);
-    break;
   case 2U:
     append(AgentMissionHudMeterKind::aramov_escape, state.aramov_escape);
     break;
@@ -257,9 +253,6 @@ makeAgentMissionHudMeters(std::uint32_t mission_index,
     append(AgentMissionHudMeterKind::bomb_detonation, state.bomb_detonation);
     append(AgentMissionHudMeterKind::girdeux_tank_damage,
            state.girdeux_tank_damage);
-    break;
-  case 5U:
-    append(AgentMissionHudMeterKind::suspicion, state.suspicion);
     break;
   case 6U:
     append(AgentMissionHudMeterKind::phagan_health, state.phagan_health);

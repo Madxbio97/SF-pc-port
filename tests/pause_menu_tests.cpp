@@ -1191,6 +1191,10 @@ void testCompoundRussianMenuLocalization() {
   require(objective_failed != "Mission Objective Failed");
   require(sf::game::localizeTextCopy("MISSION OBJECTIVE FAILED") ==
           objective_failed);
+  const auto mission_failed = sf::game::localizeTextCopy("Mission Failed");
+  require(mission_failed ==
+          vit(u8"\u041c\u0418\u0421\u0421\u0418\u042f \u041f\u0420\u041e\u0412\u0410\u041b\u0415\u041d\u0410"));
+  require(sf::game::localizeTextCopy("MISSION FAILED") == mission_failed);
   require(sf::game::completeGameplayTextSource("Scope Pwr O") ==
           std::optional<std::string_view>{"Scope Pwr On"});
   require(sf::game::completeGameplayTextSource("No Target Avail") ==
@@ -1199,6 +1203,14 @@ void testCompoundRussianMenuLocalization() {
           std::optional<std::string_view>{"Mission Parameter Failed"});
   require(sf::game::completeGameplayTextSource("MISSION OBJECTIVE FAI") ==
           std::optional<std::string_view>{"Mission Objective Failed"});
+  require(sf::game::completeGameplayTextSource("MISSION FAI") ==
+          std::optional<std::string_view>{"Mission Failed"});
+  require(sf::game::completedGameplayTextRequiredInEnglish("Mission Failed") &&
+          !sf::game::completedGameplayTextRequiredInEnglish("Scope Pwr On") &&
+          !sf::game::completedGameplayTextRequiredInEnglish(
+              "No Target Available") &&
+          !sf::game::completedGameplayTextRequiredInEnglish(
+              "Playing on HARD difficulty"));
   require(sf::game::completeGameplayTextSource("Playing on HARD") ==
           std::optional<std::string_view>{"Playing on HARD difficulty"});
   require(!sf::game::completeGameplayTextSource("No"));
@@ -1296,6 +1308,8 @@ void testCompoundRussianMenuLocalization() {
             translated.find('?') == std::string::npos);
   }
   sf::game::setGameLanguage(sf::game::GameLanguage::english);
+  require(sf::game::completeGameplayTextSource("MISSION FAI") ==
+          std::optional<std::string_view>{"Mission Failed"});
 }
 
 void testProofreadRussianCampaignTextIsBuiltIn() {

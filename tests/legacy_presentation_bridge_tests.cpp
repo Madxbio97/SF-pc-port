@@ -1136,6 +1136,32 @@ void testNativeFirstPersonOwnsEveryGuestScreenPrimitive() {
   require(sf::game::legacyGuestSpriteCoversExplParticle(4, 1U, particle_sprite,
                                                         true, true),
           "EXPL slot reuse incorrectly depended on the animated frame");
+  require(
+      sf::game::legacyExplParticleOwnedByGuestSlot(7, 7) &&
+          !sf::game::legacyExplParticleOwnedByGuestSlot(7, 8) &&
+          !sf::game::legacyExplParticleOwnedByGuestSlot(-1, -1),
+      "Distant fire ownership accepted an unrelated or unbound guest slot");
+  require(
+      sf::game::legacyDistantFireEmitterAllowed(true, true, true, false, false,
+                                                7, false) &&
+          sf::game::legacyDistantFireEmitterAllowed(true, true, true, false,
+                                                    true, 7, false) &&
+          sf::game::legacyDistantFireEmitterAllowed(true, false, false, true,
+                                                    false, 7, false) &&
+          !sf::game::legacyDistantFireEmitterAllowed(false, true, true, false,
+                                                     false, 7, false) &&
+          !sf::game::legacyDistantFireEmitterAllowed(true, false, true, false,
+                                                     false, 7, false) &&
+          !sf::game::legacyDistantFireEmitterAllowed(true, false, false, true,
+                                                     true, 7, false) &&
+          !sf::game::legacyDistantFireEmitterAllowed(true, true, false, false,
+                                                     false, 7, false) &&
+          !sf::game::legacyDistantFireEmitterAllowed(true, true, true, false,
+                                                     false, -1, false) &&
+          !sf::game::legacyDistantFireEmitterAllowed(true, true, true, false,
+                                                     false, 7, true),
+      "Authored CFIRE fallback lost the guest-resident no-EXPL case or escaped "
+      "its script activation and retail ownership guards");
 
   sf::game::LegacyGuestRawPacketBridgeState particle_packet;
   particle_packet.effect_particle = 3;

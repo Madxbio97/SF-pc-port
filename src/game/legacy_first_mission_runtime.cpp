@@ -589,6 +589,47 @@ bool LegacyFirstMissionRuntime::applyCampaignCarryState(
   }
 }
 
+bool LegacyFirstMissionRuntime::applyRetryInventoryState(
+    const CampaignCarryState &state) noexcept {
+  if (!ready_ || finished_ || faulted_ || !vm_ || !validCampaignCarry(state) ||
+      !missionBridge()) {
+    return false;
+  }
+  try {
+    const auto inventory =
+        mergeRetryInventoryState(missionBridge()->inventory, state);
+    const auto snapshot = vm_->captureSnapshot();
+    const auto previous_frame = presentation_frame_;
+    const auto previous_sequence = presentation_sequence_;
+    const auto rollback = [&] {
+      const auto restored = vm_->restoreSnapshot(snapshot);
+      presentation_frame_ = previous_frame;
+      presentation_sequence_ = previous_sequence;
+      return restored;
+    };
+    try {
+      // A retry is not a new campaign baseline. Restore only the ordinary
+      // weapon table over the checkpoint VM and leave health, mission-local
+      // items, initial_snapshot_ and checkpoint_ untouched.
+      if (!vm_->writeHostInventoryState(inventory) ||
+          !publishPresentationFrame()) {
+        if (!rollback()) {
+          markFault();
+        }
+        return false;
+      }
+      return true;
+    } catch (...) {
+      if (!rollback()) {
+        markFault();
+      }
+      return false;
+    }
+  } catch (...) {
+    return false;
+  }
+}
+
 bool LegacyFirstMissionRuntime::consumeCheckpointCommit() noexcept {
   const bool committed = checkpoint_commit_pending_ && presentation_frame_ &&
                          presentation_frame_->contains(

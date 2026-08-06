@@ -19,6 +19,7 @@
 #include "sf/game/effects.hpp"
 #include "sf/game/gameplay.hpp"
 #include "sf/game/hud.hpp"
+#include "sf/game/legacy_first_mission_runtime.hpp"
 #include "sf/game/localization.hpp"
 #include "sf/game/mission.hpp"
 #include "sf/game/mission_start.hpp"
@@ -938,10 +939,27 @@ void testLegacyDynamicPresentationPolicy() {
               sf::game::legacyLetterboxPresentationActive(true, true) &&
               !sf::game::legacyLetterboxPresentationActive(false, false),
           "Letterbox ignored the mission intro or exact retail viewport state");
-  require(sf::game::legacyGameplayHudPresentationActive(false, false) &&
-              !sf::game::legacyGameplayHudPresentationActive(false, true) &&
-              !sf::game::legacyGameplayHudPresentationActive(true, false),
-          "Gameplay HUD did not follow cinematic/radio presentation state");
+  require(sf::game::legacyGameplayHudPresentationActive(false, false, false) &&
+              !sf::game::legacyGameplayHudPresentationActive(false, true,
+                                                              false) &&
+              !sf::game::legacyGameplayHudPresentationActive(true, false,
+                                                              false) &&
+              sf::game::legacyGameplayHudPresentationActive(false, true,
+                                                             true) &&
+              !sf::game::legacyGameplayHudPresentationActive(true, true, true),
+          "Gameplay HUD did not follow cinematic/radio/failure presentation "
+          "state");
+  require(
+      sf::game::legacyTerminalFailureFrameSubmissionRequired(true, 42U, 41U) &&
+          !sf::game::legacyTerminalFailureFrameSubmissionRequired(false, 42U,
+                                                                  41U) &&
+          !sf::game::legacyTerminalFailureFrameSubmissionRequired(true, 0U,
+                                                                  0U) &&
+          !sf::game::legacyTerminalFailureFrameSubmissionRequired(true, 42U,
+                                                                  42U) &&
+          !sf::game::legacyTerminalFailureFrameSubmissionRequired(true, 41U,
+                                                                  42U),
+      "Terminal failure frame was skipped, repeated, or regressed");
   const auto entering_bars = sf::game::legacyRetailViewportBars(2.0, 236.0);
   const auto closed_bars = sf::game::legacyRetailViewportBars(40.0, 160.0);
   const auto open_bars = sf::game::legacyRetailViewportBars(0.0, 240.0);
@@ -1165,6 +1183,57 @@ void testGameplayCheckpointRestorePolicy() {
                 runtime_faulted) == expected,
             "Gameplay checkpoint accepted an incoherent guest runtime");
   }
+
+  constexpr auto weaponBit = [](sf::game::WeaponId weapon) {
+    return std::uint32_t{1U} << static_cast<unsigned int>(weapon);
+  };
+  constexpr auto weaponSlot = [](sf::game::WeaponId weapon) {
+    return static_cast<std::size_t>(weapon);
+  };
+  sf::game::LegacyInventoryBridgeState restored{};
+  restored.current_weapon =
+      static_cast<std::uint8_t>(sf::game::WeaponId::key_card);
+  restored.owned_weapons =
+      weaponBit(sf::game::WeaponId::unarmed) |
+      weaponBit(sf::game::WeaponId::pistol_9mm) |
+      weaponBit(sf::game::WeaponId::key_card);
+  restored.magazines[weaponSlot(sf::game::WeaponId::pistol_9mm)] = 7U;
+  restored.reserves[weaponSlot(sf::game::WeaponId::pistol_9mm)] = 21U;
+  restored.magazines[weaponSlot(sf::game::WeaponId::key_card)] = 3U;
+  restored.reserves[weaponSlot(sf::game::WeaponId::key_card)] = 9U;
+
+  sf::game::CampaignCarryState retry{};
+  retry.current_weapon =
+      static_cast<std::uint8_t>(sf::game::WeaponId::m_16);
+  retry.owned_weapons = weaponBit(sf::game::WeaponId::unarmed) |
+                          weaponBit(sf::game::WeaponId::m_16);
+  retry.magazines[weaponSlot(sf::game::WeaponId::m_16)] = 17U;
+  retry.reserves[weaponSlot(sf::game::WeaponId::m_16)] = 83U;
+
+  const auto merged = sf::game::mergeRetryInventoryState(restored, retry);
+  require((merged.owned_weapons & sf::game::campaign_persistent_weapon_mask) ==
+                  retry.owned_weapons &&
+              (merged.owned_weapons &
+               weaponBit(sf::game::WeaponId::key_card)) != 0U &&
+              merged.current_weapon == restored.current_weapon &&
+              merged.magazines[weaponSlot(sf::game::WeaponId::m_16)] == 17U &&
+              merged.reserves[weaponSlot(sf::game::WeaponId::m_16)] == 83U &&
+              merged.magazines[weaponSlot(sf::game::WeaponId::pistol_9mm)] ==
+                  0U &&
+              merged.reserves[weaponSlot(sf::game::WeaponId::pistol_9mm)] ==
+                  0U &&
+              merged.magazines[weaponSlot(sf::game::WeaponId::key_card)] ==
+                  3U &&
+              merged.reserves[weaponSlot(sf::game::WeaponId::key_card)] == 9U,
+          "Retry inventory merge lost mission-local items or retained stale "
+          "regular weapon state");
+  auto restored_regular = restored;
+  restored_regular.current_weapon =
+      static_cast<std::uint8_t>(sf::game::WeaponId::pistol_9mm);
+  const auto merged_regular =
+      sf::game::mergeRetryInventoryState(restored_regular, retry);
+  require(merged_regular.current_weapon == retry.current_weapon,
+          "Retry inventory did not restore the latest ordinary weapon");
 }
 
 void testPoliceLightbarFrames() {
@@ -4124,6 +4193,29 @@ void testWorldChunkAppearance() {
   sf::platform::WorldChunkAppearance portal_jitter;
   constexpr std::array room_zero{std::uint16_t{0U}};
   constexpr std::array room_one{std::uint16_t{1U}};
+  sf::platform::WorldChunkAppearance restored_appearance;
+  restored_appearance.prime(room_zero, room_one, 10.0, 20.0);
+  require(restored_appearance.isActive(0U) &&
+              restored_appearance.isWarm(1U) &&
+              restored_appearance.revealProgress(0U) == 1.0 &&
+              restored_appearance.revealProgress(1U) == 0.0 &&
+              std::abs(restored_appearance.revealCoordinate(1U, 10.0, 120.0) -
+                       100.0) < 0.000001,
+          "Checkpoint restore exposed optional lookahead geometry");
+  restored_appearance.advance(room_zero, 1.0 / 60.0, room_one, 10.0, 20.0);
+  const auto restored_warm_progress =
+      restored_appearance.revealProgress(1U);
+  require(restored_appearance.revealProgress(0U) == 1.0 &&
+              restored_warm_progress > 0.0 &&
+              restored_warm_progress <
+                  sf::platform::world_chunk_prefetch_lead,
+          "Checkpoint lookahead did not resume its normal gradual wave");
+  restored_appearance.advance(
+      room_zero, sf::platform::world_chunk_fade_seconds, room_one, 10.0,
+      20.0);
+  require(restored_appearance.revealProgress(1U) ==
+              sf::platform::world_chunk_prefetch_lead,
+          "Checkpoint lookahead did not converge to its presentation lead");
   portal_jitter.advance(room_zero, 1.0 / 60.0);
   portal_jitter.advance(room_one, 1.0 / 60.0);
   const auto cold_room = portal_jitter.depthCueFloorQ12(1U);

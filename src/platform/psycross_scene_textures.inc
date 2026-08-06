@@ -2024,8 +2024,48 @@ private:
   };
 
   [[nodiscard]] static bool
+  needsAuthoredDistantFire(const game::GameplaySession &gameplay) noexcept {
+    if (!gameplay.legacyEffectParticlesAuthoritative()) {
+      return false;
+    }
+
+    const auto guest_slots = gameplay.legacyGuestSlotsBySceneObject();
+    for (auto object_index = std::size_t{};
+         object_index < gameplay.objects().size(); ++object_index) {
+      if (object_index > std::numeric_limits<std::uint16_t>::max()) {
+        break;
+      }
+      const auto scene_index = static_cast<std::uint16_t>(object_index);
+      const auto scene_active =
+          std::ranges::find(gameplay.activeObjects(), scene_index) !=
+          gameplay.activeObjects().end();
+      if (object_index >= guest_slots.size() || guest_slots[object_index] < 0 ||
+          gameplay.objectDestroyed(scene_index) ||
+          (gameplay.objectInitiallyHidden(scene_index) && !scene_active) ||
+          gameplay.authoredObjectRooms(scene_index).empty()) {
+        continue;
+      }
+
+      const auto &object = gameplay.objects()[object_index];
+      if (object.model >= gameplay.objectModels().size()) {
+        continue;
+      }
+      if (std::holds_alternative<game::ObjectFireEmitter>(
+              gameplay.objectModels()[object.model].geometry)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  [[nodiscard]] static bool
   needsDynamicFire(const game::GameplaySession &gameplay) noexcept {
-    return !gameplay.legacyExplParticles().empty() ||
+    // activeObjects is guest-object residency, not proof that an EXPL flame is
+    // live. World-chunk appearance is unavailable to the texture planner, so
+    // pre-reside SPFX for every eligible authored CFIRE and avoid a same-frame
+    // texture race when its native fallback becomes visible.
+    return needsAuthoredDistantFire(gameplay) ||
+           !gameplay.legacyExplParticles().empty() ||
            !gameplay.legacyPark2FlamethrowerRibbons().empty() ||
            gameplay.hud().inventory().current() ==
                game::WeaponId::flamethrower ||

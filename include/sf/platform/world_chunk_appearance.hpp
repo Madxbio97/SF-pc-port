@@ -60,6 +60,42 @@ public:
     initialized_ = false;
   }
 
+  void prime(std::span<const std::uint16_t> active_models,
+             std::span<const std::uint16_t> warm_models = {},
+             double observer_x = 0.0, double observer_z = 0.0) noexcept {
+    reset();
+    const auto valid_observer =
+        std::isfinite(observer_x) && std::isfinite(observer_z);
+    for (const auto model : active_models) {
+      if (model >= active_.size()) {
+        continue;
+      }
+      active_[model] = true;
+      visibility_[model] = 1.0;
+      reveal_origin_x_[model] = valid_observer ? observer_x : 0.0;
+      reveal_origin_z_[model] = valid_observer ? observer_z : 0.0;
+      reveal_origin_valid_[model] = true;
+    }
+    for (const auto model : warm_models) {
+      if (model >= warm_.size() || active_[model]) {
+        continue;
+      }
+      warm_[model] = true;
+      // A discontinuity (checkpoint restore, retry or movie return) must not
+      // reveal optional lookahead geometry before the first coherent scene
+      // frame.  The texture streamer can admit several connected rooms in
+      // one rebuild; priming all of them at the lead value made those rooms
+      // appear as separate depth layers after a failure.  Active terrain is
+      // restored immediately above, while lookahead resumes its normal wave
+      // from the authored far colour on subsequent presentation frames.
+      visibility_[model] = 0.0;
+      reveal_origin_x_[model] = valid_observer ? observer_x : 0.0;
+      reveal_origin_z_[model] = valid_observer ? observer_z : 0.0;
+      reveal_origin_valid_[model] = true;
+    }
+    initialized_ = true;
+  }
+
   void advance(std::span<const std::uint16_t> active_models,
                double delta_seconds,
                std::span<const std::uint16_t> warm_models = {},

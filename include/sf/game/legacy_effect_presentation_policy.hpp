@@ -45,4 +45,22 @@ namespace sf::game {
   return false;
 }
 
+[[nodiscard]] constexpr bool legacyExplParticleOwnedByGuestSlot(
+    std::int16_t particle_source_slot,
+    std::int32_t scene_guest_slot) noexcept {
+  return scene_guest_slot >= 0 && particle_source_slot == scene_guest_slot;
+}
+
+[[nodiscard]] constexpr bool legacyDistantFireEmitterAllowed(
+    bool bridge_authoritative, bool scene_active,
+    bool authored_owner_active, bool authored_owner_warm,
+    bool authored_initially_hidden, std::int32_t scene_guest_slot,
+    bool has_live_owned_particle) noexcept {
+  const auto lifecycle_presented =
+      (authored_owner_active && scene_active) ||
+      (authored_owner_warm && !authored_initially_hidden);
+  return bridge_authoritative && lifecycle_presented && scene_guest_slot >= 0 &&
+         !has_live_owned_particle;
+}
+
 } // namespace sf::game

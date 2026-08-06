@@ -41,6 +41,18 @@ SceneViewerResult PsyCrossSceneViewer::run(
       PsyX_Log_Error("Retail weak-enemies cheat activation failed\n");
     }
   };
+  const auto restart_checkpoint_with_retry_inventory = [&] {
+    const auto retry_inventory = latest_campaign_carry;
+    if (!gameplay.restartCheckpoint()) {
+      return false;
+    }
+    if (retry_inventory &&
+        !gameplay.applyRetryInventoryState(*retry_inventory)) {
+      return false;
+    }
+    latest_campaign_carry = gameplay.campaignCarryState();
+    return true;
+  };
   apply_gameplay_modes();
   auto gameplay_audio = preloaded_audio
                             ? std::move(preloaded_audio)
@@ -81,6 +93,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
 
   std::vector<OT_TAG> ordering_table(ordering_table_size);
   std::vector<OT_TAG> prefetch_ordering_table(ordering_table_size);
+  std::vector<OT_TAG> prefetch_fire_ordering_table(ordering_table_size);
   std::vector<OT_TAG> optic_trail_ordering_table(ordering_table_size);
   std::vector<OT_TAG> optic_subject_ordering_table(ordering_table_size);
   std::vector<OT_TAG> shadow_ordering_table(ordering_table_size);
@@ -341,7 +354,11 @@ SceneViewerResult PsyCrossSceneViewer::run(
       scrim_copy_edges.observe(gameplay.legacyPresentationFrame());
     }
     textures.invalidate();
-    textures.ensure(gameplay);
+    // Rebuild against the exact first frame that will be submitted.  Using
+    // an empty transient set here and adding retained effects in draw() made
+    // optional lookahead admission change between restore and presentation.
+    textures.ensure(gameplay, weapon_presentation_edges.sprites(),
+                    glass_shatter.shards());
     effect_textures.restore();
     hud_textures.invalidate();
     police_lightbar_animation.invalidate();
@@ -349,6 +366,18 @@ SceneViewerResult PsyCrossSceneViewer::run(
       retail_scrim_animation.restore(
           gameplay, current_render_presentation.scrim, textures);
     }
+  };
+  const auto prime_checkpoint_world_chunks = [&] {
+    const auto prefetched = gameplay.prefetchedModels();
+    auto admitted_count = std::size_t{};
+    while (admitted_count < prefetched.size() &&
+           textures.worldLookaheadAdmitted(prefetched[admitted_count])) {
+      ++admitted_count;
+    }
+    world_chunk_appearance.prime(
+        gameplay.presentationModels(), prefetched.first(admitted_count),
+        current_render_presentation.player.x,
+        current_render_presentation.player.z);
   };
   const auto draw_gameplay_frame = [&](unsigned int effect_updates) {
     glass_shatter.observe(gameplay, current_render_presentation);
@@ -490,6 +519,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
         optic_trail_ordering_table, optic_subject_ordering_table,
         shadow_ordering_table, scrim_ordering_table,
         scanner_xray_ordering_table, guest_overlay_ordering_table,
+        prefetch_fire_ordering_table,
         fire_ordering_table, optic_history, actor_shadow_cache,
         dynamic_light_scratch, world_lighting_cache, local_scene_lighting_cache,
         world_chunk_appearance, weapon_effects_scratch, hmd_pose_scratch,
@@ -516,6 +546,16 @@ SceneViewerResult PsyCrossSceneViewer::run(
     // prefetched chunk still self-occludes instead of exposing interiors.
     GR_ClearDepthBuffer();
     DrawOTag(reinterpret_cast<u_long *>(&prefetch_ordering_table.back()));
+    GR_EnableSceneFog(0);
+    GR_SetBlendMode(BM_ADD);
+    GR_SetDepthState(1, 0);
+    GR_SetPolygonOffset(0.0F, -1.0F);
+    DrawOTag(
+        reinterpret_cast<u_long *>(&prefetch_fire_ordering_table.back()));
+    GR_SetPolygonOffset(0.0F, 0.0F);
+    GR_SetDepthState(1, 1);
+    GR_SetBlendMode(BM_NONE);
+    GR_EnableSceneFog(1);
     GR_ClearDepthBuffer();
     GR_SetDepthState(1, 1);
     DrawOTag(reinterpret_cast<u_long *>(&ordering_table.back()));
@@ -614,6 +654,13 @@ SceneViewerResult PsyCrossSceneViewer::run(
                              presentation.retail_environment_active);
     }
     drawGameBrightness(pause_settings.brightness);
+    const auto map_fade = gameplay.mapFade();
+    if (gameplay.missionFailed()) {
+      // Retail failure FONT/TEXT is composited over its authored scene fade.
+      // Drawing this TILE after the HUD hid the final type-on glyphs even
+      // though the guest animation and sound completed normally.
+      drawMapFade(map_fade);
+    }
     // Retail owns two independent transitions on the same script edge. Bars
     // follow the live 240 <-> 160 viewport RECT; the normal HUD follows its
     // own -1..13 FUN_800410d0 phase. XA is audio only and never gates either.
@@ -642,7 +689,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
     constexpr double hidden_hud_threshold = 0.001;
     const auto hud_fully_hidden = hud_visibility <= hidden_hud_threshold;
     const auto gameplay_hud_active = game::legacyGameplayHudPresentationActive(
-        gameplay.missionComplete(), hud_fully_hidden);
+        gameplay.missionComplete(), hud_fully_hidden, gameplay.missionFailed());
     if (gameplay_hud_active ||
         (!gameplay.missionComplete() && presented_first_person_aim)) {
       drawGameplayHud(
@@ -705,7 +752,9 @@ SceneViewerResult PsyCrossSceneViewer::run(
     if (gameplay.missionComplete()) {
       drawMissionCompleteOverlay(hud_textures);
     }
-    drawMapFade(gameplay.mapFade());
+    if (!gameplay.missionFailed()) {
+      drawMapFade(map_fade);
+    }
     return stats;
   };
   static_cast<void>(
@@ -1280,9 +1329,9 @@ SceneViewerResult PsyCrossSceneViewer::run(
       }
       case game::PauseCommandType::restart_checkpoint:
         pause_settings = pause_menu.settings();
-        if (!gameplay.restartCheckpoint()) {
+        if (!restart_checkpoint_with_retry_inventory()) {
           PsyX_Log_Error(
-              "Checkpoint restore rejected incoherent guest state\n");
+              "Checkpoint or retry inventory restore was rejected\n");
           return SceneViewerResult{previous_buttons,
                                    SceneExitReason::return_to_title};
         }
@@ -1310,10 +1359,12 @@ SceneViewerResult PsyCrossSceneViewer::run(
         clear_latched_gameplay_input();
         log_next_frame = true;
         restore_gameplay_textures(true);
+        prime_checkpoint_world_chunks();
         continue;
       case game::PauseCommandType::restart_mission:
         pause_settings = pause_menu.settings();
         gameplay.reset();
+        latest_campaign_carry = gameplay.campaignCarryState();
         apply_gameplay_modes();
         discard_gameplay_audio("pause-restart-mission");
         ui_audio.reset();
@@ -1511,9 +1562,30 @@ SceneViewerResult PsyCrossSceneViewer::run(
     // intentionally retired the old runtime, so another audio slice would be
     // misclassified as a fatal clock error and return to the title screen.
     if (gameplay.failureRestartRequested()) {
-      if (!gameplay.restartCheckpoint()) {
+      const auto terminal_presentation_sequence =
+          gameplay.legacyPresentationSequence();
+      if (gameplay.legacyRenderCommandsAuthoritative() &&
+          (terminal_presentation_sequence == 0U ||
+           terminal_presentation_sequence < submitted_presentation_sequence)) {
         PsyX_Log_Error(
-            "Failure restart rejected incoherent guest checkpoint\n");
+            "Guest renderer/UI command sequence is missing or regressed\n");
+        return SceneViewerResult{previous_buttons,
+                                 SceneExitReason::return_to_title};
+      }
+      if (game::legacyTerminalFailureFrameSubmissionRequired(
+              true, terminal_presentation_sequence,
+              submitted_presentation_sequence)) {
+        // State 2 has retired the VM/audio clock, but its immutable final
+        // FONT/TEXT + fade snapshot still owns one presentation. Submit it
+        // before replacing the timeline with the checkpoint.
+        static_cast<void>(
+            draw_gameplay_frame(simulation_updates_this_frame));
+        submitted_presentation_sequence = terminal_presentation_sequence;
+        end_presented_frame();
+      }
+      if (!restart_checkpoint_with_retry_inventory()) {
+        PsyX_Log_Error(
+            "Failure checkpoint or retry inventory restore was rejected\n");
         return SceneViewerResult{previous_buttons,
                                  SceneExitReason::return_to_title};
       }
@@ -1534,6 +1606,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
       clear_latched_gameplay_input();
       log_next_frame = true;
       restore_gameplay_textures(true);
+      prime_checkpoint_world_chunks();
       PsyX_Log_Info("Failure checkpoint restored; gameplay resumed\n");
       continue;
     }
