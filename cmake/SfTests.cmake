@@ -18,6 +18,8 @@ if(SF_BUILD_TESTS)
     sf_add_unit_test(sf_tests tests/test_main.cpp LIBRARIES sf::game)
     sf_add_unit_test(sf_pause_menu_tests tests/pause_menu_tests.cpp
         LIBRARIES sf::game)
+    sf_add_unit_test(sf_controller_bindings_tests
+        tests/controller_bindings_tests.cpp LIBRARIES sf::game)
     sf_add_unit_test(sf_campaign_tests tests/campaign_tests.cpp
         LIBRARIES sf::game)
     sf_add_unit_test(sf_combat_ai_tests tests/combat_ai_tests.cpp

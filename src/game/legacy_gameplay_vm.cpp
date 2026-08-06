@@ -990,6 +990,7 @@ void LegacyGameplayVm::bindPsxLibcStringCalls() {
 
 void LegacyGameplayVm::bindPsxVideoTimingCall() {
   constexpr std::uint32_t vsync_address = 0x800e3f54U;
+  constexpr std::uint32_t vsync_query = 0xffffffffU;
   constexpr std::uint32_t retrace_counter_address = 0x8010f378U;
   bindHostCall(vsync_address, [this](LegacyHostCallContext &context) {
     std::uint32_t counter{};
@@ -998,6 +999,10 @@ void LegacyGameplayVm::bindPsxVideoTimingCall() {
       return;
     }
     const auto mode = std::bit_cast<std::int32_t>(context.argument(0));
+    if (context.argument(0) != vsync_query) {
+      // PsyQ samples the table installed by PadSetAct at the VBlank boundary.
+      refreshPadMotorState();
+    }
     if (mode < 0) {
       // VSync(-1) is a pure query. Presented guest frames advance the
       // software VBlank counter explicitly at the renderer boundary.
@@ -1361,6 +1366,16 @@ void LegacyGameplayVm::bindSyphonFilterUsaV11Park2FlameLosHook(
 }
 
 void LegacyGameplayVm::bindSyphonFilterUsaV11BootstrapPlatformCalls() {
+  // The native mission bootstrap intentionally skips the retail controller
+  // initialization at FUN_800d7b48. On PS1 that routine registers this exact
+  // two-byte live actuator table with PadSetAct. Observe the authored table
+  // up front so later gameplay writes reach the physical controller even
+  // when the skipped frontend never calls PadSetAct.
+  constexpr std::uint32_t retail_pad_motor_table = 0x80116888U;
+  constexpr std::uint32_t retail_pad_motor_count = 2U;
+  pad_motor_buffer_address_ = retail_pad_motor_table;
+  pad_motor_buffer_length_ = retail_pad_motor_count;
+  refreshPadMotorState();
   bindSyphonFilterUsaV11PlatformCalls();
   bindSyphonFilterUsaV11Park2FlameLosHook();
   bindSyphonFilterUsaV11HostAimRayHook();
@@ -1426,6 +1441,24 @@ void LegacyGameplayVm::bindSyphonFilterUsaV11BootstrapPlatformCalls() {
   for (const auto address : success_result_calls) {
     bind_success_result(address);
   }
+  constexpr std::uint32_t pad_set_act_address = 0x800ff894U;
+  bindHostCall(pad_set_act_address, [this](LegacyHostCallContext &context) {
+    constexpr std::uint32_t player_pad = 0U;
+    constexpr std::size_t minimum_motor_count = 2U;
+    std::array<std::byte, minimum_motor_count> motors{};
+    const auto table = context.argument(1U);
+    const auto length = context.argument(2U);
+    if (context.argument(0U) == player_pad && table != 0U &&
+        length >= motors.size() && context.readBytes(table, motors)) {
+      // PadSetAct installs a live guest table; it is not a one-shot copy.
+      pad_motor_buffer_address_ = table;
+      pad_motor_buffer_length_ = length;
+      refreshPadMotorState(true);
+    }
+    // This hook is observational. The SDK still owns actuator alignment,
+    // return values and all guest-side PAD state.
+    context.continueGuestInstruction();
+  });
   constexpr std::uint32_t clear_ordering_table_reverse_address = 0x800e54ecU;
   bindHostCall(
       clear_ordering_table_reverse_address, [](LegacyHostCallContext &context) {
@@ -2074,8 +2107,7 @@ void LegacyGameplayVm::bindSyphonFilterUsaV11AgentMissionNpcSpawnHook(
   constexpr std::uint32_t npc_init_entry = 0x8005805cU;
   constexpr std::uint32_t npc_init_entry_instruction = 0x27bdffc8U;
   constexpr std::uint32_t npc_init_entry_next_instruction = 0xafb1002cU;
-  bindHostCall(npc_init_entry, [this, profile](
-                                             LegacyHostCallContext &context) {
+  bindHostCall(npc_init_entry, [this, profile](LegacyHostCallContext &context) {
     // Patch the exact record before FUN_8005805c reads and caches its weapon
     // descriptor, then retire the original retail prologue instruction.
     context.continueGuestInstruction();
@@ -2089,8 +2121,7 @@ void LegacyGameplayVm::bindSyphonFilterUsaV11AgentMissionNpcSpawnHook(
     std::uint32_t records{};
     std::uint32_t count{};
     const auto instance = context.argument(0U); // a0
-    if (!agent_difficulty_ ||
-        !context.read32(npc_init_entry, boundary_word) ||
+    if (!agent_difficulty_ || !context.read32(npc_init_entry, boundary_word) ||
         boundary_word != npc_init_entry_instruction ||
         !context.read32(npc_init_entry + 4U, delay_word) ||
         delay_word != npc_init_entry_next_instruction ||
@@ -2104,9 +2135,9 @@ void LegacyGameplayVm::bindSyphonFilterUsaV11AgentMissionNpcSpawnHook(
       return;
     }
 
-    const auto record64 = static_cast<std::uint64_t>(records) +
-                          static_cast<std::uint64_t>(kravitch_slot) *
-                              object_record_stride;
+    const auto record64 =
+        static_cast<std::uint64_t>(records) +
+        static_cast<std::uint64_t>(kravitch_slot) * object_record_stride;
     if (record64 > std::numeric_limits<std::uint32_t>::max()) {
       return;
     }
@@ -2379,157 +2410,149 @@ void LegacyGameplayVm::bindSyphonFilterUsaV11AgentEnemyAimHooks(
   }
 
   if (profile.kravitch_post_shot_boundary != 0U) {
-    bindHostCall(
-        profile.kravitch_post_shot_boundary,
-        [this, profile](LegacyHostCallContext &context) {
-          // Keep FUN_800630c0's SB and all retail firing/LOS decisions. Only
-          // shorten the pause it already produced for the exact live Agent
-          // Kravitch, then make the next retail route decision eligible.
-          context.continueGuestInstruction();
-          constexpr std::size_t cooldown_register = 3U; // v1
-          constexpr std::size_t instance_register = 16U; // s0
-          constexpr std::size_t weapon_register = 17U;   // s1
-          constexpr std::size_t ai_register = 18U;       // s2
-          constexpr std::uint16_t kravitch_slot = 174U;
-          constexpr std::uint32_t kravitch_definition = 53U;
-          constexpr std::uint8_t shotgun = 7U;
-          constexpr std::uint32_t object_record_stride = 0x4cU;
-          constexpr std::uint32_t object_definition_stride = 0x14U;
-          constexpr std::uint32_t instance_slot_offset = 0x02U;
-          constexpr std::uint32_t instance_target_offset = 0x14U;
-          constexpr std::uint32_t instance_health_offset = 0x18U;
-          constexpr std::uint32_t instance_ai_offset = 0x1cU;
-          constexpr std::uint32_t health_value_offset = 0x08U;
-          constexpr std::uint32_t target_slot_offset = 0U;
-          constexpr std::uint32_t target_flags_offset = 0x04U;
-          constexpr std::uint32_t target_invalid_flag = 0x04U;
-          constexpr std::uint32_t ai_decision_counter_offset = 0x4aU;
-          constexpr std::uint32_t ai_combat_mode_offset = 0x48U;
-          constexpr std::uint32_t record_attributes_offset = 0x24U;
-          constexpr std::uint32_t record_owner_offset = 0x34U;
+    bindHostCall(profile.kravitch_post_shot_boundary, [this, profile](
+                                                          LegacyHostCallContext
+                                                              &context) {
+      // Keep FUN_800630c0's SB and all retail firing/LOS decisions. Only
+      // shorten the pause it already produced for the exact live Agent
+      // Kravitch, then make the next retail route decision eligible.
+      context.continueGuestInstruction();
+      constexpr std::size_t cooldown_register = 3U;  // v1
+      constexpr std::size_t instance_register = 16U; // s0
+      constexpr std::size_t weapon_register = 17U;   // s1
+      constexpr std::size_t ai_register = 18U;       // s2
+      constexpr std::uint16_t kravitch_slot = 174U;
+      constexpr std::uint32_t kravitch_definition = 53U;
+      constexpr std::uint8_t shotgun = 7U;
+      constexpr std::uint32_t object_record_stride = 0x4cU;
+      constexpr std::uint32_t object_definition_stride = 0x14U;
+      constexpr std::uint32_t instance_slot_offset = 0x02U;
+      constexpr std::uint32_t instance_target_offset = 0x14U;
+      constexpr std::uint32_t instance_health_offset = 0x18U;
+      constexpr std::uint32_t instance_ai_offset = 0x1cU;
+      constexpr std::uint32_t health_value_offset = 0x08U;
+      constexpr std::uint32_t target_slot_offset = 0U;
+      constexpr std::uint32_t target_flags_offset = 0x04U;
+      constexpr std::uint32_t target_invalid_flag = 0x04U;
+      constexpr std::uint32_t ai_decision_counter_offset = 0x4aU;
+      constexpr std::uint32_t ai_combat_mode_offset = 0x48U;
+      constexpr std::uint32_t record_attributes_offset = 0x24U;
+      constexpr std::uint32_t record_owner_offset = 0x34U;
 
-          std::uint32_t instruction{};
-          std::uint16_t mission{};
-          if (!agent_difficulty_ ||
-              !context.read32(context.pc(), instruction) ||
-              instruction != profile.kravitch_post_shot_instruction ||
-              !context.read16(profile.mission_index, mission) || mission != 0U ||
-              context.registerValue(weapon_register) != shotgun) {
-            return;
-          }
+      std::uint32_t instruction{};
+      std::uint16_t mission{};
+      if (!agent_difficulty_ || !context.read32(context.pc(), instruction) ||
+          instruction != profile.kravitch_post_shot_instruction ||
+          !context.read16(profile.mission_index, mission) || mission != 0U ||
+          context.registerValue(weapon_register) != shotgun) {
+        return;
+      }
 
-          const auto instance = context.registerValue(instance_register);
-          const auto ai = context.registerValue(ai_register);
-          std::uint16_t instance_slot{};
-          std::uint32_t instance_target{};
-          std::uint32_t health{};
-          std::uint32_t instance_ai{};
-          std::uint16_t health_bits{};
-          std::uint8_t combat_mode{};
-          if (!validGuestRamRange(instance, instance_ai_offset + 4U) ||
-              !context.read16(instance + instance_slot_offset, instance_slot) ||
-              instance_slot != kravitch_slot ||
-              !context.read32(instance + instance_target_offset,
-                              instance_target) ||
-              !context.read32(instance + instance_health_offset, health) ||
-              !context.read32(instance + instance_ai_offset, instance_ai) ||
-              instance_ai != ai ||
-              !validGuestRamRange(health, health_value_offset + 2U) ||
-              !context.read16(health + health_value_offset, health_bits) ||
-              std::bit_cast<std::int16_t>(health_bits) <= 0 ||
-              !validGuestRamRange(ai, ai_decision_counter_offset + 1U) ||
-              !context.read8(ai + ai_combat_mode_offset, combat_mode) ||
-              combat_mode != 2U) {
-            return;
-          }
+      const auto instance = context.registerValue(instance_register);
+      const auto ai = context.registerValue(ai_register);
+      std::uint16_t instance_slot{};
+      std::uint32_t instance_target{};
+      std::uint32_t health{};
+      std::uint32_t instance_ai{};
+      std::uint16_t health_bits{};
+      std::uint8_t combat_mode{};
+      if (!validGuestRamRange(instance, instance_ai_offset + 4U) ||
+          !context.read16(instance + instance_slot_offset, instance_slot) ||
+          instance_slot != kravitch_slot ||
+          !context.read32(instance + instance_target_offset, instance_target) ||
+          !context.read32(instance + instance_health_offset, health) ||
+          !context.read32(instance + instance_ai_offset, instance_ai) ||
+          instance_ai != ai ||
+          !validGuestRamRange(health, health_value_offset + 2U) ||
+          !context.read16(health + health_value_offset, health_bits) ||
+          std::bit_cast<std::int16_t>(health_bits) <= 0 ||
+          !validGuestRamRange(ai, ai_decision_counter_offset + 1U) ||
+          !context.read8(ai + ai_combat_mode_offset, combat_mode) ||
+          combat_mode != 2U) {
+        return;
+      }
 
-          std::uint32_t player{};
-          std::uint16_t player_slot{};
-          std::uint16_t target_slot{};
-          std::uint32_t target_flags{};
-          if (!validGuestRamRange(instance_target, target_flags_offset + 4U) ||
-              !context.read16(instance_target + target_slot_offset,
-                              target_slot) ||
-              !context.read32(instance_target + target_flags_offset,
-                              target_flags) ||
-              (target_flags & target_invalid_flag) != 0U ||
-              !context.read32(profile.player_pointer, player) ||
-              !validGuestRamRange(player, instance_slot_offset + 2U) ||
-              !context.read16(player + instance_slot_offset, player_slot) ||
-              target_slot != player_slot) {
-            return;
-          }
+      std::uint32_t player{};
+      std::uint16_t player_slot{};
+      std::uint16_t target_slot{};
+      std::uint32_t target_flags{};
+      if (!validGuestRamRange(instance_target, target_flags_offset + 4U) ||
+          !context.read16(instance_target + target_slot_offset, target_slot) ||
+          !context.read32(instance_target + target_flags_offset,
+                          target_flags) ||
+          (target_flags & target_invalid_flag) != 0U ||
+          !context.read32(profile.player_pointer, player) ||
+          !validGuestRamRange(player, instance_slot_offset + 2U) ||
+          !context.read16(player + instance_slot_offset, player_slot) ||
+          target_slot != player_slot) {
+        return;
+      }
 
-          std::uint32_t records{};
-          std::uint32_t count{};
-          std::uint32_t definitions{};
-          std::uint32_t definition_count{};
-          if (!context.read32(profile.object_records_pointer, records) ||
-              !context.read32(profile.object_count, count) ||
-              !context.read32(profile.object_definitions_pointer,
-                              definitions) ||
-              !context.read32(profile.object_definition_count,
-                              definition_count) ||
-              count <= kravitch_slot || count > profile.maximum_objects ||
-              definition_count <= kravitch_definition ||
-              definition_count > profile.maximum_definitions) {
-            return;
-          }
-          const auto record64 = static_cast<std::uint64_t>(records) +
-                                static_cast<std::uint64_t>(kravitch_slot) *
-                                    object_record_stride;
-          const auto definition64 =
-              static_cast<std::uint64_t>(definitions) +
-              static_cast<std::uint64_t>(kravitch_definition) *
-                  object_definition_stride;
-          if (record64 > std::numeric_limits<std::uint32_t>::max() ||
-              definition64 > std::numeric_limits<std::uint32_t>::max()) {
-            return;
-          }
-          const auto record = static_cast<std::uint32_t>(record64);
-          const auto definition_address =
-              static_cast<std::uint32_t>(definition64);
-          std::uint32_t definition{};
-          std::uint16_t attributes{};
-          std::uint32_t owner{};
-          std::uint16_t object_class{};
-          std::uint32_t handler{};
-          if (!validGuestRamRange(record, object_record_stride) ||
-              !context.read32(record, definition) ||
-              definition != kravitch_definition ||
-              !context.read16(record + record_attributes_offset, attributes) ||
-              attributes != 0xc107U ||
-              !context.read32(record + record_owner_offset, owner) ||
-              owner != instance ||
-              !validGuestRamRange(definition_address,
-                                  object_definition_stride) ||
-              !context.read16(definition_address, object_class) ||
-              object_class != 1U ||
-              !context.read32(profile.object_handler_table + 4U, handler) ||
-              handler != profile.common_npc_handler) {
-            return;
-          }
+      std::uint32_t records{};
+      std::uint32_t count{};
+      std::uint32_t definitions{};
+      std::uint32_t definition_count{};
+      if (!context.read32(profile.object_records_pointer, records) ||
+          !context.read32(profile.object_count, count) ||
+          !context.read32(profile.object_definitions_pointer, definitions) ||
+          !context.read32(profile.object_definition_count, definition_count) ||
+          count <= kravitch_slot || count > profile.maximum_objects ||
+          definition_count <= kravitch_definition ||
+          definition_count > profile.maximum_definitions) {
+        return;
+      }
+      const auto record64 =
+          static_cast<std::uint64_t>(records) +
+          static_cast<std::uint64_t>(kravitch_slot) * object_record_stride;
+      const auto definition64 =
+          static_cast<std::uint64_t>(definitions) +
+          static_cast<std::uint64_t>(kravitch_definition) *
+              object_definition_stride;
+      if (record64 > std::numeric_limits<std::uint32_t>::max() ||
+          definition64 > std::numeric_limits<std::uint32_t>::max()) {
+        return;
+      }
+      const auto record = static_cast<std::uint32_t>(record64);
+      const auto definition_address = static_cast<std::uint32_t>(definition64);
+      std::uint32_t definition{};
+      std::uint16_t attributes{};
+      std::uint32_t owner{};
+      std::uint16_t object_class{};
+      std::uint32_t handler{};
+      if (!validGuestRamRange(record, object_record_stride) ||
+          !context.read32(record, definition) ||
+          definition != kravitch_definition ||
+          !context.read16(record + record_attributes_offset, attributes) ||
+          attributes != 0xc107U ||
+          !context.read32(record + record_owner_offset, owner) ||
+          owner != instance ||
+          !validGuestRamRange(definition_address, object_definition_stride) ||
+          !context.read16(definition_address, object_class) ||
+          object_class != 1U ||
+          !context.read32(profile.object_handler_table + 4U, handler) ||
+          handler != profile.common_npc_handler) {
+        return;
+      }
 
-          const auto retail_value = context.registerValue(cooldown_register);
-          const auto retail_cooldown =
-              static_cast<std::uint8_t>(retail_value & 0xffU);
-          const auto cooldown =
-              agentKravitchPostShotCooldown(retail_cooldown, true);
-          context.setRegister(cooldown_register,
-                              (retail_value & 0xffffff00U) | cooldown);
+      const auto retail_value = context.registerValue(cooldown_register);
+      const auto retail_cooldown =
+          static_cast<std::uint8_t>(retail_value & 0xffU);
+      const auto cooldown =
+          agentKravitchPostShotCooldown(retail_cooldown, true);
+      context.setRegister(cooldown_register,
+                          (retail_value & 0xffffff00U) | cooldown);
 
-          std::uint8_t decision_counter{};
-          if (!context.read8(ai + ai_decision_counter_offset,
-                             decision_counter)) {
-            return;
-          }
-          const auto primed =
-              agentKravitchPostShotDecisionCounter(decision_counter, true);
-          if (primed != decision_counter) {
-            static_cast<void>(context.write8(ai + ai_decision_counter_offset,
-                                             primed));
-          }
-        });
+      std::uint8_t decision_counter{};
+      if (!context.read8(ai + ai_decision_counter_offset, decision_counter)) {
+        return;
+      }
+      const auto primed =
+          agentKravitchPostShotDecisionCounter(decision_counter, true);
+      if (primed != decision_counter) {
+        static_cast<void>(
+            context.write8(ai + ai_decision_counter_offset, primed));
+      }
+    });
   }
 }
 
@@ -3524,6 +3547,52 @@ void LegacyGameplayVm::bindSyphonFilterUsaV11GameplayTextHooks(
       });
 }
 
+void LegacyGameplayVm::refreshPadMotorState(bool command) noexcept {
+  constexpr std::uint32_t minimum_motor_count = 2U;
+  if (pad_motor_buffer_address_ == 0U ||
+      pad_motor_buffer_length_ < minimum_motor_count ||
+      pad_motor_buffer_address_ == std::numeric_limits<std::uint32_t>::max()) {
+    return;
+  }
+
+  std::uint8_t small{};
+  std::uint8_t large{};
+  if (!runtime_.read8(pad_motor_buffer_address_, small) ||
+      !runtime_.read8(pad_motor_buffer_address_ + 1U, large)) {
+    return;
+  }
+  if (command || small != pad_motor_state_.small ||
+      large != pad_motor_state_.large) {
+    pad_motor_state_.small = small;
+    pad_motor_state_.large = large;
+    ++pad_motor_state_.sequence;
+  }
+}
+
+bool LegacyGameplayVm::setRetailVibrationEnabled(bool enabled) noexcept {
+  // FUN_800d85bc cases 3/4 toggle this exact gp+0xc24 flag. The native
+  // bootstrap skips the frontend call which selects case 3, so leaving the
+  // retail default of zero makes every gameplay motor write return early.
+  constexpr std::uint32_t retail_pad_motor_table = 0x80116888U;
+  constexpr std::uint32_t retail_pad_motor_enabled = 0x8011688cU;
+  constexpr std::uint32_t retail_pad_motor_count = 2U;
+  pad_motor_buffer_address_ = retail_pad_motor_table;
+  pad_motor_buffer_length_ = retail_pad_motor_count;
+  if (!runtime_.write8(retail_pad_motor_enabled,
+                       static_cast<std::uint8_t>(enabled ? 1U : 0U))) {
+    return false;
+  }
+  if (!enabled &&
+      (!runtime_.write8(retail_pad_motor_table, 0U) ||
+       !runtime_.write8(retail_pad_motor_table + 1U, 0U))) {
+    return false;
+  }
+  // Case 4 clears both authored actuator bytes. Publish that stop edge now;
+  // case 3 leaves the table untouched and subsequent retail frames own it.
+  refreshPadMotorState();
+  return true;
+}
+
 bool LegacyGameplayVm::unbindHostCall(std::uint32_t address) noexcept {
   if (address >= 0x80000000U && address < 0x80200000U && (address & 3U) == 0U) {
     ram_host_calls_[(address - 0x80000000U) / sizeof(std::uint32_t)] = nullptr;
@@ -3534,6 +3603,13 @@ bool LegacyGameplayVm::unbindHostCall(std::uint32_t address) noexcept {
 void LegacyGameplayVm::clearHostCalls() noexcept {
   std::ranges::fill(ram_host_calls_, nullptr);
   host_calls_.clear();
+  pad_motor_buffer_address_ = 0U;
+  pad_motor_buffer_length_ = 0U;
+  if (pad_motor_state_.small != 0U || pad_motor_state_.large != 0U) {
+    pad_motor_state_.small = 0U;
+    pad_motor_state_.large = 0U;
+    ++pad_motor_state_.sequence;
+  }
   host_aim_ray_.reset();
   agent_cbdc_friendly_fire_frame_.reset();
   agent_cbdc_friendly_fire_pending_penalties_ = 0U;
@@ -9132,13 +9208,16 @@ LegacyGameplayVm::tickRetailFrame(const LegacyRetailFrameProfile &profile,
   // a second time and turns heavy streaming frames into seconds of queued
   // future PCM. Keep the frame atomic; the independent 120 Hz scheduler is
   // the sole owner of hardware time during realtime gameplay.
-  return invokeFrameCall(profile.frame_entry, {}, execution_budget);
+  auto result = invokeFrameCall(profile.frame_entry, {}, execution_budget);
+  refreshPadMotorState();
+  return result;
 }
 
 LegacyRetailPlatformTailResult LegacyGameplayVm::tickRetailPlatformTail(
     bool advance_delayed_callbacks,
     const LegacyRetailPlatformTailProfile &profile,
     std::uint64_t execution_budget) {
+  refreshPadMotorState();
   LegacyRetailPlatformTailResult result;
   const std::array callback_arguments{
       advance_delayed_callbacks ? 1U : 0U,
@@ -9264,6 +9343,7 @@ LegacyRetailOuterFrameResult LegacyGameplayVm::tickRetailOuterFrame(
     const LegacyRetailOuterFrameProfile &profile,
     const LegacyRetailPlatformTailProfile &tail_profile,
     std::uint64_t execution_budget) {
+  refreshPadMotorState();
   LegacyRetailOuterFrameResult result;
   const auto increment = [this](std::uint32_t address) {
     std::uint32_t value{};
@@ -9454,6 +9534,7 @@ LegacyRetailOuterFrameResult LegacyGameplayVm::tickRetailOuterFrame(
       result.bridge_fault_stage = "renderer-vblank";
       return result;
     }
+    refreshPadMotorState();
     // Retail calls FUN_800c973c(1, DAT_80116a88) after the scheduler and
     // player frame. Besides submitting primitives, its terrain traversal
     // fills the room visibility bytes registered by FUN_80080930. The next
@@ -9480,6 +9561,7 @@ LegacyRetailOuterFrameResult LegacyGameplayVm::tickNativeDrivenGameplayFrame(
     const LegacyRetailOuterFrameProfile &profile,
     const LegacyRetailPlatformTailProfile &tail_profile,
     std::uint64_t execution_budget) {
+  refreshPadMotorState();
   LegacyRetailOuterFrameResult result;
   const auto increment = [this](std::uint32_t address) {
     std::uint32_t value{};
@@ -9532,6 +9614,7 @@ LegacyRetailOuterFrameResult LegacyGameplayVm::tickNativeDrivenGameplayFrame(
       result.bridge_fault = true;
       return result;
     }
+    refreshPadMotorState();
     const std::array renderer_arguments{1U, gameplay_frame};
     result.renderer_tail = invoke(profile.renderer_frame_entry,
                                   renderer_arguments, execution_budget);

@@ -1,7 +1,9 @@
 #pragma once
 
+#include "sf/game/controller_bindings.hpp"
 #include "sf/game/retail_cheats.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -116,23 +118,6 @@ enum class ControllerPreset {
   custom,
 };
 
-enum class ControllerAction : std::uint32_t {
-  change_weapon,
-  shoot,
-  kneel,
-  roll_zoom_out,
-  step_right,
-  step_left,
-  target_lock,
-  use_zoom_in,
-  aim,
-};
-
-struct ControllerBinding {
-  ControllerAction action{ControllerAction::change_weapon};
-  std::uint32_t button{};
-};
-
 struct PauseSettings {
   std::uint8_t voice_volume{100};
   std::uint8_t music_volume{100};
@@ -143,7 +128,7 @@ struct PauseSettings {
   ControllerPreset controller_preset{ControllerPreset::standard};
   bool invert_aim{};
   bool vibration{true};
-  std::vector<ControllerBinding> bindings;
+  ControllerButtonBindings bindings;
 
   friend bool operator==(const PauseSettings &,
                          const PauseSettings &) = default;
@@ -346,10 +331,18 @@ public:
 
   // Completes a binding request emitted by update(). Zero leaves the binding
   // unchanged, which lets the platform treat disconnect/cancel uniformly.
+  // A conflicting assignment swaps the two actions so every gameplay action
+  // stays reachable on the nine-button retail layout.
   [[nodiscard]] PauseMenuCommand
   completeControllerBinding(std::uint32_t button);
+  void cancelControllerBinding() noexcept { binding_pending_ = false; }
   void showControllerMissing();
+  void setControllerButtonLabels(
+      std::array<std::string, 16U> labels) noexcept;
   void resolveWeaponEquip(std::uint32_t id, bool accepted);
+  [[nodiscard]] bool controllerBindingPending() const noexcept {
+    return binding_pending_;
+  }
   void unlockMissionSelect() noexcept { setMissionSelectUnlocked(true); }
   void setMissionSelectUnlocked(bool enabled) noexcept;
   void setRetailCheatEnabled(RetailCheat cheat, bool enabled) noexcept;
@@ -422,13 +415,12 @@ private:
   std::size_t pending_binding_{};
   bool binding_pending_{};
   std::string notification_;
+  std::array<std::string, 16U> controller_button_labels_{};
   PauseTransitionState transition_;
   bool mission_select_unlocked_{};
 };
 
 [[nodiscard]] std::string_view pauseScreenName(PauseScreen screen) noexcept;
-[[nodiscard]] std::string_view
-controllerActionName(ControllerAction action) noexcept;
 [[nodiscard]] std::string_view
 controllerPresetName(ControllerPreset preset) noexcept;
 void applyControllerPreset(PauseSettings &settings, ControllerPreset preset);

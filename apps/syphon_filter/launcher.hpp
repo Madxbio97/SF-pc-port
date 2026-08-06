@@ -14,6 +14,9 @@ void loadLauncherSettings(
     KeyboardMouseBindings& input,
     game::GameLanguage& language) noexcept;
 
+[[nodiscard]] bool saveLauncherControllerBindings(
+    const ControllerButtonBindings &bindings) noexcept;
+
 [[nodiscard]] bool showGraphicsLauncher(
     GraphicsSettings& settings,
     KeyboardMouseBindings& input,

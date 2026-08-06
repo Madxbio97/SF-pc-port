@@ -116,7 +116,9 @@ void printUsage() {
          "--no-trilinear --anisotropic --no-anisotropic --smaa --no-smaa "
          "--volumetric-fog --no-volumetric-fog "
          "--aspect-adaptive --aspect-4-3 "
-         "--vsync --no-vsync --fps-limit=0|20..1000\n";
+         "--vsync --no-vsync --fps-limit=0|20..1000\n"
+      << "Controller options: "
+         "--controller-backend=auto|xinput|dinput|rawinput\n";
   std::cerr << "Language options: --language=en --language=ru\n";
 }
 
@@ -175,6 +177,22 @@ int main(int argc, char **argv) {
         graphics.vsync = true;
       } else if (argument == "--no-vsync") {
         graphics.vsync = false;
+      } else if (argument == "--controller-backend=auto") {
+        graphics.controller_protocol =
+            sf::platform::ControllerProtocol::automatic;
+      } else if (argument == "--controller-backend=xinput") {
+        graphics.controller_protocol = sf::platform::ControllerProtocol::xinput;
+      } else if (argument == "--controller-backend=dinput" ||
+                 argument == "--controller-backend=directinput") {
+        graphics.controller_protocol =
+            sf::platform::ControllerProtocol::direct_input;
+      } else if (argument == "--controller-backend=rawinput" ||
+                 argument == "--controller-backend=raw") {
+        graphics.controller_protocol =
+            sf::platform::ControllerProtocol::raw_input;
+      } else if (argument.starts_with("--controller-backend=")) {
+        printUsage();
+        return 64;
       } else if (argument.starts_with("--fps-limit=")) {
         const auto limit = parseInteger(
             argument.substr(std::string_view{"--fps-limit="}.size()));
@@ -304,6 +322,11 @@ int main(int argc, char **argv) {
     }
 
     std::unique_ptr<sf::platform::Host> host;
+    const sf::platform::ControllerBindingsCommitCallback
+        persist_controller_bindings =
+            [](const sf::platform::ControllerButtonBindings &bindings) {
+              return sf::platform::saveLauncherControllerBindings(bindings);
+            };
     if (launch->mode == LaunchMode::game ||
         launch->mode == LaunchMode::title_test) {
       const auto &definition = sf::game::missionDefinition(mission_index);
@@ -324,7 +347,7 @@ int main(int argc, char **argv) {
                             : "Syphon Filter PC",
           std::move(assets), std::move(movies), std::move(selected_mission),
           std::move(mission_cue_path), std::move(supported_game_serial),
-          graphics, input, retail_cheats);
+          graphics, input, retail_cheats, persist_controller_bindings);
     } else if (launch->mode == LaunchMode::scene_test) {
       const auto &definition = sf::game::missionDefinition(mission_index);
       std::cout << "Disc verified. Starting native scene test at mission "
@@ -333,7 +356,7 @@ int main(int argc, char **argv) {
       host = sf::platform::createPsyCrossSceneHost(
           "Syphon Filter PC - scene test",
           sf::game::MissionPackage::load(disc, mission_index), disc.cuePath(),
-          graphics, input, retail_cheats);
+          graphics, input, retail_cheats, persist_controller_bindings);
     } else {
       std::cout << "Disc verified. Starting PsyCross platform test; "
                    "close the window to exit.\n";

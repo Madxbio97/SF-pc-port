@@ -49,6 +49,23 @@ struct PlayerInput {
   double aim_peek{};
 };
 
+// Native presentation may sample several times before the next deterministic
+// gameplay update. Continuous values keep only the newest sample; button
+// edges and impulses are accumulated separately by the caller.
+constexpr void latchLatestPlayerInputState(PlayerInput &destination,
+                                           const PlayerInput &source) noexcept {
+  destination.move = source.move;
+  destination.turn = source.turn;
+  destination.run = source.run;
+  destination.aim = source.aim;
+  destination.strafe = source.strafe;
+  destination.look_yaw = source.look_yaw;
+  destination.look_pitch = source.look_pitch;
+  destination.fire_held = source.fire_held;
+  destination.target_lock_held = source.target_lock_held;
+  destination.aim_peek = source.aim_peek;
+}
+
 struct PlayerState {
   double x{};
   double y{};

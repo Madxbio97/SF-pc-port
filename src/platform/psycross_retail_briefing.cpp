@@ -434,7 +434,7 @@ int drawTextObject(const assets::TimImage &font, std::string_view text,
 void drawPrompt(const std::vector<BriefingTexture> &textures,
                 std::uint32_t prompt_tick,
                 const PsyCrossFontTexture *native_font,
-                const KeyboardMouseBindings &bindings) {
+                const InputPromptBindings &bindings) {
   const auto find = [&](std::string_view name) -> const assets::TimImage & {
     const auto match =
         std::find_if(textures.begin(), textures.end(),
@@ -450,7 +450,7 @@ void drawPrompt(const std::vector<BriefingTexture> &textures,
   const auto brightness = game::MissionStartGate::promptBrightness(prompt_tick);
   const auto color = Rgb{brightness, brightness, brightness};
   const auto right = screen_center_x + assets::RetailBriefingLayout::prompt_x;
-  const auto source = keyboardMouseHintText(
+  const auto source = inputHintText(
       game::localizeTextCopy(assets::RetailBriefingLayout::prompt), bindings);
   const auto prompt_width = promptTextWidth(source);
   auto x = right - prompt_width;
@@ -475,8 +475,7 @@ void drawPrompt(const std::vector<BriefingTexture> &textures,
 } // namespace
 
 struct PsyCrossRetailBriefing::Impl final {
-  Impl(const game::MissionPackage &mission, KeyboardMouseBindings input)
-      : input{input} {
+  explicit Impl(const game::MissionPackage &mission) {
     constexpr std::array required{
         std::string_view{"FONTA.TIM"},
         std::string_view{"FONTB.TIM"},
@@ -543,18 +542,18 @@ struct PsyCrossRetailBriefing::Impl final {
 
   std::vector<BriefingTexture> textures;
   std::unique_ptr<PsyCrossFontTexture> native_font;
-  KeyboardMouseBindings input;
   mutable std::optional<std::uint32_t> prompt_start_tick;
 };
 
 PsyCrossRetailBriefing::PsyCrossRetailBriefing(
-    const game::MissionPackage &mission, KeyboardMouseBindings bindings)
-    : impl_(std::make_unique<Impl>(mission, bindings)) {}
+    const game::MissionPackage &mission)
+    : impl_(std::make_unique<Impl>(mission)) {}
 
 PsyCrossRetailBriefing::~PsyCrossRetailBriefing() = default;
 
 bool PsyCrossRetailBriefing::draw(const assets::MissionBriefing &briefing,
-                                  double retail_time) const {
+                                  double retail_time,
+                                  const InputPromptBindings &bindings) const {
   const auto retail_tick =
       static_cast<std::uint32_t>(std::max(std::floor(retail_time), 0.0));
   GR_SetBlendMode(BM_NONE);
@@ -589,7 +588,7 @@ bool PsyCrossRetailBriefing::draw(const assets::MissionBriefing &briefing,
       impl_->prompt_start_tick = retail_tick;
     }
     drawPrompt(impl_->textures, retail_tick - *impl_->prompt_start_tick,
-               impl_->native_font.get(), impl_->input);
+               impl_->native_font.get(), bindings);
   } else {
     impl_->prompt_start_tick.reset();
   }

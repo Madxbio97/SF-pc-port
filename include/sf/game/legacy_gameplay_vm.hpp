@@ -1165,6 +1165,10 @@ public:
   weaponEvents() const noexcept {
     return weapon_events_;
   }
+  [[nodiscard]] LegacyPadMotorState padMotorState() const noexcept {
+    return pad_motor_state_;
+  }
+  [[nodiscard]] bool setRetailVibrationEnabled(bool enabled) noexcept;
   [[nodiscard]] bool unbindHostCall(std::uint32_t address) noexcept;
   void clearHostCalls() noexcept;
   [[nodiscard]] LegacyGameplayVmSnapshot captureSnapshot() const;
@@ -1432,6 +1436,7 @@ private:
   [[nodiscard]] const LegacyHostCall *
   findHostCall(std::uint32_t address) const noexcept;
   void recoverCdRomTransfer() noexcept;
+  void refreshPadMotorState(bool command = false) noexcept;
 
   psx::R3000Runtime runtime_;
   psx::PsxMachine machine_;
@@ -1446,6 +1451,9 @@ private:
   std::optional<LegacyHostAimRay> host_aim_ray_;
   std::optional<bool> park2_flame_line_of_sight_clear_;
   std::vector<LegacyWeaponEventBridgeState> weapon_events_;
+  LegacyPadMotorState pad_motor_state_;
+  std::uint32_t pad_motor_buffer_address_{};
+  std::uint32_t pad_motor_buffer_length_{};
   mutable std::vector<LegacyGameplayVmSnapshot::AttachedTextSource>
       attached_text_sources_;
   std::vector<LegacyUiMessageBridgeState> ui_messages_;

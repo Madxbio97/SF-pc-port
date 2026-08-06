@@ -114,6 +114,7 @@ add_library(sf_game
     src/game/campaign.cpp
     src/game/chase_camera.cpp
     src/game/combat.cpp
+    src/game/controller_bindings.cpp
     src/game/dynamic_lighting.cpp
     src/game/effects.cpp
     src/game/gameplay.cpp
@@ -250,7 +251,7 @@ if(SF_ENABLE_PSYCROSS)
         target_sources(syphon_filter PRIVATE
             "${CMAKE_CURRENT_BINARY_DIR}/syphon_filter.rc")
     endif()
-    target_link_libraries(syphon_filter PRIVATE sf::psycross_backend)
+    target_link_libraries(syphon_filter PRIVATE sf::psycross_backend SDL2::SDL2)
     add_custom_command(TARGET syphon_filter POST_BUILD
         COMMAND "${CMAKE_COMMAND}" -E copy_directory
             "${CMAKE_CURRENT_SOURCE_DIR}/assets/locales"

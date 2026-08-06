@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <numeric>
 #include <utility>
@@ -33,7 +34,7 @@ constexpr auto root_item_count = retail_root_sections.size();
 constexpr std::size_t option_item_count = 9;
 constexpr std::size_t sound_item_count = 3;
 constexpr std::size_t controller_item_count = 7;
-constexpr std::size_t binding_item_count = 9;
+constexpr std::size_t binding_item_count = controller_action_count;
 constexpr std::int32_t volume_step = 5;
 constexpr std::int32_t brightness_step = 5;
 constexpr std::int16_t centering_limit = 24;
@@ -49,74 +50,37 @@ constexpr std::array option_labels{
     "Cheats",
 };
 
-// The release default controller table is shown in MENU.OVL even before the
-// player customizes a binding. Keeping it explicit prevents the native menu
-// from rendering nine misleading "none" rows on first open.
-constexpr std::uint32_t select_button = 0x0001U;
-constexpr std::uint32_t l2_button = 0x0100U;
-constexpr std::uint32_t r2_button = 0x0200U;
-constexpr std::uint32_t l1_button = 0x0400U;
-constexpr std::uint32_t r1_button = 0x0800U;
-constexpr std::uint32_t triangle_button = 0x1000U;
-constexpr std::uint32_t circle_button = 0x2000U;
-constexpr std::uint32_t cross_button = 0x4000U;
-constexpr std::uint32_t square_button = 0x8000U;
-
-constexpr std::array<ControllerBinding, binding_item_count>
-    retail_standard_bindings{{
-        {ControllerAction::change_weapon, select_button},
-        {ControllerAction::shoot, square_button},
-        {ControllerAction::kneel, cross_button},
-        {ControllerAction::roll_zoom_out, circle_button},
-        {ControllerAction::step_right, r2_button},
-        {ControllerAction::step_left, l2_button},
-        {ControllerAction::target_lock, r1_button},
-        {ControllerAction::use_zoom_in, triangle_button},
-        {ControllerAction::aim, l1_button},
-    }};
-
-// MENU.OVL 0x801463e0 stores two nine-byte physical-button -> action tables.
-// Inverting its alternate table [1,2,7,6,5,4,0,3,8] gives these bindings.
-constexpr std::array<ControllerBinding, binding_item_count>
-    retail_alternate_bindings{{
-        {ControllerAction::change_weapon, r1_button},
-        {ControllerAction::shoot, circle_button},
-        {ControllerAction::kneel, r2_button},
-        {ControllerAction::roll_zoom_out, triangle_button},
-        {ControllerAction::step_right, l2_button},
-        {ControllerAction::step_left, square_button},
-        {ControllerAction::target_lock, cross_button},
-        {ControllerAction::use_zoom_in, select_button},
-        {ControllerAction::aim, l1_button},
-    }};
-
+constexpr std::uint32_t start_button = 0x0008U;
+constexpr std::uint32_t up_button = 0x0010U;
+constexpr std::uint32_t right_button = 0x0020U;
+constexpr std::uint32_t down_button = 0x0040U;
 std::string controllerButtonName(std::uint32_t button) {
   switch (button) {
-  case select_button:
+  case controller_select_button:
     return "SELECT";
-  case l2_button:
+  case controller_l2_button:
     return "L2";
-  case r2_button:
+  case controller_r2_button:
     return "R2";
-  case l1_button:
+  case controller_l1_button:
     return "L1";
-  case r1_button:
+  case controller_r1_button:
     return "R1";
-  case triangle_button:
+  case controller_triangle_button:
     return "TRIANGLE";
-  case circle_button:
+  case controller_circle_button:
     return "CIRCLE";
-  case cross_button:
+  case controller_cross_button:
     return "CROSS";
-  case square_button:
+  case controller_square_button:
     return "SQUARE";
-  case 0x0008U:
+  case start_button:
     return "START";
-  case 0x0010U:
+  case up_button:
     return "UP";
-  case 0x0020U:
+  case right_button:
     return "RIGHT";
-  case 0x0040U:
+  case down_button:
     return "DOWN";
   case 0x0080U:
     return "LEFT";
@@ -793,6 +757,10 @@ PauseMenuCommand PauseMenu::updateBindings(const PauseMenuInput &input) {
 }
 
 PauseMenuCommand PauseMenu::completeControllerBinding(std::uint32_t button) {
+  if (!isBindableControllerButton(button)) {
+    return {};
+  }
+
   if (!binding_pending_) {
     return {};
   }
@@ -801,16 +769,11 @@ PauseMenuCommand PauseMenu::completeControllerBinding(std::uint32_t button) {
     return {};
   }
 
-  const auto action = static_cast<ControllerAction>(pending_binding_);
-  const auto binding =
-      std::find_if(settings_.bindings.begin(), settings_.bindings.end(),
-                   [action](const ControllerBinding &value) {
-                     return value.action == action;
-                   });
-  if (binding == settings_.bindings.end()) {
-    settings_.bindings.push_back(ControllerBinding{action, button});
-  } else {
-    binding->button = button;
+  const auto result = rebindControllerButton(
+      settings_.bindings, static_cast<ControllerAction>(pending_binding_),
+      button);
+  if (result == ControllerRebindResult::invalid) {
+    return {};
   }
   settings_.controller_preset = ControllerPreset::custom;
   return PauseMenuCommand{
@@ -989,6 +952,11 @@ PauseMenuCommand PauseMenu::updateConfirmation(const PauseMenuInput &input) {
     return {};
   }
   return {};
+}
+
+void PauseMenu::setControllerButtonLabels(
+    std::array<std::string, 16U> labels) noexcept {
+  controller_button_labels_ = std::move(labels);
 }
 
 void PauseMenu::showControllerMissing() {
@@ -1494,25 +1462,29 @@ std::vector<PauseRenderCommand> PauseMenu::buildRenderCommands() const {
     addLeft(PauseRenderKind::title, PauseRect{56, 35, 157, 10},
             "Controller Configuration:", PauseColorRole::accent);
     for (std::size_t index = 0; index < binding_item_count; ++index) {
+      const auto button_name = [this](std::uint32_t button) {
+        if (button != 0U && (button & (button - 1U)) == 0U) {
+          const auto bit = static_cast<std::size_t>(std::countr_zero(button));
+          if (bit < controller_button_labels_.size() &&
+              !controller_button_labels_[bit].empty()) {
+            return controller_button_labels_[bit];
+          }
+        }
+        return controllerButtonName(button);
+      };
       const auto action = static_cast<ControllerAction>(index);
       std::string label{controllerActionName(action)};
-      const auto binding =
-          std::find_if(settings_.bindings.begin(), settings_.bindings.end(),
-                       [action](const ControllerBinding &value) {
-                         return value.action == action;
-                       });
+      const auto button = controllerButtonForAction(settings_.bindings, action);
       label += ": ";
-      label += binding == settings_.bindings.end()
-                   ? "none"
-                   : controllerButtonName(binding->button);
+      label += button == 0U ? "none" : button_name(button);
       addMenu(label, index, state.selection,
               static_cast<std::int16_t>(48 + index * 14));
     }
     addInformation(PauseRenderKind::text, PauseRect{240, 44, 101, 60},
                    "Controller\nBindings");
-    addHint(PauseAcdLayout::hint, binding_pending_
-                                      ? "Press new button for action"
-                                      : "%x select   %t back");
+    addHint(PauseAcdLayout::hint,
+            binding_pending_ ? "Press new button for action  %t cancel"
+                             : "%x select   %t back");
     break;
   }
   case PauseScreen::brightness: {
@@ -1882,30 +1854,6 @@ std::string_view pauseScreenName(PauseScreen screen) noexcept {
   return "Unknown";
 }
 
-std::string_view controllerActionName(ControllerAction action) noexcept {
-  switch (action) {
-  case ControllerAction::change_weapon:
-    return "Change Weapon";
-  case ControllerAction::shoot:
-    return "Shoot";
-  case ControllerAction::kneel:
-    return "Kneel";
-  case ControllerAction::roll_zoom_out:
-    return "Roll/Zoom Out";
-  case ControllerAction::step_right:
-    return "Step Right";
-  case ControllerAction::step_left:
-    return "Step Left";
-  case ControllerAction::target_lock:
-    return "Target Lock";
-  case ControllerAction::use_zoom_in:
-    return "Use/Zoom In";
-  case ControllerAction::aim:
-    return "Aim";
-  }
-  return "Unknown";
-}
-
 std::string_view controllerPresetName(ControllerPreset preset) noexcept {
   switch (preset) {
   case ControllerPreset::standard:
@@ -1919,29 +1867,26 @@ std::string_view controllerPresetName(ControllerPreset preset) noexcept {
 }
 
 void applyControllerPreset(PauseSettings &settings, ControllerPreset preset) {
-  const auto *bindings = &retail_standard_bindings;
   switch (preset) {
   case ControllerPreset::standard:
+    settings.bindings =
+        controllerBindingsForPreset(ControllerBindingPreset::standard);
     break;
   case ControllerPreset::alternate:
-    bindings = &retail_alternate_bindings;
+    settings.bindings =
+        controllerBindingsForPreset(ControllerBindingPreset::alternate);
     break;
   case ControllerPreset::custom:
     settings.controller_preset = preset;
     return;
   }
   settings.controller_preset = preset;
-  settings.bindings.assign(bindings->begin(), bindings->end());
 }
+
 
 std::uint32_t controllerButtonForAction(const PauseSettings &settings,
                                         ControllerAction action) noexcept {
-  const auto binding =
-      std::find_if(settings.bindings.begin(), settings.bindings.end(),
-                   [action](const ControllerBinding &value) {
-                     return value.action == action;
-                   });
-  return binding == settings.bindings.end() ? 0U : binding->button;
+  return controllerButtonForAction(settings.bindings, action);
 }
 
 } // namespace sf::game

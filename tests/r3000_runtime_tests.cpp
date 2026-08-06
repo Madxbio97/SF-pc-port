@@ -1886,8 +1886,7 @@ void testLegacyGameplayVmBoundary() {
       retail_enemy_aim_profile.agent_target_memory_frames == 80U &&
       retail_enemy_aim_profile.flashlight_target_memory_frames == 100U &&
       retail_enemy_aim_profile.kravitch_post_shot_boundary == 0x800633c8U &&
-      retail_enemy_aim_profile.kravitch_post_shot_instruction ==
-          0xa243004cU);
+      retail_enemy_aim_profile.kravitch_post_shot_instruction == 0xa243004cU);
   auto enemy_aim_profile = retail_enemy_aim_profile;
   enemy_aim_profile.agent_accuracy_boundary = agent_accuracy_boundary;
   enemy_aim_profile.agent_accuracy_instruction = agent_accuracy_words[0];
@@ -1918,8 +1917,7 @@ void testLegacyGameplayVmBoundary() {
   constexpr std::uint32_t kravitch_definitions_pointer = 0x801fd4e8U;
   constexpr std::uint32_t kravitch_definition_count = 0x801fd4ecU;
   constexpr std::uint32_t kravitch_records = 0x801e0000U;
-  constexpr std::uint32_t kravitch_record =
-      kravitch_records + 174U * 0x4cU;
+  constexpr std::uint32_t kravitch_record = kravitch_records + 174U * 0x4cU;
   constexpr std::uint32_t kravitch_instance = 0x801e4000U;
   constexpr std::uint32_t kravitch_ai = 0x801e4100U;
   constexpr std::uint32_t kravitch_target = 0x801e4200U;
@@ -1931,48 +1929,44 @@ void testLegacyGameplayVmBoundary() {
       kravitch_post_shot_words[0];
   enemy_aim_profile.object_records_pointer = kravitch_records_pointer;
   enemy_aim_profile.object_count = kravitch_count;
-  enemy_aim_profile.object_definitions_pointer =
-      kravitch_definitions_pointer;
+  enemy_aim_profile.object_definitions_pointer = kravitch_definitions_pointer;
   enemy_aim_profile.object_definition_count = kravitch_definition_count;
   enemy_aim_profile.object_handler_table = kravitch_handler_table;
-  require(vm.runtime().write32(lagged_target, 0x1234U) &&
-              vm.runtime().write32(memory_actor + 0x14U, memory_target) &&
-              vm.runtime().write32(memory_actor + 0x1cU, memory_ai) &&
-              vm.runtime().write8(memory_ai + 0x47U, 0x4fU) &&
-              vm.runtime().write16(memory_target, 7U) &&
-              vm.runtime().write16(memory_player + 2U, 7U) &&
-              vm.runtime().write32(memory_player_pointer, memory_player) &&
-              vm.runtime().write16(memory_mission, 17U) &&
-              vm.runtime().write32(memory_flashlight_source, 0U) &&
-              vm.runtime().write32(memory_light_list, 0U) &&
-              vm.runtime().write32(kravitch_records_pointer,
-                                   kravitch_records) &&
-              vm.runtime().write32(kravitch_count, 200U) &&
-              vm.runtime().write32(kravitch_definitions_pointer,
-                                   kravitch_definitions) &&
-              vm.runtime().write32(kravitch_definition_count, 64U) &&
-              vm.runtime().write32(kravitch_record, 53U) &&
-              vm.runtime().write16(kravitch_record + 0x24U, 0xc107U) &&
-              vm.runtime().write32(kravitch_record + 0x34U,
-                                   kravitch_instance) &&
-              vm.runtime().write16(kravitch_definitions + 53U * 0x14U, 1U) &&
-              vm.runtime().write32(kravitch_handler_table + 4U,
-                                   legacy_common_npc_handler) &&
-              vm.runtime().write16(kravitch_instance + 2U, 174U) &&
-              vm.runtime().write32(kravitch_instance + 0x14U,
-                                   kravitch_target) &&
-              vm.runtime().write32(kravitch_instance + 0x18U,
-                                   kravitch_health) &&
-              vm.runtime().write32(kravitch_instance + 0x1cU, kravitch_ai) &&
-              vm.runtime().write16(kravitch_target, 7U) &&
-              vm.runtime().write32(kravitch_target + 4U, 0U) &&
-              vm.runtime().write16(kravitch_health + 8U, 100U) &&
-              vm.runtime().write8(kravitch_ai + 0x48U, 2U) &&
-              vm.runtime().write8(kravitch_ai + 0x4aU, 0U),
-          "Could not seed the close enemy-aim fixture");
+  require(
+      vm.runtime().write32(lagged_target, 0x1234U) &&
+          vm.runtime().write32(memory_actor + 0x14U, memory_target) &&
+          vm.runtime().write32(memory_actor + 0x1cU, memory_ai) &&
+          vm.runtime().write8(memory_ai + 0x47U, 0x4fU) &&
+          vm.runtime().write16(memory_target, 7U) &&
+          vm.runtime().write16(memory_player + 2U, 7U) &&
+          vm.runtime().write32(memory_player_pointer, memory_player) &&
+          vm.runtime().write16(memory_mission, 17U) &&
+          vm.runtime().write32(memory_flashlight_source, 0U) &&
+          vm.runtime().write32(memory_light_list, 0U) &&
+          vm.runtime().write32(kravitch_records_pointer, kravitch_records) &&
+          vm.runtime().write32(kravitch_count, 200U) &&
+          vm.runtime().write32(kravitch_definitions_pointer,
+                               kravitch_definitions) &&
+          vm.runtime().write32(kravitch_definition_count, 64U) &&
+          vm.runtime().write32(kravitch_record, 53U) &&
+          vm.runtime().write16(kravitch_record + 0x24U, 0xc107U) &&
+          vm.runtime().write32(kravitch_record + 0x34U, kravitch_instance) &&
+          vm.runtime().write16(kravitch_definitions + 53U * 0x14U, 1U) &&
+          vm.runtime().write32(kravitch_handler_table + 4U,
+                               legacy_common_npc_handler) &&
+          vm.runtime().write16(kravitch_instance + 2U, 174U) &&
+          vm.runtime().write32(kravitch_instance + 0x14U, kravitch_target) &&
+          vm.runtime().write32(kravitch_instance + 0x18U, kravitch_health) &&
+          vm.runtime().write32(kravitch_instance + 0x1cU, kravitch_ai) &&
+          vm.runtime().write16(kravitch_target, 7U) &&
+          vm.runtime().write32(kravitch_target + 4U, 0U) &&
+          vm.runtime().write16(kravitch_health + 8U, 100U) &&
+          vm.runtime().write8(kravitch_ai + 0x48U, 2U) &&
+          vm.runtime().write8(kravitch_ai + 0x4aU, 0U),
+      "Could not seed the close enemy-aim fixture");
   vm.bindSyphonFilterUsaV11AgentEnemyAimHooks(enemy_aim_profile);
   const auto invoke_kravitch_post_shot = [&](std::uint32_t cooldown,
-                                              std::uint32_t weapon = 7U) {
+                                             std::uint32_t weapon = 7U) {
     vm.runtime().setRegister(3U, cooldown);
     vm.runtime().setRegister(16U, kravitch_instance);
     vm.runtime().setRegister(17U, weapon);
@@ -2202,15 +2196,13 @@ void testLegacyGameplayVmBoundary() {
   const auto accelerated_kravitch_shot = invoke_kravitch_post_shot(66U);
   std::uint8_t kravitch_cooldown{};
   std::uint8_t kravitch_decision_counter{};
-  require(accelerated_kravitch_shot.completed() &&
-              vm.runtime().read8(kravitch_ai + 0x4cU,
-                                 kravitch_cooldown) &&
-              vm.runtime().read8(kravitch_ai + 0x4aU,
-                                 kravitch_decision_counter) &&
-              kravitch_cooldown == 33U &&
-              kravitch_decision_counter == 0x28U &&
-              vm.runtime().write16(memory_mission, 17U),
-          "Agent Kravitch did not use the retail shotgun/reposition cadence");
+  require(
+      accelerated_kravitch_shot.completed() &&
+          vm.runtime().read8(kravitch_ai + 0x4cU, kravitch_cooldown) &&
+          vm.runtime().read8(kravitch_ai + 0x4aU, kravitch_decision_counter) &&
+          kravitch_cooldown == 33U && kravitch_decision_counter == 0x28U &&
+          vm.runtime().write16(memory_mission, 17U),
+      "Agent Kravitch did not use the retail shotgun/reposition cadence");
   const auto agent_target_memory = invoke_target_memory(60U);
   const auto expired_agent_target_memory = invoke_target_memory(80U);
   vm.runtime().setRegister(29U, 0x801fc000U);
@@ -2419,15 +2411,13 @@ void testLegacyGameplayVmBoundary() {
               vm.runtime().write8(kravitch_ai + 0x4aU, 0U),
           "Could not reset the disabled Kravitch cadence fixture");
   const auto restored_kravitch_shot = invoke_kravitch_post_shot(66U);
-  require(restored_kravitch_shot.completed() &&
-              vm.runtime().read8(kravitch_ai + 0x4cU,
-                                 kravitch_cooldown) &&
-              vm.runtime().read8(kravitch_ai + 0x4aU,
-                                 kravitch_decision_counter) &&
-              kravitch_cooldown == 66U &&
-              kravitch_decision_counter == 0U &&
-              vm.runtime().write16(memory_mission, 17U),
-          "Disabling Agent did not restore Kravitch's retail cadence");
+  require(
+      restored_kravitch_shot.completed() &&
+          vm.runtime().read8(kravitch_ai + 0x4cU, kravitch_cooldown) &&
+          vm.runtime().read8(kravitch_ai + 0x4aU, kravitch_decision_counter) &&
+          kravitch_cooldown == 66U && kravitch_decision_counter == 0U &&
+          vm.runtime().write16(memory_mission, 17U),
+      "Disabling Agent did not restore Kravitch's retail cadence");
   const auto restored_accuracy =
       vm.invoke(agent_accuracy_boundary, std::array{10U});
   const auto restored_target_memory = invoke_target_memory(60U);
@@ -2456,8 +2446,7 @@ void testLegacyGameplayVmBoundary() {
           restored_tactical_route.return_value == 2U &&
           vm.unbindHostCall(enemy_aim_profile.agent_accuracy_boundary) &&
           vm.unbindHostCall(enemy_aim_profile.agent_target_memory_boundary) &&
-          vm.unbindHostCall(
-              enemy_aim_profile.kravitch_post_shot_boundary) &&
+          vm.unbindHostCall(enemy_aim_profile.kravitch_post_shot_boundary) &&
           vm.unbindHostCall(grenade_awareness_profile.boundaries[0]) &&
           vm.unbindHostCall(grenade_awareness_profile.boundaries[1]) &&
           vm.unbindHostCall(grenade_awareness_profile.route_return_boundary),
@@ -6121,6 +6110,111 @@ void testLegacyGameplayVmBoundary() {
   vm.clearHostCalls();
 
   vm.bindSyphonFilterUsaV11BootstrapPlatformCalls();
+  constexpr std::uint32_t retail_pad_motor_enabled = 0x8011688cU;
+  std::uint8_t vibration_enabled{};
+  require(vm.setRetailVibrationEnabled(true) &&
+              vm.runtime().read8(retail_pad_motor_enabled,
+                                 vibration_enabled) &&
+              vibration_enabled == 1U &&
+              vm.setRetailVibrationEnabled(false) &&
+              vm.runtime().read8(retail_pad_motor_enabled,
+                                 vibration_enabled) &&
+              vibration_enabled == 0U &&
+              vm.padMotorState() == sf::game::LegacyPadMotorState{},
+          "Host vibration setting did not synchronize the retail enable flag");
+  constexpr std::uint32_t pad_set_act_entry = 0x800ff894U;
+  constexpr std::array pad_set_act_words{
+      encodeI(0x09U, 4U, 2U, 42U),
+      encodeR(31U, 0U, 0U, 0U, 0x08U),
+      0U,
+  };
+  constexpr std::uint32_t pad_motor_table = 0x801ffef0U;
+  constexpr std::array pad_motors{std::byte{0x01}, std::byte{0xe1}};
+  require(
+      vm.loadOverlay(pad_set_act_entry, instructionBytes(pad_set_act_words)) &&
+          vm.runtime().loadBytes(pad_motor_table, pad_motors) &&
+          vm.padMotorState() == sf::game::LegacyPadMotorState{},
+      "Could not prepare the PadSetAct observation fixture");
+  const std::array valid_pad_set_act_arguments{0U, pad_motor_table, 2U};
+  const auto valid_pad_set_act =
+      vm.invoke(pad_set_act_entry, valid_pad_set_act_arguments);
+  require(
+      valid_pad_set_act.completed() && valid_pad_set_act.return_value == 42U &&
+          valid_pad_set_act.host_calls == 1U &&
+          vm.padMotorState() == sf::game::LegacyPadMotorState{0x01U, 0xe1U, 1U},
+      "PadSetAct hook did not observe both motors or pass through its "
+      "original guest instruction");
+
+  constexpr std::array updated_pad_motors{std::byte{0x00}, std::byte{0x40}};
+  constexpr std::uint32_t vsync_entry = 0x800e3f54U;
+  require(vm.runtime().loadBytes(pad_motor_table, updated_pad_motors),
+          "Could not update the registered PadSetAct table");
+  constexpr std::array vsync_arguments{0U};
+  const auto sampled_pad_motors = vm.invoke(vsync_entry, vsync_arguments);
+  require(
+      sampled_pad_motors.completed() && sampled_pad_motors.host_calls == 1U &&
+          vm.padMotorState() ==
+              sf::game::LegacyPadMotorState{0x00U, 0x40U, 2U},
+      "VSync did not resample changed motors from the registered PadSetAct "
+      "table");
+  const auto unchanged_pad_motors = vm.invoke(vsync_entry, vsync_arguments);
+  require(unchanged_pad_motors.completed() &&
+              vm.padMotorState() ==
+                  sf::game::LegacyPadMotorState{0x00U, 0x40U, 2U},
+          "Unchanged VSync motor sample created a false command edge");
+
+  const std::array invalid_pad_set_act_arguments{
+      0U, std::numeric_limits<std::uint32_t>::max(), 2U};
+  const auto invalid_pad_set_act =
+      vm.invoke(pad_set_act_entry, invalid_pad_set_act_arguments);
+  const std::array short_pad_set_act_arguments{0U, pad_motor_table, 1U};
+  const auto short_pad_set_act =
+      vm.invoke(pad_set_act_entry, short_pad_set_act_arguments);
+  require(invalid_pad_set_act.completed() &&
+              invalid_pad_set_act.return_value == 42U &&
+              invalid_pad_set_act.host_calls == 1U &&
+              short_pad_set_act.completed() &&
+              short_pad_set_act.return_value == 42U &&
+              vm.padMotorState() ==
+                  sf::game::LegacyPadMotorState{0x00U, 0x40U, 2U},
+          "Invalid PadSetAct table/length mutated output or blocked the guest");
+
+  constexpr std::array stopped_pad_motors{std::byte{0x00}, std::byte{0x00}};
+  require(vm.runtime().loadBytes(pad_motor_table, stopped_pad_motors),
+          "Could not prepare the registered PadSetAct stop state");
+  const auto sampled_stop = vm.invoke(vsync_entry, vsync_arguments);
+  require(sampled_stop.completed() &&
+              vm.padMotorState() ==
+                  sf::game::LegacyPadMotorState{0x00U, 0x00U, 3U},
+          "VSync did not publish the registered PadSetAct stop state");
+  const auto renewed_stop =
+      vm.invoke(pad_set_act_entry, valid_pad_set_act_arguments);
+  require(renewed_stop.completed() && renewed_stop.return_value == 42U &&
+              vm.padMotorState() ==
+                  sf::game::LegacyPadMotorState{0x00U, 0x00U, 4U},
+          "Repeated PadSetAct command did not renew the motor sequence");
+
+  // Native mission startup bypasses the retail frontend routine containing
+  // PadSetAct. Rebinding bootstrap hooks must restore the exact live retail
+  // actuator table without requiring that skipped call.
+  constexpr std::uint32_t retail_pad_motor_table = 0x80116888U;
+  constexpr std::array bootstrap_pad_motors{std::byte{0x01}, std::byte{0x80}};
+  vm.bindSyphonFilterUsaV11BootstrapPlatformCalls();
+  require(vm.runtime().loadBytes(retail_pad_motor_table,
+                                 bootstrap_pad_motors),
+          "Could not seed the bootstrap actuator table");
+  const auto bootstrap_pad_sample = vm.invoke(vsync_entry, vsync_arguments);
+  require(bootstrap_pad_sample.completed() &&
+              vm.padMotorState() ==
+                  sf::game::LegacyPadMotorState{0x01U, 0x80U, 5U},
+          "Native bootstrap did not register the retail actuator table");
+  require(vm.runtime().loadBytes(retail_pad_motor_table, stopped_pad_motors),
+          "Could not stop the bootstrap actuator table");
+  const auto bootstrap_pad_stop = vm.invoke(vsync_entry, vsync_arguments);
+  require(bootstrap_pad_stop.completed() &&
+              vm.padMotorState() ==
+                  sf::game::LegacyPadMotorState{0x00U, 0x00U, 6U},
+          "Bootstrap actuator table did not publish its stop state");
   constexpr std::array expected_neutral_pad{
       std::byte{0x00}, std::byte{0x73}, std::byte{0xff}, std::byte{0xff},
       std::byte{0x80}, std::byte{0x80}, std::byte{0x80}, std::byte{0x80},
@@ -7253,9 +7347,8 @@ void testLegacyGameplayVmAgentDamageHook() {
       vm.invoke(retail_npc_initializer, initializer_arguments);
   std::uint16_t static_kravitch_attributes{};
   require(static_kravitch_init.completed() &&
-              static_kravitch_init.host_calls == 2U &&
-              initializer_reads_ok && initializer_calls == 1U &&
-              initializer_attributes[0] == 0xc107U &&
+              static_kravitch_init.host_calls == 2U && initializer_reads_ok &&
+              initializer_calls == 1U && initializer_attributes[0] == 0xc107U &&
               vm.runtime().state().gpr[29U] ==
                   stack_before_initializer - 0x38U &&
               vm.runtime().read16(kravitch_record + 0x24U,
@@ -7273,13 +7366,11 @@ void testLegacyGameplayVmAgentDamageHook() {
       vm.invoke(retail_npc_initializer, initializer_arguments);
   vm.runtime().setRegister(29U, stack_before_initializer);
   require(rejected_static_init.completed() && initializer_reads_ok &&
-              initializer_calls == 2U &&
-              initializer_attributes[1] == 0xc102U &&
+              initializer_calls == 2U && initializer_attributes[1] == 0xc102U &&
               vm.runtime().read16(kravitch_record + 0x24U,
                                   static_kravitch_attributes) &&
               static_kravitch_attributes == 0xc102U &&
-              vm.runtime().write32(kravitch_record + 0x34U,
-                                   kravitch_instance),
+              vm.runtime().write32(kravitch_record + 0x34U, kravitch_instance),
           "Static Kravitch pre-init hook accepted a mismatched owner");
 
   constexpr std::uint32_t kravitch_definitions = 0x801fa000U;
@@ -7484,42 +7575,39 @@ void testLegacyGameplayVmAgentDamageHook() {
           "Exact Agent Gabrek did not receive the M-16 plus frag grenades");
 
   constexpr sf::game::LegacyNativePoint gabrek_live_position{-817, 0, -7044};
-  require(seed_spawn_record(gabrek.slot, gabrek.definition,
-                            gabrek_live_position.x, gabrek_live_position.y,
-                            gabrek_live_position.z) &&
-              vm.runtime().write16(gabrek_record + 0x24U,
-                                   gabrek.retail_attributes) &&
-              vm.runtime().write32(profile.object_count, 200U) &&
-              vm.runtime().write32(profile.object_definition_count, 64U) &&
-              vm.runtime().write16(
-                  marcos_definitions + gabrek.definition * 0x14U, 1U) &&
-              vm.applyAgentMissionNpcOverrides(gabrek.mission, true, profile),
-          "Could not apply Gabrek's maintained Agent attributes");
+  require(
+      seed_spawn_record(gabrek.slot, gabrek.definition, gabrek_live_position.x,
+                        gabrek_live_position.y, gabrek_live_position.z) &&
+          vm.runtime().write16(gabrek_record + 0x24U,
+                               gabrek.retail_attributes) &&
+          vm.runtime().write32(profile.object_count, 200U) &&
+          vm.runtime().write32(profile.object_definition_count, 64U) &&
+          vm.runtime().write16(marcos_definitions + gabrek.definition * 0x14U,
+                               1U) &&
+          vm.applyAgentMissionNpcOverrides(gabrek.mission, true, profile),
+      "Could not apply Gabrek's maintained Agent attributes");
   std::uint16_t maintained_gabrek_attributes{};
-  require(vm.runtime().read16(gabrek_record + 0x24U,
+  require(
+      vm.runtime().read16(gabrek_record + 0x24U,
+                          maintained_gabrek_attributes) &&
+          maintained_gabrek_attributes == 0xd109U &&
+          vm.applyAgentMissionNpcOverrides(gabrek.mission, false, profile) &&
+          vm.runtime().read16(gabrek_record + 0x24U,
                               maintained_gabrek_attributes) &&
-              maintained_gabrek_attributes == 0xd109U &&
-              vm.applyAgentMissionNpcOverrides(gabrek.mission, false,
-                                               profile) &&
-              vm.runtime().read16(gabrek_record + 0x24U,
-                                  maintained_gabrek_attributes) &&
-              maintained_gabrek_attributes == gabrek.retail_attributes,
-          "Gabrek's maintained Agent-only attributes were not reversible");
+          maintained_gabrek_attributes == gabrek.retail_attributes,
+      "Gabrek's maintained Agent-only attributes were not reversible");
 
   require(seed_spawn_record(gabrek.slot, gabrek.definition,
-                            gabrek_live_position.x + 1,
-                            gabrek_live_position.y,
+                            gabrek_live_position.x + 1, gabrek_live_position.y,
                             gabrek_live_position.z) &&
               vm.runtime().write16(gabrek_record + 0x24U,
                                    gabrek.retail_attributes) &&
-              vm.applyAgentMissionNpcOverrides(gabrek.mission, true,
-                                               profile) &&
+              vm.applyAgentMissionNpcOverrides(gabrek.mission, true, profile) &&
               vm.runtime().read16(gabrek_record + 0x24U,
                                   maintained_gabrek_attributes) &&
               maintained_gabrek_attributes == gabrek.retail_attributes &&
               seed_spawn_record(gabrek.slot, gabrek.definition,
-                                gabrek_live_position.x,
-                                gabrek_live_position.y,
+                                gabrek_live_position.x, gabrek_live_position.y,
                                 gabrek_live_position.z),
           "Gabrek maintenance accepted a neighbouring live position");
 
@@ -7569,27 +7657,23 @@ void testLegacyGameplayVmAgentDamageHook() {
 
   constexpr std::array<std::uint32_t, 3U> chapel_instances{
       0x801f9000U, 0x801f9040U, 0x801f9080U};
-  constexpr std::array<sf::game::LegacyNativePoint, 3U>
-      chapel_live_positions{
-          sf::game::LegacyNativePoint{21528, -18, 0},
-          sf::game::LegacyNativePoint{-3368, -3079, -6424},
-          sf::game::LegacyNativePoint{21528, -18, 0},
-      };
+  constexpr std::array<sf::game::LegacyNativePoint, 3U> chapel_live_positions{
+      sf::game::LegacyNativePoint{21528, -18, 0},
+      sf::game::LegacyNativePoint{-3368, -3079, -6424},
+      sf::game::LegacyNativePoint{21528, -18, 0},
+  };
   for (std::size_t index = 0U;
        index < sf::game::agent_chapel_guard_identities.size(); ++index) {
     const auto &identity = sf::game::agent_chapel_guard_identities[index];
     const auto record = object_records + identity.slot * object_record_stride;
-    require(seed_spawn_record(identity.slot, identity.definition,
-                              chapel_live_positions[index].x,
-                              chapel_live_positions[index].y,
-                              chapel_live_positions[index].z) &&
-                vm.runtime().write16(record + 0x24U,
-                                     identity.retail_attributes) &&
-                vm.runtime().write32(record + 0x34U,
-                                     chapel_instances[index]) &&
-                vm.runtime().write16(chapel_instances[index] + 2U,
-                                     identity.slot),
-            "Could not seed a live chapel-guard identity");
+    require(
+        seed_spawn_record(
+            identity.slot, identity.definition, chapel_live_positions[index].x,
+            chapel_live_positions[index].y, chapel_live_positions[index].z) &&
+            vm.runtime().write16(record + 0x24U, identity.retail_attributes) &&
+            vm.runtime().write32(record + 0x34U, chapel_instances[index]) &&
+            vm.runtime().write16(chapel_instances[index] + 2U, identity.slot),
+        "Could not seed a live chapel-guard identity");
   }
   require(vm.applyAgentMissionNpcOverrides(12U, true, profile),
           "Could not maintain the exact Agent chapel guards");

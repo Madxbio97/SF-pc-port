@@ -17,15 +17,15 @@ namespace sf::platform::detail {
 
 class PsyCrossRetailBriefing final {
 public:
-  PsyCrossRetailBriefing(const game::MissionPackage &mission,
-                         KeyboardMouseBindings bindings);
+  explicit PsyCrossRetailBriefing(const game::MissionPackage &mission);
   ~PsyCrossRetailBriefing();
 
   PsyCrossRetailBriefing(const PsyCrossRetailBriefing &) = delete;
   PsyCrossRetailBriefing &operator=(const PsyCrossRetailBriefing &) = delete;
 
   [[nodiscard]] bool draw(const assets::MissionBriefing &briefing,
-                          double retail_time) const;
+                          double retail_time,
+                          const InputPromptBindings &bindings) const;
 
 private:
   struct Impl;

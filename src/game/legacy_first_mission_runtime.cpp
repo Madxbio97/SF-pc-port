@@ -170,6 +170,15 @@ LegacyFirstMissionRuntime::LegacyFirstMissionRuntime(
       return;
     }
 
+    // Native bootstrap starts after the console frontend routine which
+    // normally selects vibration mode 3. Restore its exact RAM side effect
+    // before the first retail frame and before capturing restart snapshots;
+    // the host pause setting can explicitly disable it afterwards.
+    if (!vm_->setRetailVibrationEnabled(true)) {
+      markFault();
+      return;
+    }
+
     // Room 74's retail dynamic descriptor 6 owns the two opening CHEMO
     // actors. In the console loop it is activated before the first rail
     // draw; the host skips that frontend callback, so reproduce the exact
@@ -278,6 +287,18 @@ bool LegacyFirstMissionRuntime::restoreHostPlayerHeading(
 
 std::uint64_t LegacyFirstMissionRuntime::hostAimRayPatchCount() const noexcept {
   return vm_ ? vm_->hostAimRayPatchCount() : 0U;
+}
+
+LegacyPadMotorState LegacyFirstMissionRuntime::padMotorState() const noexcept {
+  return vm_ ? vm_->padMotorState() : LegacyPadMotorState{};
+}
+
+bool LegacyFirstMissionRuntime::setRetailVibrationEnabled(
+    bool enabled) noexcept {
+  if (!ready_ || finished_ || faulted_ || !vm_) {
+    return false;
+  }
+  return vm_->setRetailVibrationEnabled(enabled);
 }
 
 bool LegacyFirstMissionRuntime::applyHostWeaponMenuInput(
@@ -432,8 +453,7 @@ bool LegacyFirstMissionRuntime::setAgentDifficulty(bool enabled) noexcept {
   }
 
   const auto previous_difficulty = agent_difficulty_;
-  const auto previous_bomb_detonation =
-      agent_park2_bomb_detonation_percent_;
+  const auto previous_bomb_detonation = agent_park2_bomb_detonation_percent_;
   std::optional<LegacyGameplayVmSnapshot> snapshot;
   try {
     snapshot.emplace(vm_->captureSnapshot());

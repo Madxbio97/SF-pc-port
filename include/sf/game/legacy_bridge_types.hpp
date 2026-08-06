@@ -45,6 +45,20 @@ struct LegacyNativePoint {
                                        const LegacyNativePoint &) = default;
 };
 
+// Latest actuator bytes sampled from the table registered by retail PadSetAct
+// for controller zero. Sequence advances for every valid PadSetAct command and
+// whenever a later retail VBlank observes changed bytes, so the host can
+// distinguish renewed output from stale state.
+struct LegacyPadMotorState {
+  std::uint8_t small{};
+  std::uint8_t large{};
+  std::uint64_t sequence{};
+
+  [[nodiscard]] friend constexpr bool
+  operator==(const LegacyPadMotorState &,
+             const LegacyPadMotorState &) noexcept = default;
+};
+
 inline constexpr std::size_t legacy_inventory_weapon_count = 26U;
 inline constexpr std::size_t legacy_weapon_events_per_frame = 16U;
 inline constexpr std::size_t legacy_weapon_impacts_per_event = 16U;
@@ -138,8 +152,8 @@ struct LegacyWeaponEventBridgeState {
   std::uint32_t hit_result{};
   LegacyNativePoint origin;
   LegacyNativePoint endpoint;
-  std::array<LegacyWeaponImpactBridgeState,
-             legacy_weapon_impacts_per_event> impacts{};
+  std::array<LegacyWeaponImpactBridgeState, legacy_weapon_impacts_per_event>
+      impacts{};
   std::uint8_t impact_count{};
   bool first_person{};
   bool enabled{};
@@ -428,8 +442,7 @@ legacyGuestSpriteSortTransform(const LegacyGuestSpriteBridgeState &sprite,
 
 inline constexpr std::uint32_t legacy_retail_scope_sprite_stride = 0x2cU;
 inline constexpr std::uint32_t legacy_retail_scope_vertical_sprite_count = 5U;
-inline constexpr std::uint32_t legacy_retail_scope_horizontal_sprite_count =
-    8U;
+inline constexpr std::uint32_t legacy_retail_scope_horizontal_sprite_count = 8U;
 
 [[nodiscard]] constexpr bool legacyGuestSpriteIsRetailScopeOverlayAddress(
     std::uint32_t source, std::uint32_t vertical_begin,
@@ -496,8 +509,7 @@ struct LegacyGuestRawPacketAddressRange {
   std::uint32_t count{};
 
   [[nodiscard]] constexpr bool contains(std::uint32_t source) const noexcept {
-    return stride != 0U && source >= begin &&
-           source < begin + stride * count &&
+    return stride != 0U && source >= begin && source < begin + stride * count &&
            (source - begin) % stride == 0U;
   }
 };
@@ -554,8 +566,7 @@ inline constexpr std::array<LegacyGuestRawPacketAddressRange, 4U>
   return packet.effect_particle >= 0 && packet.effect_world_position_valid;
 }
 
-inline constexpr std::uint32_t legacy_retail_offscreen_endpoint =
-    0x04000400U;
+inline constexpr std::uint32_t legacy_retail_offscreen_endpoint = 0x04000400U;
 
 [[nodiscard]] constexpr bool legacyGuestRawPacketIsRetailTaserConductor(
     const LegacyGuestRawPacketBridgeState &packet) noexcept {

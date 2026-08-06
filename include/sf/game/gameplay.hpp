@@ -368,8 +368,7 @@ legacyGameplayHudPresentationActive(bool mission_complete, bool hud_hidden,
   return !mission_complete && (!hud_hidden || mission_failed);
 }
 
-[[nodiscard]] constexpr bool
-legacyTerminalFailureFrameSubmissionRequired(
+[[nodiscard]] constexpr bool legacyTerminalFailureFrameSubmissionRequired(
     bool failure_restart_requested, std::uint64_t presentation_sequence,
     std::uint64_t submitted_sequence) noexcept {
   return failure_restart_requested && presentation_sequence != 0U &&
@@ -515,22 +514,19 @@ legacyDedicatedHmdWeapon(LegacyDedicatedHmdActor actor) noexcept {
   return std::nullopt;
 }
 
-[[nodiscard]] constexpr LegacyNativePoint legacyHmdBoneWorldTranslation(
-    const assets::MissionTransform &bone) noexcept {
+[[nodiscard]] constexpr LegacyNativePoint
+legacyHmdBoneWorldTranslation(const assets::MissionTransform &bone) noexcept {
   // MissionTransform stores native renderer Y inverted for transformPoint().
   return LegacyNativePoint{bone.x, -bone.y, bone.z};
 }
 
 inline constexpr std::size_t legacy_park2_flame_visibility_sample_count = 5U;
-inline constexpr std::size_t
-    legacy_park2_flame_minimum_visible_samples = 1U;
+inline constexpr std::size_t legacy_park2_flame_minimum_visible_samples = 1U;
 
-[[nodiscard]] constexpr bool legacyPark2FlameDamageVisible(
-    std::span<const bool> visible_samples) noexcept {
-  return visible_samples.size() ==
-             legacy_park2_flame_visibility_sample_count &&
-         static_cast<std::size_t>(
-             std::ranges::count(visible_samples, true)) >=
+[[nodiscard]] constexpr bool
+legacyPark2FlameDamageVisible(std::span<const bool> visible_samples) noexcept {
+  return visible_samples.size() == legacy_park2_flame_visibility_sample_count &&
+         static_cast<std::size_t>(std::ranges::count(visible_samples, true)) >=
              legacy_park2_flame_minimum_visible_samples;
 }
 
@@ -900,6 +896,7 @@ public:
   applyRetryInventoryState(const CampaignCarryState &state) noexcept;
   [[nodiscard]] bool
   setAudioVolumes(const GameplayAudioVolumes &volumes) noexcept;
+  [[nodiscard]] bool setVibrationEnabled(bool enabled) noexcept;
   [[nodiscard]] std::optional<GameplayAudioVolumes>
   audioVolumes() const noexcept;
   [[nodiscard]] bool advanceAudioFrameClock() noexcept;
@@ -1067,6 +1064,7 @@ public:
     return legacy_presentation_sequence_;
   }
   [[nodiscard]] std::uint64_t legacyAimRayPatchCount() const noexcept;
+  [[nodiscard]] LegacyPadMotorState legacyPadMotorState() const noexcept;
   // Read-only bridge identity used by production diagnostics: element N is
   // the retail object-record slot currently presented by SceneObject N, or
   // -1 when the native scene has no guest owner on this frame.

@@ -230,36 +230,40 @@ void testKeyboardMousePromptText() {
                                                 bindings) ==
               sf::platform::KeyboardMousePromptText{
                   "Press START to see objectives",
-                  "Press ESCAPE to see objectives"},
+                  "Press ESCAPE to see objectives",
+                  sf::platform::InputPromptAction::pause},
           "START prompt did not use the launcher pause binding");
   bindings[KeyboardMouseAction::interact] = KeyboardMouseInput::mouse_left;
   require(sf::platform::keyboardMousePromptText("Press X to Contact Lian Xing",
                                                 bindings) ==
               sf::platform::KeyboardMousePromptText{
                   "Press X to Contact Lian Xing",
-                  "Press MOUSE LEFT to Contact Lian Xing"},
+                  "Press MOUSE LEFT to Contact Lian Xing",
+                  sf::platform::InputPromptAction::interact},
           "Contact prompt did not use a remapped mouse interaction binding");
-  require(sf::platform::keyboardMousePromptText(
-              "Press BUTTON to Contact Lian Xing", bindings) ==
-              sf::platform::KeyboardMousePromptText{
-                  "Press BUTTON to Contact Lian Xing",
-                  "Press MOUSE LEFT to Contact Lian Xing"},
-          "Reconstructed contact prompt did not resolve its button placeholder");
+  require(
+      sf::platform::keyboardMousePromptText("Press BUTTON to Contact Lian Xing",
+                                            bindings) ==
+          sf::platform::KeyboardMousePromptText{
+              "Press BUTTON to Contact Lian Xing",
+              "Press MOUSE LEFT to Contact Lian Xing",
+              sf::platform::InputPromptAction::interact},
+      "Reconstructed contact prompt did not resolve its button placeholder");
   bindings[KeyboardMouseAction::interact] = KeyboardMouseInput::left_bracket;
   require(
       sf::platform::keyboardMousePromptText("Press CROSS to continue", bindings)
               ->bound_text == "Press LEFT BRACKET to continue",
       "A bind absent from FONTA was not converted to drawable text");
   bindings[KeyboardMouseAction::pause] = KeyboardMouseInput::mouse_x2;
-  require(sf::platform::keyboardMouseHintText(
-              "%x select   %t back", bindings) ==
-              "LEFT BRACKET select   MOUSE X2 back",
-          "Native menu hints did not resolve both active PC bindings");
+  require(
+      sf::platform::keyboardMouseHintText("%x select   %t back", bindings) ==
+          "LEFT BRACKET select   MOUSE X2 back",
+      "Native menu hints did not resolve both active PC bindings");
   require(sf::platform::keyboardMouseHintText("ordinary text", bindings) ==
               "ordinary text",
           "Native menu hint resolver changed text without control tokens");
-  require(sf::platform::keyboardMouseHintText(
-              "Press new button for action", bindings) ==
+  require(sf::platform::keyboardMouseHintText("Press new button for action",
+                                              bindings) ==
               "Press new button for action",
           "Binding-capture instructions were mistaken for control tokens");
   bindings[KeyboardMouseAction::interact] = KeyboardMouseInput::keypad_plus;
@@ -274,6 +278,159 @@ void testKeyboardMousePromptText() {
           "Ordinary retail text was mistaken for a control prompt");
 }
 
+void testDeviceAwareInputPromptText() {
+  using sf::platform::ControllerInputProtocol;
+  using sf::platform::ControllerPromptFamily;
+  using sf::platform::InputPromptAction;
+  using sf::platform::InputPromptBindingNames;
+  using sf::platform::InputPromptDevice;
+  using sf::platform::InputPromptText;
+  using sf::platform::InputPromptTokenActions;
+  using sf::platform::KeyboardMouseAction;
+  using sf::platform::KeyboardMouseInput;
+
+  struct FamilyNames {
+    ControllerPromptFamily family;
+    std::array<std::string_view, 16U> names;
+  };
+  constexpr std::array family_names{
+      FamilyNames{ControllerPromptFamily::generic,
+                  {"BUTTON 7", "BUTTON 9", "BUTTON 10", "BUTTON 8", "DPAD UP",
+                   "DPAD RIGHT", "DPAD DOWN", "DPAD LEFT", "LEFT TRIGGER",
+                   "RIGHT TRIGGER", "BUTTON 5", "BUTTON 6", "BUTTON 4",
+                   "BUTTON 2", "BUTTON 1", "BUTTON 3"}},
+      FamilyNames{ControllerPromptFamily::xbox,
+                  {"VIEW", "LEFT STICK", "RIGHT STICK", "MENU", "DPAD UP",
+                   "DPAD RIGHT", "DPAD DOWN", "DPAD LEFT", "LT", "RT", "LB",
+                   "RB", "Y", "B", "A", "X"}},
+      FamilyNames{ControllerPromptFamily::playstation,
+                  {"SHARE", "L3", "R3", "OPTIONS", "DPAD UP", "DPAD RIGHT",
+                   "DPAD DOWN", "DPAD LEFT", "L2", "R2", "L1", "R1", "TRIANGLE",
+                   "CIRCLE", "CROSS", "SQUARE"}},
+      FamilyNames{ControllerPromptFamily::nintendo,
+                  {"MINUS", "LEFT STICK", "RIGHT STICK", "PLUS", "DPAD UP",
+                   "DPAD RIGHT", "DPAD DOWN", "DPAD LEFT", "ZL", "ZR", "L", "R",
+                   "X", "A", "B", "Y"}},
+  };
+  for (const auto &entry : family_names) {
+    for (auto index = std::size_t{}; index < entry.names.size(); ++index) {
+      require(sf::platform::controllerButtonPromptName(
+                  entry.family, static_cast<std::uint16_t>(1U << index)) ==
+                  entry.names[index],
+              "Controller label did not follow the real PS1 bit order");
+    }
+  }
+  require(sf::platform::controllerButtonPromptName(
+              ControllerPromptFamily::generic, std::uint16_t{0x4000U}) ==
+              "BUTTON 1",
+          "Generic fallback did not identify physical Cross as BUTTON 1");
+  require(sf::platform::controllerButtonPromptName(ControllerPromptFamily::xbox,
+                                                   0U) == "UNBOUND" &&
+              sf::platform::controllerButtonPromptName(
+                  ControllerPromptFamily::xbox,
+                  std::uint16_t{(1U << 5U) | (1U << 6U)}) == "UNBOUND",
+          "Non-singular PS1 button masks were presented as physical buttons");
+
+  auto keyboard = sf::platform::defaultKeyboardMouseBindings();
+  keyboard[KeyboardMouseAction::interact] = KeyboardMouseInput::mouse_left;
+  keyboard[KeyboardMouseAction::pause] = KeyboardMouseInput::mouse_x2;
+  keyboard[KeyboardMouseAction::fire] = KeyboardMouseInput::keypad_plus;
+  const auto keyboard_prompts =
+      sf::platform::keyboardMouseInputPromptBindings(keyboard);
+  require(keyboard_prompts.device == InputPromptDevice::keyboard_mouse &&
+              keyboard_prompts.controller_protocol ==
+                  ControllerInputProtocol::unknown &&
+              sf::platform::inputPromptLabel(keyboard_prompts,
+                                             InputPromptAction::confirm) ==
+                  "MOUSE LEFT" &&
+              sf::platform::inputPromptLabel(
+                  keyboard_prompts, InputPromptAction::cancel) == "MOUSE X2" &&
+              sf::platform::inputPromptLabel(
+                  keyboard_prompts, InputPromptAction::fire) == "NUMPAD PLUS",
+          "Keyboard/mouse prompt bindings lost semantic action labels");
+
+  const auto xbox = sf::platform::controllerInputPromptBindings(
+      ControllerInputProtocol::xinput,
+      InputPromptBindingNames{
+          .confirm = sf::platform::controllerButtonPromptName(
+              ControllerPromptFamily::xbox, std::uint16_t{0x4000U}),
+          .cancel = sf::platform::controllerButtonPromptName(
+              ControllerPromptFamily::xbox, std::uint16_t{0x1000U}),
+          .pause = sf::platform::controllerButtonPromptName(
+              ControllerPromptFamily::xbox, std::uint16_t{0x0008U}),
+          .interact = sf::platform::controllerButtonPromptName(
+              ControllerPromptFamily::xbox, std::uint16_t{0x1000U}),
+          .fire = sf::platform::controllerButtonPromptName(
+              ControllerPromptFamily::xbox, std::uint16_t{0x8000U}),
+      });
+  require(xbox.device == InputPromptDevice::controller &&
+              xbox.controller_protocol == ControllerInputProtocol::xinput,
+          "XInput prompt metadata was not retained");
+  require(
+      sf::platform::inputPromptText("Press %x to continue", xbox) ==
+              InputPromptText{"Press X to continue", "Press A to continue"} &&
+          sf::platform::inputPromptText("Press START to see objectives",
+                                        xbox) ==
+              InputPromptText{"Press START to see objectives",
+                              "Press MENU to see objectives",
+                              InputPromptAction::pause} &&
+          sf::platform::inputPromptText("Press X to Contact Lian Xing", xbox) ==
+              InputPromptText{"Press X to Contact Lian Xing",
+                              "Press Y to Contact Lian Xing",
+                              InputPromptAction::interact} &&
+          sf::platform::inputPromptText("Press BUTTON to Contact Lian Xing",
+                                        xbox) ==
+              InputPromptText{"Press BUTTON to Contact Lian Xing",
+                              "Press Y to Contact Lian Xing",
+                              InputPromptAction::interact},
+      "Service prompts did not resolve controller actions semantically");
+  const auto continue_prompt =
+      sf::platform::inputPromptText("Press %x to continue", xbox);
+  const auto contact_prompt =
+      sf::platform::inputPromptText("Press X to Contact Lian Xing", xbox);
+  require(continue_prompt && contact_prompt &&
+              sf::platform::inputHintText(
+                  "LOCALIZED %x CONTINUE", xbox,
+                  InputPromptTokenActions{.x = continue_prompt->action}) ==
+                  "LOCALIZED A CONTINUE" &&
+              sf::platform::inputHintText(
+                  "LOCALIZED %x CONTACT", xbox,
+                  InputPromptTokenActions{.x = contact_prompt->action}) ==
+                  "LOCALIZED Y CONTACT",
+          "Localized %x lost Confirm versus Interact semantics");
+
+  require(sf::platform::inputHintText("%x select   %t resume", xbox) ==
+                  "A select   MENU resume" &&
+              sf::platform::inputHintText(
+                  "%X accept\t%T cancel", xbox,
+                  InputPromptTokenActions{.x = InputPromptAction::confirm,
+                                          .t = InputPromptAction::cancel}) ==
+                  "A accept Y cancel",
+          "Controller hint tokens did not honor caller-supplied roles");
+  require(!sf::platform::inputPromptText("Objective added", xbox),
+          "Ordinary service text was mistaken for a controller prompt");
+
+  for (const auto protocol : {ControllerInputProtocol::direct_input,
+                              ControllerInputProtocol::raw_input}) {
+    const auto generic = sf::platform::controllerInputPromptBindings(
+        protocol, {.confirm = "button 2",
+                   .cancel = "button 3",
+                   .pause = "button 10",
+                   .interact = "button 4",
+                   .fire = ""});
+    require(generic.controller_protocol == protocol &&
+                sf::platform::inputPromptLabel(
+                    generic, InputPromptAction::confirm) == "BUTTON 2" &&
+                sf::platform::inputPromptLabel(
+                    generic, InputPromptAction::interact) == "BUTTON 4" &&
+                sf::platform::inputPromptLabel(
+                    generic, InputPromptAction::fire) == "UNBOUND",
+            "DInput/Raw Input labels were not normalized safely");
+  }
+  require(sf::platform::inputPromptLabel(
+              xbox, static_cast<InputPromptAction>(0xffU)) == "UNBOUND",
+          "Invalid prompt action did not fall back safely");
+}
 void testBoundKeyboardMouseActionMatrix() {
   using sf::platform::KeyboardMouseAction;
   using sf::platform::KeyboardMouseBindings;
@@ -448,6 +605,27 @@ void testTurnControllerLookAndInvert() {
               near(output.controller_look_yaw, 1.0) &&
               near(output.controller_look_pitch, -1.0),
           "Right-stick look was not kept as an absolute sample");
+
+  sf::platform::PlayerInputMapper proportional{
+      sf::platform::PlayerInputConfiguration{
+          .look_deadzone = 0.0,
+          .controller_yaw_sensitivity = 1.0,
+          .controller_pitch_sensitivity = 1.0,
+      }};
+  sf::platform::RawPlayerInput half_stick;
+  half_stick.controller.aim = true;
+  half_stick.controller.right_x = 0.5;
+  half_stick.controller.right_y = -0.5;
+  const auto first_person = sf::platform::firstPersonAimInput(
+      proportional.update(half_stick));
+  require(near(first_person.directional_look_per_guest_tick.yaw,
+               sf::platform::controller_first_person_yaw_units_per_tick *
+                   0.5) &&
+              near(first_person.directional_look_per_guest_tick.pitch,
+                   -sf::platform::controller_first_person_pitch_units_per_tick *
+                       0.5),
+          "Half-stick first-person aim was clamped to a digital full-rate "
+          "sample");
 }
 
 void testRefreshIndependentLookLatch() {
@@ -755,8 +933,8 @@ void testPcAimAndOpposingControlConflicts() {
               near(first_person.mouse_look.pitch, 1.0) &&
               near(first_person.directional_look_per_guest_tick.yaw, 0.0) &&
               near(first_person.directional_look_per_guest_tick.pitch, 0.0) &&
-              near(first_person.move, 1.0) &&
-              near(first_person.strafe, -1.0) && near(first_person.peek, 0.0),
+              near(first_person.move, 1.0) && near(first_person.strafe, -1.0) &&
+              near(first_person.peek, 0.0),
           "First-person routing lost WASD locomotion or mouse sight input");
 
   raw.pc.strafe_right = true;
@@ -782,9 +960,9 @@ void testPcAimAndOpposingControlConflicts() {
   require(near(neutral_first_person.mouse_look.yaw, 0.0) &&
               near(neutral_first_person.mouse_look.pitch, 0.0) &&
               near(neutral_first_person.directional_look_per_guest_tick.yaw,
-                   sf::platform::retail_first_person_yaw_units_per_tick) &&
+                   sf::platform::controller_first_person_yaw_units_per_tick) &&
               near(neutral_first_person.directional_look_per_guest_tick.pitch,
-                   -sf::platform::retail_first_person_pitch_units_per_tick) &&
+                   -sf::platform::controller_first_person_pitch_units_per_tick) &&
               near(neutral_first_person.move, 1.0) &&
               near(neutral_first_person.strafe, -1.0) &&
               !near(neutral_mouse.controller_look_yaw, 0.0) &&
@@ -845,6 +1023,7 @@ int main() {
   try {
     testKeyboardMouseBindingCatalog();
     testKeyboardMousePromptText();
+    testDeviceAwareInputPromptText();
     testBoundKeyboardMouseActionMatrix();
     testPcActionsAndEdges();
     testFirstPersonMousePrecisionTuning();

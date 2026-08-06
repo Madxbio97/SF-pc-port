@@ -6,15 +6,22 @@
 
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
+// WinSDK's property-sheet declarations pulled by commdlg.h require the base
+// Win32 calling-convention and handle types first.
+// clang-format off
 #include <windows.h>
 #include <commdlg.h>
 #include <objidl.h>
+// clang-format on
 #ifndef GDIPVER
 #define GDIPVER 0x0110
 #endif
 #include <gdiplus.h>
 
+#include <SDL.h>
+
 #include <algorithm>
+#include <bit>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -54,11 +61,13 @@ constexpr int vsync_control_id = 1016;
 constexpr int frame_limit_control_id = 1017;
 constexpr int trilinear_control_id = 1018;
 constexpr int volumetric_fog_control_id = 1020;
+constexpr int controller_protocol_control_id = 1021;
 constexpr int binding_list_control_id = 2001;
 constexpr int change_binding_control_id = 2002;
 constexpr int clear_binding_control_id = 2003;
 constexpr int default_bindings_control_id = 2004;
 constexpr int close_bindings_control_id = 2005;
+constexpr int input_device_control_id = 2006;
 constexpr int previous_dossier_control_id = 3001;
 constexpr int next_dossier_control_id = 3002;
 constexpr int close_dossier_control_id = 3003;
@@ -80,6 +89,298 @@ constexpr COLORREF launcher_muted_text_color = RGB(103, 126, 190);
 constexpr COLORREF launcher_launch_color = RGB(68, 211, 151);
 constexpr COLORREF dossier_accent_color = RGB(183, 239, 67);
 
+constexpr UINT controller_capture_timer_id = 1U;
+
+std::filesystem::path executableDirectory();
+std::wstring widenUtf8(std::string_view text);
+
+void configureLauncherControllerProtocol(ControllerProtocol protocol) noexcept {
+  const auto set = [](const char *name, bool enabled) {
+    static_cast<void>(
+        SDL_SetHintWithPriority(name, enabled ? "1" : "0", SDL_HINT_OVERRIDE));
+  };
+  const auto automatic = protocol == ControllerProtocol::automatic;
+  set(SDL_HINT_XINPUT_ENABLED,
+      automatic || protocol == ControllerProtocol::xinput);
+  set(SDL_HINT_DIRECTINPUT_ENABLED,
+      automatic || protocol == ControllerProtocol::direct_input);
+  set(SDL_HINT_JOYSTICK_RAWINPUT,
+      automatic || protocol == ControllerProtocol::raw_input);
+  set(SDL_HINT_JOYSTICK_RAWINPUT_CORRELATE_XINPUT, true);
+  set(SDL_HINT_JOYSTICK_WGI, automatic);
+  set(SDL_HINT_JOYSTICK_HIDAPI, automatic);
+}
+
+ControllerPromptFamily controllerFamilyFromName(std::wstring name) noexcept {
+  std::ranges::transform(name, name.begin(),
+                         [](wchar_t value) { return std::towlower(value); });
+  const auto contains = [&name](std::wstring_view value) {
+    return name.find(value) != std::wstring::npos;
+  };
+  if (contains(L"xbox") || contains(L"xinput")) {
+    return ControllerPromptFamily::xbox;
+  }
+  if (contains(L"playstation") || contains(L"dualshock") ||
+      contains(L"dualsense") || contains(L"ps3") || contains(L"ps4") ||
+      contains(L"ps5")) {
+    return ControllerPromptFamily::playstation;
+  }
+  if (contains(L"nintendo") || contains(L"switch") ||
+      contains(L"joy-con")) {
+    return ControllerPromptFamily::nintendo;
+  }
+  return ControllerPromptFamily::generic;
+}
+
+class LauncherControllerCapture final {
+public:
+  LauncherControllerCapture() = default;
+  LauncherControllerCapture(const LauncherControllerCapture &) = delete;
+  LauncherControllerCapture &operator=(const LauncherControllerCapture &) =
+      delete;
+  ~LauncherControllerCapture() { shutdown(); }
+
+  bool initialize(ControllerProtocol protocol) noexcept {
+    if (initialized_) {
+      return true;
+    }
+    configureLauncherControllerProtocol(protocol);
+    if (SDL_InitSubSystem(SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER) != 0) {
+      return false;
+    }
+    initialized_ = true;
+    SDL_JoystickEventState(SDL_ENABLE);
+    SDL_GameControllerEventState(SDL_ENABLE);
+    static_cast<void>(SDL_GameControllerAddMappingsFromFile(
+        (executableDirectory() / L"gamecontrollerdb.txt").string().c_str()));
+    static_cast<void>(update());
+    return true;
+  }
+
+  bool update() noexcept {
+    if (!initialized_) {
+      return false;
+    }
+    const auto previous_instance = instance_id_;
+    const auto previous_family = family_;
+    const auto previous_name = name_;
+    SDL_PumpEvents();
+    SDL_GameControllerUpdate();
+    SDL_JoystickUpdate();
+    SDL_FlushEvents(SDL_JOYAXISMOTION, SDL_JOYDEVICEREMOVED);
+    SDL_FlushEvents(SDL_CONTROLLERAXISMOTION, SDL_CONTROLLERDEVICEREMAPPED);
+    if (joystick_ != nullptr && SDL_JoystickGetAttached(joystick_) == SDL_FALSE) {
+      closeController();
+    }
+    if (joystick_ == nullptr) {
+      openFirstController();
+    }
+    return previous_instance != instance_id_ || previous_family != family_ ||
+           previous_name != name_;
+  }
+
+  [[nodiscard]] bool connected() const noexcept { return joystick_ != nullptr; }
+  [[nodiscard]] ControllerPromptFamily family() const noexcept {
+    return family_;
+  }
+  [[nodiscard]] std::wstring_view name() const noexcept { return name_; }
+
+  void beginCapture() noexcept {
+    capture_active_ = true;
+    previous_buttons_ = sampleButtons();
+    capture_armed_ = previous_buttons_ == 0U;
+    previous_cancel_ = sampleCancelButton();
+  }
+
+  void cancelCapture() noexcept {
+    capture_active_ = false;
+    capture_armed_ = false;
+    previous_buttons_ = 0U;
+  }
+
+  [[nodiscard]] bool pollCancelRequest() noexcept {
+    if (!capture_active_) {
+      return false;
+    }
+    const auto cancel = sampleCancelButton();
+    const auto pressed = cancel && !previous_cancel_;
+    previous_cancel_ = cancel;
+    if (pressed) {
+      cancelCapture();
+    }
+    return pressed;
+  }
+
+  [[nodiscard]] std::optional<std::uint32_t> pollCapturedButton() noexcept {
+    if (!capture_active_) {
+      return std::nullopt;
+    }
+    static_cast<void>(update());
+    const auto buttons = sampleButtons();
+    if (!capture_armed_) {
+      previous_buttons_ = buttons;
+      if (buttons == 0U) {
+        capture_armed_ = true;
+      }
+      return std::nullopt;
+    }
+    const auto pressed = buttons & ~previous_buttons_;
+    previous_buttons_ = buttons;
+    if (!std::has_single_bit(pressed) ||
+        (pressed & game::bindable_controller_button_mask) != pressed) {
+      return std::nullopt;
+    }
+    cancelCapture();
+    return pressed;
+  }
+
+private:
+  static ControllerPromptFamily
+  familyFromController(SDL_GameController *controller,
+                       std::wstring_view name) noexcept {
+    switch (SDL_GameControllerGetType(controller)) {
+    case SDL_CONTROLLER_TYPE_XBOX360:
+    case SDL_CONTROLLER_TYPE_XBOXONE:
+      return ControllerPromptFamily::xbox;
+    case SDL_CONTROLLER_TYPE_PS3:
+    case SDL_CONTROLLER_TYPE_PS4:
+    case SDL_CONTROLLER_TYPE_PS5:
+      return ControllerPromptFamily::playstation;
+    case SDL_CONTROLLER_TYPE_NINTENDO_SWITCH_PRO:
+    case SDL_CONTROLLER_TYPE_NINTENDO_SWITCH_JOYCON_LEFT:
+    case SDL_CONTROLLER_TYPE_NINTENDO_SWITCH_JOYCON_RIGHT:
+    case SDL_CONTROLLER_TYPE_NINTENDO_SWITCH_JOYCON_PAIR:
+      return ControllerPromptFamily::nintendo;
+    default:
+      return controllerFamilyFromName(std::wstring{name});
+    }
+  }
+
+  void openFirstController() noexcept {
+    for (auto device_index = 0; device_index < SDL_NumJoysticks();
+         ++device_index) {
+      if (SDL_IsGameController(device_index) == SDL_TRUE) {
+        controller_ = SDL_GameControllerOpen(device_index);
+        if (controller_ != nullptr) {
+          joystick_ = SDL_GameControllerGetJoystick(controller_);
+        }
+      } else {
+        joystick_ = SDL_JoystickOpen(device_index);
+      }
+      if (joystick_ == nullptr) {
+        continue;
+      }
+      instance_id_ = SDL_JoystickInstanceID(joystick_);
+      const auto *device_name = controller_ != nullptr
+                                    ? SDL_GameControllerName(controller_)
+                                    : SDL_JoystickName(joystick_);
+      name_ = widenUtf8(device_name != nullptr ? device_name : "Controller");
+      family_ = controller_ != nullptr
+                    ? familyFromController(controller_, name_)
+                    : controllerFamilyFromName(name_);
+      return;
+    }
+  }
+
+  void closeController() noexcept {
+    if (controller_ != nullptr) {
+      SDL_GameControllerClose(controller_);
+    } else if (joystick_ != nullptr) {
+      SDL_JoystickClose(joystick_);
+    }
+    controller_ = nullptr;
+    joystick_ = nullptr;
+    instance_id_ = -1;
+    family_ = ControllerPromptFamily::generic;
+    name_.clear();
+  }
+
+  void shutdown() noexcept {
+    cancelCapture();
+    closeController();
+    if (initialized_) {
+      SDL_QuitSubSystem(SDL_INIT_GAMECONTROLLER | SDL_INIT_JOYSTICK);
+      initialized_ = false;
+    }
+  }
+
+  [[nodiscard]] std::uint32_t sampleButtons() const noexcept {
+    if (joystick_ == nullptr) {
+      return 0U;
+    }
+    std::uint32_t result{};
+    const auto set = [&result](std::uint32_t mask, bool pressed) {
+      if (pressed) {
+        result |= mask;
+      }
+    };
+    if (controller_ != nullptr) {
+      const auto button = [this](SDL_GameControllerButton value) {
+        return SDL_GameControllerGetButton(controller_, value) != 0;
+      };
+      set(0x4000U, button(SDL_CONTROLLER_BUTTON_A));
+      set(0x2000U, button(SDL_CONTROLLER_BUTTON_B));
+      set(0x8000U, button(SDL_CONTROLLER_BUTTON_X));
+      set(0x1000U, button(SDL_CONTROLLER_BUTTON_Y));
+      set(0x0400U, button(SDL_CONTROLLER_BUTTON_LEFTSHOULDER));
+      set(0x0800U, button(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER));
+      set(0x0001U, button(SDL_CONTROLLER_BUTTON_BACK));
+      set(0x0100U, SDL_GameControllerGetAxis(
+                       controller_, SDL_CONTROLLER_AXIS_TRIGGERLEFT) > 16384);
+      set(0x0200U, SDL_GameControllerGetAxis(
+                       controller_, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > 16384);
+      return result & game::bindable_controller_button_mask;
+    }
+
+    const auto joystick_button = [this](int index) {
+      return index < SDL_JoystickNumButtons(joystick_) &&
+             SDL_JoystickGetButton(joystick_, index) != 0;
+    };
+    set(0x4000U, joystick_button(0));
+    set(0x2000U, joystick_button(1));
+    set(0x8000U, joystick_button(2));
+    set(0x1000U, joystick_button(3));
+    set(0x0400U, joystick_button(4));
+    set(0x0800U, joystick_button(5));
+    set(0x0001U, joystick_button(6));
+    const auto axes = SDL_JoystickNumAxes(joystick_);
+    const auto buttons = SDL_JoystickNumButtons(joystick_);
+    const auto button_triggers = axes < 5 && buttons >= 12;
+    if (button_triggers) {
+      set(0x0100U, joystick_button(10));
+      set(0x0200U, joystick_button(11));
+    } else if (axes == 5) {
+      const auto trigger_axis = SDL_JoystickGetAxis(joystick_, 2);
+      set(0x0100U, trigger_axis < -16384);
+      set(0x0200U, trigger_axis > 16384);
+    } else if (axes >= 6) {
+      set(0x0100U, SDL_JoystickGetAxis(joystick_, 4) > 16384);
+      set(0x0200U, SDL_JoystickGetAxis(joystick_, 5) > 16384);
+    }
+    return result & game::bindable_controller_button_mask;
+  }
+
+  [[nodiscard]] bool sampleCancelButton() const noexcept {
+    if (controller_ != nullptr) {
+      return SDL_GameControllerGetButton(controller_,
+                                         SDL_CONTROLLER_BUTTON_START) != 0;
+    }
+    return joystick_ != nullptr && SDL_JoystickNumButtons(joystick_) > 7 &&
+           SDL_JoystickGetButton(joystick_, 7) != 0;
+  }
+
+  bool initialized_{};
+  SDL_GameController *controller_{};
+  SDL_Joystick *joystick_{};
+  SDL_JoystickID instance_id_{-1};
+  ControllerPromptFamily family_{ControllerPromptFamily::generic};
+  std::wstring name_;
+  bool capture_active_{};
+  bool capture_armed_{};
+  std::uint32_t previous_buttons_{};
+  bool previous_cancel_{};
+};
+
 struct LauncherState {
   GraphicsSettings settings;
   KeyboardMouseBindings input;
@@ -91,6 +392,7 @@ struct LauncherState {
   HWND aspect_combo{};
   HWND antialiasing_combo{};
   HWND frame_limit_combo{};
+  HWND controller_protocol_combo{};
   HWND game_image_edit{};
   HWND language_combo{};
   int desktop_width{};
@@ -108,8 +410,11 @@ struct LauncherState {
 
 struct ControlsState {
   KeyboardMouseBindings *input{};
+  ControllerButtonBindings *controller{};
   HWND list{};
   HWND change_button{};
+  HWND clear_button{};
+  HWND input_device_combo{};
   HWND status{};
   HFONT title_font{};
   HFONT heading_font{};
@@ -117,7 +422,11 @@ struct ControlsState {
   HBRUSH background_brush{};
   HBRUSH panel_brush{};
   std::size_t selected{};
-  std::optional<KeyboardMouseAction> capture;
+  std::optional<std::size_t> capture;
+  ControllerProtocol protocol{ControllerProtocol::automatic};
+  bool controller_mode{};
+  LauncherControllerCapture controller_capture;
+  bool accepted{};
   bool finished{};
 };
 
@@ -213,6 +522,31 @@ void writeProfileInteger(const std::filesystem::path &path,
   static_cast<void>(
       WritePrivateProfileStringW(section, key, text.c_str(), path.c_str()));
 }
+bool writeControllerBindingsFile(
+    const std::filesystem::path &path,
+    const ControllerButtonBindings &bindings) {
+  if (!game::areControllerBindingsValid(bindings)) {
+    return false;
+  }
+  std::wstring section_data;
+  for (const auto &metadata : game::controllerActionCatalog()) {
+    const auto key = widenAscii(metadata.config_key);
+    const auto value =
+        std::to_wstring(static_cast<int>(bindings[metadata.action]));
+    section_data.append(key);
+    section_data.push_back(L'=');
+    section_data.append(value);
+    section_data.push_back(L'\0');
+  }
+  section_data.push_back(L'\0');
+  const auto stored =
+      WritePrivateProfileSectionW(L"ControllerBindings", section_data.c_str(),
+                                  path.c_str()) != FALSE;
+  const auto flushed =
+      WritePrivateProfileStringW(nullptr, nullptr, nullptr, path.c_str()) !=
+      FALSE;
+  return stored && flushed;
+}
 
 std::filesystem::path loadGameImagePath() {
   const auto path = launcherSettingsPath(false);
@@ -281,6 +615,13 @@ void loadSettingsFile(GraphicsSettings &graphics, KeyboardMouseBindings &input,
           graphics.aspect_ratio == AspectRatioMode::adaptive ? 0 : 1) == 0
           ? AspectRatioMode::adaptive
           : AspectRatioMode::original_4_3;
+  const auto controller_protocol =
+      readProfileInteger(path, L"Controller", L"Protocol", 0);
+  if (controller_protocol >= static_cast<int>(ControllerProtocol::automatic) &&
+      controller_protocol <= static_cast<int>(ControllerProtocol::raw_input)) {
+    graphics.controller_protocol =
+        static_cast<ControllerProtocol>(controller_protocol);
+  }
   language = readProfileInteger(path, L"Game", L"Locale", 0) == 1
                  ? game::GameLanguage::russian_vit
                  : game::GameLanguage::english;
@@ -294,6 +635,18 @@ void loadSettingsFile(GraphicsSettings &graphics, KeyboardMouseBindings &input,
     if (isValidKeyboardMouseInput(loaded)) {
       input[action] = loaded;
     }
+  }
+
+  auto loaded_controller = graphics.controller_bindings;
+  for (const auto &metadata : game::controllerActionCatalog()) {
+    const auto key = widenAscii(metadata.config_key);
+    const auto loaded = static_cast<std::uint32_t>(readProfileInteger(
+        path, L"ControllerBindings", key.c_str(),
+        static_cast<int>(loaded_controller[metadata.action])));
+    loaded_controller[metadata.action] = loaded;
+  }
+  if (game::areControllerBindingsValid(loaded_controller)) {
+    graphics.controller_bindings = loaded_controller;
   }
 }
 
@@ -323,6 +676,8 @@ void saveSettingsFile(const GraphicsSettings &graphics,
   writeProfileInteger(path, L"Graphics", L"Aspect",
                       graphics.aspect_ratio == AspectRatioMode::adaptive ? 0
                                                                          : 1);
+  writeProfileInteger(path, L"Controller", L"Protocol",
+                      static_cast<int>(graphics.controller_protocol));
   writeProfileInteger(path, L"Game", L"Locale",
                       language == game::GameLanguage::russian_vit ? 1 : 0);
   for (std::size_t index = 0U; index < keyboard_mouse_action_count; ++index) {
@@ -331,6 +686,7 @@ void saveSettingsFile(const GraphicsSettings &graphics,
     writeProfileInteger(path, L"KeyboardMouse", key.c_str(),
                         static_cast<int>(input[action]));
   }
+  static_cast<void>(writeControllerBindingsFile(path, graphics.controller_bindings));
   saveGameImagePath(cue_path);
 }
 
@@ -519,27 +875,124 @@ std::optional<KeyboardMouseInput> capturedInput(const MSG &message) noexcept {
   }
 }
 
+std::wstring controllerButtonName(ControllerPromptFamily family,
+                                  std::uint32_t mask) {
+  return widenAscii(controllerButtonPromptName(
+      family, static_cast<std::uint16_t>(mask)));
+}
+
+std::wstring controllerDeviceDescription(const ControlsState &state) {
+  if (!state.controller_capture.connected()) {
+    return L"No controller detected.";
+  }
+  auto result = std::wstring{state.controller_capture.name()};
+  if (!result.empty()) {
+    result += L"  /  ";
+  }
+  switch (state.controller_capture.family()) {
+  case ControllerPromptFamily::xbox:
+    return result + L"Xbox";
+  case ControllerPromptFamily::playstation:
+    return result + L"PlayStation";
+  case ControllerPromptFamily::nintendo:
+    return result + L"Nintendo";
+  case ControllerPromptFamily::generic:
+  default:
+    return result + L"Generic controller";
+  }
+}
+
 void refreshControlsList(ControlsState &state) {
   SendMessageW(state.list, LB_RESETCONTENT, 0, 0);
-  for (std::size_t index = 0U; index < keyboard_mouse_action_count; ++index) {
-    const auto action = static_cast<KeyboardMouseAction>(index);
-    const auto row =
-        widenAscii(keyboardMouseActionName(action)) + L"    [" +
-        widenAscii(keyboardMouseInputName((*state.input)[action])) + L"]";
-    SendMessageW(state.list, LB_ADDSTRING, 0,
-                 reinterpret_cast<LPARAM>(row.c_str()));
+  if (state.controller_mode) {
+    for (const auto &metadata : game::controllerActionCatalog()) {
+      const auto row = widenAscii(metadata.name) + L"    [" +
+                       controllerButtonName(
+                           state.controller_capture.family(),
+                           (*state.controller)[metadata.action]) +
+                       L"]";
+      SendMessageW(state.list, LB_ADDSTRING, 0,
+                   reinterpret_cast<LPARAM>(row.c_str()));
+    }
+  } else {
+    for (std::size_t index = 0U; index < keyboard_mouse_action_count; ++index) {
+      const auto action = static_cast<KeyboardMouseAction>(index);
+      const auto row =
+          widenAscii(keyboardMouseActionName(action)) + L"    [" +
+          widenAscii(keyboardMouseInputName((*state.input)[action])) + L"]";
+      SendMessageW(state.list, LB_ADDSTRING, 0,
+                   reinterpret_cast<LPARAM>(row.c_str()));
+    }
   }
-  state.selected = std::min(state.selected, keyboard_mouse_action_count - 1U);
+  const auto action_count = state.controller_mode
+                                ? game::controller_action_count
+                                : keyboard_mouse_action_count;
+  state.selected = std::min(state.selected, action_count - 1U);
   SendMessageW(state.list, LB_SETCURSEL, static_cast<WPARAM>(state.selected),
                0);
-  const auto action = static_cast<KeyboardMouseAction>(state.selected);
-  const auto label =
-      L"Change: " + widenAscii(keyboardMouseInputName((*state.input)[action]));
-  SetWindowTextW(state.change_button, label.c_str());
+  if (state.controller_mode) {
+    const auto label =
+        L"Change: " +
+        controllerButtonName(state.controller_capture.family(),
+                             state.controller->buttons[state.selected]);
+    SetWindowTextW(state.change_button, label.c_str());
+    EnableWindow(state.clear_button, FALSE);
+  } else {
+    const auto action = static_cast<KeyboardMouseAction>(state.selected);
+    const auto label =
+        L"Change: " +
+        widenAscii(keyboardMouseInputName((*state.input)[action]));
+    SetWindowTextW(state.change_button, label.c_str());
+    EnableWindow(state.clear_button, TRUE);
+  }
+  InvalidateRect(GetParent(state.list), nullptr, FALSE);
+}
+
+void assignCapturedControllerButton(ControlsState &state,
+                                    std::uint32_t new_button) {
+  const auto result = game::rebindControllerButton(
+      *state.controller, static_cast<game::ControllerAction>(state.selected),
+      new_button);
+  if (result == game::ControllerRebindResult::invalid) {
+    return;
+  }
+  state.capture.reset();
+  state.controller_capture.cancelCapture();
+  refreshControlsList(state);
+  const auto status = L"Binding updated.  " + controllerDeviceDescription(state);
+  SetWindowTextW(state.status, status.c_str());
+}
+
+void cancelBindingCapture(ControlsState &state) {
+  state.capture.reset();
+  state.controller_capture.cancelCapture();
+  refreshControlsList(state);
+  SetWindowTextW(state.status, L"Binding capture cancelled.");
 }
 
 void beginBindingCapture(ControlsState &state) {
-  state.capture = static_cast<KeyboardMouseAction>(state.selected);
+  if (state.controller_mode) {
+    if (!state.controller_capture.initialize(state.protocol)) {
+      SetWindowTextW(state.status,
+                     L"Controller input could not be initialized.");
+      return;
+    }
+    static_cast<void>(state.controller_capture.update());
+    state.capture = state.selected;
+    state.controller_capture.beginCapture();
+    SetWindowTextW(state.change_button, L"Waiting for controller input...");
+    if (state.controller_capture.connected()) {
+      const auto status =
+          L"Press a controller button. ESC cancels.  " +
+          controllerDeviceDescription(state);
+      SetWindowTextW(state.status, status.c_str());
+    } else {
+      SetWindowTextW(state.status,
+                     L"Connect a controller and press a button. ESC cancels.");
+    }
+    return;
+  }
+  state.capture = state.selected;
   SetWindowTextW(state.change_button, L"Waiting for input...");
   SetWindowTextW(
       state.status,
@@ -840,7 +1293,10 @@ void drawControlsFrame(HWND window, ControlsState &state) {
   SetTextColor(dc, launcher_muted_text_color);
   SelectObject(dc, state.ui_font);
   RECT subtitle{31, 60, client.right - 28, 86};
-  DrawTextW(dc, L"AGENCY FIELD TERMINAL  /  KEYBOARD + MOUSE", -1, &subtitle,
+  const auto *subtitle_text =
+      state.controller_mode ? L"AGENCY FIELD TERMINAL  /  CONTROLLER"
+                            : L"AGENCY FIELD TERMINAL  /  KEYBOARD + MOUSE";
+  DrawTextW(dc, subtitle_text, -1, &subtitle,
             DT_LEFT | DT_SINGLELINE | DT_VCENTER);
 
   SelectObject(dc, old_pen);
@@ -865,22 +1321,27 @@ LRESULT CALLBACK controlsWindowProc(HWND window, UINT message, WPARAM w_param,
   switch (message) {
   case WM_CREATE:
     createControl(window, L"STATIC", L"CONTROL ASSIGNMENTS", 0, 44, 122, 360,
-                  26, 0, state->heading_font);
-    createControl(window, L"STATIC",
-                  L"Double-click an action to capture a new input.", 0, 44, 150,
-                  360, 22, 0, state->ui_font);
+                  22, 0, state->heading_font);
+    state->input_device_combo = createControl(
+        window, L"COMBOBOX", L"", WS_TABSTOP | CBS_DROPDOWNLIST, 44, 148, 368,
+        100, input_device_control_id, state->ui_font);
+    SendMessageW(state->input_device_combo, CB_ADDSTRING, 0,
+                 reinterpret_cast<LPARAM>(L"Keyboard + Mouse"));
+    SendMessageW(state->input_device_combo, CB_ADDSTRING, 0,
+                 reinterpret_cast<LPARAM>(L"Controller"));
+    SendMessageW(state->input_device_combo, CB_SETCURSEL, 0, 0);
     state->list = createControl(
         window, L"LISTBOX", L"",
         WS_TABSTOP | WS_BORDER | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT,
-        44, 180, 368, 286, binding_list_control_id, state->ui_font);
+        44, 184, 368, 282, binding_list_control_id, state->ui_font);
     createControl(window, L"STATIC", L"BINDING CONTROL", 0, 472, 122, 244, 26,
                   0, state->heading_font);
     state->change_button = createControl(
         window, L"BUTTON", L"Change", WS_TABSTOP | BS_OWNERDRAW, 472, 166, 244,
         42, change_binding_control_id, state->heading_font);
-    createControl(window, L"BUTTON", L"Clear binding",
-                  WS_TABSTOP | BS_OWNERDRAW, 472, 220, 244, 38,
-                  clear_binding_control_id, state->heading_font);
+    state->clear_button = createControl(
+        window, L"BUTTON", L"Clear binding", WS_TABSTOP | BS_OWNERDRAW, 472,
+        220, 244, 38, clear_binding_control_id, state->heading_font);
     createControl(window, L"BUTTON", L"Restore defaults",
                   WS_TABSTOP | BS_OWNERDRAW, 472, 270, 244, 38,
                   default_bindings_control_id, state->heading_font);
@@ -892,6 +1353,7 @@ LRESULT CALLBACK controlsWindowProc(HWND window, UINT message, WPARAM w_param,
                   472, 398, 244, 44, 0, state->ui_font);
     createControl(window, L"BUTTON", L"APPLY", WS_TABSTOP | BS_OWNERDRAW, 472,
                   448, 244, 34, close_bindings_control_id, state->heading_font);
+    SetTimer(window, controller_capture_timer_id, 16U, nullptr);
     refreshControlsList(*state);
     return 0;
   case WM_PAINT:
@@ -923,17 +1385,75 @@ LRESULT CALLBACK controlsWindowProc(HWND window, UINT message, WPARAM w_param,
     }
     break;
   }
+  case WM_TIMER:
+    if (w_param == controller_capture_timer_id && state->controller_mode) {
+      const auto was_connected = state->controller_capture.connected();
+      const auto device_changed = state->controller_capture.update();
+      if (state->capture && was_connected &&
+          !state->controller_capture.connected()) {
+        cancelBindingCapture(*state);
+        SetWindowTextW(state->status, L"Controller disconnected.");
+        return 0;
+      }
+      if (state->capture && state->controller_capture.pollCancelRequest()) {
+        cancelBindingCapture(*state);
+        return 0;
+      }
+      if (state->capture) {
+        if (const auto button =
+                state->controller_capture.pollCapturedButton()) {
+          assignCapturedControllerButton(*state, *button);
+          return 0;
+        }
+      }
+      if (device_changed) {
+        refreshControlsList(*state);
+        if (!state->capture) {
+          const auto status = controllerDeviceDescription(*state);
+          SetWindowTextW(state->status, status.c_str());
+        }
+      }
+      return 0;
+    }
+    break;
   case WM_COMMAND:
+    if (LOWORD(w_param) == input_device_control_id &&
+        HIWORD(w_param) == CBN_SELCHANGE) {
+      state->controller_mode =
+          SendMessageW(state->input_device_combo, CB_GETCURSEL, 0, 0) == 1;
+      state->selected = 0U;
+      state->capture.reset();
+      state->controller_capture.cancelCapture();
+      if (state->controller_mode) {
+        static_cast<void>(state->controller_capture.initialize(state->protocol));
+        static_cast<void>(state->controller_capture.update());
+      }
+      refreshControlsList(*state);
+      if (state->controller_mode) {
+        const auto status = controllerDeviceDescription(*state);
+        SetWindowTextW(state->status, status.c_str());
+      } else {
+        SetWindowTextW(state->status,
+                       L"Select an action, then press Change.");
+      }
+      return 0;
+    }
     if (LOWORD(w_param) == binding_list_control_id) {
       if (HIWORD(w_param) == LBN_SELCHANGE || HIWORD(w_param) == LBN_DBLCLK) {
         const auto selected = SendMessageW(state->list, LB_GETCURSEL, 0, 0);
+        const auto action_count = state->controller_mode
+                                      ? game::controller_action_count
+                                      : keyboard_mouse_action_count;
         if (selected >= 0 &&
-            static_cast<std::size_t>(selected) < keyboard_mouse_action_count) {
+            static_cast<std::size_t>(selected) < action_count) {
           state->selected = static_cast<std::size_t>(selected);
           state->capture.reset();
+          state->controller_capture.cancelCapture();
           refreshControlsList(*state);
           SetWindowTextW(state->status,
-                         L"Select an action, then press Change.");
+                         state->controller_mode
+                             ? L"Choose a button, then assign it to an action."
+                             : L"Select an action, then press Change.");
           if (HIWORD(w_param) == LBN_DBLCLK) {
             beginBindingCapture(*state);
           }
@@ -949,6 +1469,9 @@ LRESULT CALLBACK controlsWindowProc(HWND window, UINT message, WPARAM w_param,
       return 0;
     }
     if (LOWORD(w_param) == clear_binding_control_id) {
+      if (state->controller_mode) {
+        return 0;
+      }
       (*state->input)[static_cast<KeyboardMouseAction>(state->selected)] =
           KeyboardMouseInput::none;
       state->capture.reset();
@@ -957,13 +1480,19 @@ LRESULT CALLBACK controlsWindowProc(HWND window, UINT message, WPARAM w_param,
       return 0;
     }
     if (LOWORD(w_param) == default_bindings_control_id) {
-      *state->input = defaultKeyboardMouseBindings();
+      if (state->controller_mode) {
+        *state->controller = ControllerButtonBindings{};
+      } else {
+        *state->input = defaultKeyboardMouseBindings();
+      }
       state->capture.reset();
+      state->controller_capture.cancelCapture();
       refreshControlsList(*state);
       SetWindowTextW(state->status, L"Default controls restored.");
       return 0;
     }
     if (LOWORD(w_param) == close_bindings_control_id) {
+      state->accepted = true;
       DestroyWindow(window);
       return 0;
     }
@@ -972,6 +1501,7 @@ LRESULT CALLBACK controlsWindowProc(HWND window, UINT message, WPARAM w_param,
     DestroyWindow(window);
     return 0;
   case WM_DESTROY:
+    KillTimer(window, controller_capture_timer_id);
     state->finished = true;
     return 0;
   default:
@@ -980,7 +1510,9 @@ LRESULT CALLBACK controlsWindowProc(HWND window, UINT message, WPARAM w_param,
   return DefWindowProcW(window, message, w_param, l_param);
 }
 
-void showControlsWindow(HWND owner, KeyboardMouseBindings &input) {
+void showControlsWindow(HWND owner, KeyboardMouseBindings &input,
+                        ControllerButtonBindings &controller,
+                        ControllerProtocol protocol) {
   const auto instance = GetModuleHandleW(nullptr);
   WNDCLASSW window_class{};
   window_class.lpfnWndProc = controlsWindowProc;
@@ -997,7 +1529,11 @@ void showControlsWindow(HWND owner, KeyboardMouseBindings &input) {
   constexpr DWORD extended_style = WS_EX_CONTROLPARENT | WS_EX_DLGMODALFRAME;
   RECT bounds{0, 0, controls_client_width, controls_client_height};
   AdjustWindowRectEx(&bounds, style, FALSE, extended_style);
-  ControlsState state{.input = &input};
+  auto staged_input = input;
+  auto staged_controller = controller;
+  ControlsState state{.input = &staged_input,
+                      .controller = &staged_controller,
+                      .protocol = protocol};
   state.title_font =
       CreateFontW(-32, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                   OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
@@ -1013,10 +1549,9 @@ void showControlsWindow(HWND owner, KeyboardMouseBindings &input) {
   state.background_brush = CreateSolidBrush(launcher_background_color);
   state.panel_brush = CreateSolidBrush(launcher_panel_color);
   const auto window = CreateWindowExW(
-      extended_style, controls_class_name,
-      L"Syphon Filter PC - Keyboard + Mouse Controls", style, CW_USEDEFAULT,
-      CW_USEDEFAULT, bounds.right - bounds.left, bounds.bottom - bounds.top,
-      owner, nullptr, instance, &state);
+      extended_style, controls_class_name, L"Syphon Filter PC - Input Controls",
+      style, CW_USEDEFAULT, CW_USEDEFAULT, bounds.right - bounds.left,
+      bounds.bottom - bounds.top, owner, nullptr, instance, &state);
   if (window == nullptr) {
     DeleteObject(state.panel_brush);
     DeleteObject(state.background_brush);
@@ -1045,9 +1580,21 @@ void showControlsWindow(HWND owner, KeyboardMouseBindings &input) {
 
   MSG message{};
   while (!state.finished && GetMessageW(&message, nullptr, 0, 0) > 0) {
-    if (state.capture) {
+    const auto escape_pressed =
+        (message.message == WM_KEYDOWN || message.message == WM_SYSKEYDOWN) &&
+        message.wParam == VK_ESCAPE;
+    if (escape_pressed) {
+      if (state.capture) {
+        cancelBindingCapture(state);
+      } else {
+        DestroyWindow(window);
+      }
+      continue;
+    }
+    if (state.capture && !state.controller_mode) {
       if (const auto captured = capturedInput(message)) {
-        (*state.input)[*state.capture] = *captured;
+        (*state.input)[static_cast<KeyboardMouseAction>(*state.capture)] =
+            *captured;
         state.capture.reset();
         refreshControlsList(state);
         SetWindowTextW(state.status, L"Binding updated.");
@@ -1058,6 +1605,10 @@ void showControlsWindow(HWND owner, KeyboardMouseBindings &input) {
       TranslateMessage(&message);
       DispatchMessageW(&message);
     }
+  }
+  if (state.accepted) {
+    input = staged_input;
+    controller = staged_controller;
   }
   DeleteObject(state.panel_brush);
   DeleteObject(state.background_brush);
@@ -1558,11 +2109,7 @@ bool selectedResolutionIsDesktop(const LauncherState &state) {
 
 void populateAntialiasing(LauncherState &state) {
   constexpr std::array<const wchar_t *, 5> labels{
-      L"Off",
-      L"SMAA Ultra",
-      L"MSAA 2x",
-      L"MSAA 4x",
-      L"MSAA 8x",
+      L"Off", L"SMAA Ultra", L"MSAA 2x", L"MSAA 4x", L"MSAA 8x",
   };
   constexpr std::array<int, 5> samples{0, 0, 2, 4, 8};
   int selected = state.settings.smaa ? 1 : 0;
@@ -1633,6 +2180,24 @@ void populateLanguages(LauncherState &state) {
   SendMessageW(state.language_combo, CB_SETCURSEL,
                state.language == game::GameLanguage::russian_vit ? 1 : 0, 0);
   SendMessageW(state.language_combo, CB_SETDROPPEDWIDTH, 220, 0);
+}
+
+void populateControllerProtocols(LauncherState &state) {
+  constexpr std::array<const wchar_t *, 4> labels{
+      L"Automatic (recommended)",
+      L"XInput",
+      L"DirectInput",
+      L"Raw Input",
+  };
+  for (const auto *label : labels) {
+    SendMessageW(state.controller_protocol_combo, CB_ADDSTRING, 0,
+                 reinterpret_cast<LPARAM>(label));
+  }
+  const auto selected =
+      std::clamp(static_cast<int>(state.settings.controller_protocol), 0,
+                 static_cast<int>(labels.size() - 1U));
+  SendMessageW(state.controller_protocol_combo, CB_SETCURSEL, selected, 0);
+  SendMessageW(state.controller_protocol_combo, CB_SETDROPPEDWIDTH, 230, 0);
 }
 
 std::wstring windowText(HWND control) {
@@ -1742,6 +2307,13 @@ void acceptSettings(HWND window, LauncherState &state) {
       IsDlgButtonChecked(window, vsync_control_id) == BST_CHECKED;
   state.settings.fullscreen =
       IsDlgButtonChecked(window, fullscreen_control_id) == BST_CHECKED;
+  const auto controller_protocol = static_cast<int>(
+      SendMessageW(state.controller_protocol_combo, CB_GETCURSEL, 0, 0));
+  if (controller_protocol >= 0 &&
+      controller_protocol <= static_cast<int>(ControllerProtocol::raw_input)) {
+    state.settings.controller_protocol =
+        static_cast<ControllerProtocol>(controller_protocol);
+  }
   state.language = SendMessageW(state.language_combo, CB_GETCURSEL, 0, 0) == 1
                        ? game::GameLanguage::russian_vit
                        : game::GameLanguage::english;
@@ -1908,10 +2480,9 @@ LRESULT CALLBACK launcherWindowProc(HWND window, UINT message, WPARAM w_param,
                       144, 258, 214, 120, aspect_control_id, state->ui_font);
     createControl(window, L"STATIC", L"Antialiasing", 0, 48, 300, 92, 20, 0,
                   state->ui_font);
-    state->antialiasing_combo =
-        createControl(window, L"COMBOBOX", L"", WS_TABSTOP | CBS_DROPDOWNLIST,
-                      144, 294, 214, 180, antialiasing_control_id,
-                      state->ui_font);
+    state->antialiasing_combo = createControl(
+        window, L"COMBOBOX", L"", WS_TABSTOP | CBS_DROPDOWNLIST, 144, 294, 214,
+        180, antialiasing_control_id, state->ui_font);
     createControl(window, L"STATIC", L"Frame limit", 0, 48, 336, 92, 20, 0,
                   state->ui_font);
     state->frame_limit_combo = createControl(
@@ -1942,14 +2513,16 @@ LRESULT CALLBACK launcherWindowProc(HWND window, UINT message, WPARAM w_param,
                   L"Retail campaign routing active. Mission progress "
                   L"and equipment are managed by the game.",
                   SS_LEFT, 414, 228, 294, 62, 0, state->ui_font);
-    createControl(window, L"STATIC",
-                  L"GRAPHICS / INPUT / AUDIO\nSYSTEM STATUS: READY", SS_LEFT,
-                  414, 342, 294, 42, 0, state->ui_font);
     createControl(window, L"STATIC", L"Text language", 0, 414, 306, 98, 20, 0,
                   state->ui_font);
     state->language_combo =
         createControl(window, L"COMBOBOX", L"", WS_TABSTOP | CBS_DROPDOWNLIST,
                       516, 300, 204, 96, language_control_id, state->ui_font);
+    createControl(window, L"STATIC", L"Controller API", 0, 414, 346, 98, 20, 0,
+                  state->ui_font);
+    state->controller_protocol_combo = createControl(
+        window, L"COMBOBOX", L"", WS_TABSTOP | CBS_DROPDOWNLIST, 516, 340, 204,
+        128, controller_protocol_control_id, state->ui_font);
     createControl(window, L"BUTTON", L"INPUT CONFIGURATION",
                   WS_TABSTOP | BS_OWNERDRAW, 414, 448, 294, 38,
                   controls_control_id, state->heading_font);
@@ -1978,6 +2551,7 @@ LRESULT CALLBACK launcherWindowProc(HWND window, UINT message, WPARAM w_param,
     populateAntialiasing(*state);
     populateFrameLimits(*state);
     populateLanguages(*state);
+    populateControllerProtocols(*state);
     CheckDlgButton(window, fullscreen_control_id,
                    state->settings.fullscreen ||
                            selectedResolutionIsDesktop(*state)
@@ -2029,7 +2603,16 @@ LRESULT CALLBACK launcherWindowProc(HWND window, UINT message, WPARAM w_param,
       return 0;
     }
     if (LOWORD(w_param) == controls_control_id) {
-      showControlsWindow(window, state->input);
+      auto protocol = state->settings.controller_protocol;
+      const auto selected_protocol = static_cast<int>(SendMessageW(
+          state->controller_protocol_combo, CB_GETCURSEL, 0, 0));
+      if (selected_protocol >= 0 &&
+          selected_protocol <=
+              static_cast<int>(ControllerProtocol::raw_input)) {
+        protocol = static_cast<ControllerProtocol>(selected_protocol);
+      }
+      showControlsWindow(window, state->input,
+                         state->settings.controller_bindings, protocol);
       return 0;
     }
     if (LOWORD(w_param) == dossier_control_id) {
@@ -2078,6 +2661,17 @@ void loadLauncherSettings(GraphicsSettings &graphics,
     // startup; the caller's defaults remain authoritative.
   }
 }
+bool saveLauncherControllerBindings(
+    const ControllerButtonBindings &bindings) noexcept {
+  try {
+    return writeControllerBindingsFile(launcherSettingsPath(true), bindings);
+  } catch (...) {
+    // Gameplay keeps the committed in-memory layout even when the optional
+    // per-user launcher file is temporarily unavailable.
+    return false;
+  }
+}
+
 
 bool showGraphicsLauncher(GraphicsSettings &settings,
                           KeyboardMouseBindings &input,
@@ -2196,6 +2790,11 @@ namespace sf::platform {
 
 void loadLauncherSettings(GraphicsSettings &, KeyboardMouseBindings &,
                           game::GameLanguage &) noexcept {}
+bool saveLauncherControllerBindings(
+    const ControllerButtonBindings &) noexcept {
+  return true;
+}
+
 
 bool showGraphicsLauncher(GraphicsSettings &, KeyboardMouseBindings &,
                           game::GameLanguage &, std::filesystem::path &) {

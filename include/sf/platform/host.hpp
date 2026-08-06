@@ -1,10 +1,14 @@
 #pragma once
 
+#include "sf/game/controller_bindings.hpp"
 #include "sf/game/retail_cheats.hpp"
 #include "sf/platform/player_input.hpp"
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -21,6 +25,19 @@ enum class AspectRatioMode {
   adaptive,
 };
 
+enum class ControllerProtocol {
+  automatic,
+  xinput,
+  direct_input,
+  raw_input,
+};
+
+using ControllerButtonBindings = game::ControllerButtonBindings;
+inline constexpr auto controller_action_binding_count =
+    game::controller_action_count;
+using ControllerBindingsCommitCallback =
+    std::function<bool(const ControllerButtonBindings &)>;
+
 struct GraphicsSettings {
   int width{1280};
   int height{720};
@@ -34,6 +51,8 @@ struct GraphicsSettings {
   bool vsync{true};
   std::uint32_t frame_limit{60U};
   bool fullscreen{};
+  ControllerProtocol controller_protocol{ControllerProtocol::automatic};
+  ControllerButtonBindings controller_bindings;
 };
 
 class Host {
@@ -56,12 +75,14 @@ createPsyCrossHost(std::string title, GraphicsSettings graphics = {});
     game::MissionPackage initial_mission, std::filesystem::path cue_path,
     std::string supported_game_serial, GraphicsSettings graphics = {},
     KeyboardMouseBindings input = defaultKeyboardMouseBindings(),
-    game::RetailCheatState cheats = {});
+    game::RetailCheatState cheats = {},
+    ControllerBindingsCommitCallback controller_bindings_commit = {});
 
 [[nodiscard]] std::unique_ptr<Host> createPsyCrossSceneHost(
     std::string title, game::MissionPackage mission,
     std::filesystem::path cue_path, GraphicsSettings graphics = {},
     KeyboardMouseBindings input = defaultKeyboardMouseBindings(),
-    game::RetailCheatState cheats = {});
+    game::RetailCheatState cheats = {},
+    ControllerBindingsCommitCallback controller_bindings_commit = {});
 
 } // namespace sf::platform

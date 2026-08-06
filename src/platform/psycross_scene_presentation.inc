@@ -4,40 +4,6 @@ std::uint16_t readButtons(const PADRAW &pad) {
       (static_cast<std::uint16_t>(pad.buttons[1]) << 8U));
 }
 
-std::uint16_t
-keyboardOriginPadMask(const std::uint8_t *keyboard, int keyboard_count,
-                      const PsyXKeyboardMapping &mapping) noexcept {
-  if (keyboard == nullptr || keyboard_count <= 0) {
-    return 0U;
-  }
-  auto result = std::uint16_t{};
-  const auto include = [&](int scancode, std::uint16_t button) {
-    // SDL_SCANCODE_UNKNOWN is PsyCross's disabled mapping. Also reject a
-    // malformed external mapping instead of indexing past SDL's state array.
-    if (scancode > SDL_SCANCODE_UNKNOWN && scancode < keyboard_count &&
-        keyboard[scancode] != 0U) {
-      result = static_cast<std::uint16_t>(result | button);
-    }
-  };
-  include(mapping.kc_select, 0x0001U);
-  include(mapping.kc_l3, 0x0002U);
-  include(mapping.kc_r3, 0x0004U);
-  include(mapping.kc_start, 0x0008U);
-  include(mapping.kc_dpad_up, 0x0010U);
-  include(mapping.kc_dpad_right, 0x0020U);
-  include(mapping.kc_dpad_down, 0x0040U);
-  include(mapping.kc_dpad_left, 0x0080U);
-  include(mapping.kc_l2, 0x0100U);
-  include(mapping.kc_r2, 0x0200U);
-  include(mapping.kc_l1, 0x0400U);
-  include(mapping.kc_r1, 0x0800U);
-  include(mapping.kc_triangle, 0x1000U);
-  include(mapping.kc_circle, 0x2000U);
-  include(mapping.kc_cross, 0x4000U);
-  include(mapping.kc_square, 0x8000U);
-  return result;
-}
-
 double normalizedAnalogAxis(int value, int deadzone) noexcept {
   const auto magnitude = std::abs(value);
   if (magnitude <= deadzone) {
@@ -500,11 +466,9 @@ void interpolateRenderPresentation(const RenderPresentationSnapshot &previous,
   const auto component = [amount](double from, double to) {
     return std::lerp(from, to, amount);
   };
-  const auto capture_changed =
-      result.capture_serial != current.capture_serial;
+  const auto capture_changed = result.capture_serial != current.capture_serial;
   const auto object_source_changed =
-      capture_changed ||
-      result.objects.size() != current.objects.size() ||
+      capture_changed || result.objects.size() != current.objects.size() ||
       result.legacy_player.has_value() != current.legacy_player.has_value();
   const auto guest_buffers_changed =
       capture_changed || result.guest_frame != current.guest_frame;
@@ -618,8 +582,7 @@ void interpolateRenderPresentation(const RenderPresentationSnapshot &previous,
     interpolateObjectPose(previous.objects[index], current.objects[index],
                           amount, result.objects[index]);
   }
-  if (previous.legacy_player && current.legacy_player &&
-      result.legacy_player) {
+  if (previous.legacy_player && current.legacy_player && result.legacy_player) {
     interpolateObjectPose(*previous.legacy_player, *current.legacy_player,
                           amount, *result.legacy_player);
   }

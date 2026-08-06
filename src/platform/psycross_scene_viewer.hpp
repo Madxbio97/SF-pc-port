@@ -59,10 +59,14 @@ private:
 
 class PsyCrossSceneViewer final {
 public:
-  PsyCrossSceneViewer(KeyboardMouseBindings input,
-                      game::RetailCheatState &cheats,
-                      game::CampaignDifficulty difficulty) noexcept
-      : input_(input), cheats_(cheats), difficulty_(difficulty) {}
+  PsyCrossSceneViewer(
+      KeyboardMouseBindings input, game::RetailCheatState &cheats,
+      game::CampaignDifficulty difficulty,
+      ControllerButtonBindings controller_bindings = {},
+      ControllerBindingsCommitCallback controller_bindings_commit = {}) noexcept
+      : input_(input), cheats_(cheats), difficulty_(difficulty),
+        controller_bindings_(controller_bindings),
+        controller_bindings_commit_(controller_bindings_commit) {}
 
   [[nodiscard]] SceneViewerResult
   run(const game::MissionPackage &mission, PADRAW &pad,
@@ -75,6 +79,8 @@ private:
   KeyboardMouseBindings input_;
   game::RetailCheatState &cheats_;
   game::CampaignDifficulty difficulty_{game::CampaignDifficulty::original};
+  ControllerButtonBindings controller_bindings_;
+  ControllerBindingsCommitCallback controller_bindings_commit_;
   game::PauseSettings pause_settings_;
   bool pause_settings_initialized_{};
 };

@@ -212,9 +212,10 @@ int menuLineWidth(std::string_view text, int scale,
 void drawMenuText(std::string_view source, const game::PauseRect &bounds,
                   int scale, PauseRgb color, game::PauseTextAlignment alignment,
                   int line_height, const HudTextureAtlas &interface_textures,
-                  const KeyboardMouseBindings &bindings) {
+                  const InputPromptBindings &bindings,
+                  InputPromptTokenActions tokens = {}) {
   const auto localized = game::localizeTextCopy(source);
-  const auto text = keyboardMouseHintText(localized, bindings);
+  const auto text = inputHintText(localized, bindings, tokens);
   const auto retail_line_height = std::max(line_height, 1);
   // Eight pixels is the physical glyph height. Inter-line leading may shrink
   // from the retail default when a translated paragraph needs the room, but
@@ -783,7 +784,7 @@ bool drawPauseMenu(const game::PauseMenu &menu,
                    const PauseTextureAtlas &textures,
                    const HudTextureAtlas &interface_textures,
                    std::uint64_t animation_tick,
-                   const KeyboardMouseBindings &bindings) {
+                   const InputPromptBindings &bindings) {
   GR_SetBlendMode(BM_NONE);
   GR_EnableDepth(0);
   const auto full_screen =
@@ -795,14 +796,21 @@ bool drawPauseMenu(const game::PauseMenu &menu,
     GR_EnableDepth(1);
     return false;
   }
+  const auto prompt_tokens = InputPromptTokenActions{
+      .x = InputPromptAction::confirm,
+      .t = menu.screen() == game::PauseScreen::root ||
+                   menu.controllerBindingPending()
+               ? InputPromptAction::pause
+                                                    : InputPromptAction::cancel,
+  };
   const auto draw_text =
-      [&interface_textures, &bindings](
+      [&interface_textures, &bindings, prompt_tokens](
           std::string_view source, const game::PauseRect &bounds, int scale,
           PauseRgb color,
           game::PauseTextAlignment alignment = game::PauseTextAlignment::left,
           int line_height = 10) {
         drawMenuText(source, bounds, scale, color, alignment, line_height,
-                     interface_textures, bindings);
+                     interface_textures, bindings, prompt_tokens);
       };
   const auto commands = menu.buildRenderCommands();
   std::optional<game::PauseRect> map_command_bounds;

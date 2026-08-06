@@ -852,7 +852,7 @@ void testOptionsConfirmationAndBinding() {
   settleTransition(menu);
   const auto request = menu.update({.confirm = true});
   require(request.type == sf::game::PauseCommandType::begin_controller_binding);
-  const auto binding = menu.completeControllerBinding(42);
+  const auto binding = menu.completeControllerBinding(0x2000U);
   require(binding.type == sf::game::PauseCommandType::preview_setting);
   require(menu.settings().controller_preset ==
           sf::game::ControllerPreset::custom);
@@ -929,6 +929,58 @@ void testWeaponLabelsAndControllerRecovery() {
   require(menu.screen() == PauseScreen::controller_bindings);
   moveNext(menu);
   require(menu.selection() == 1);
+}
+
+void testControllerBindingValidationConflictAndLabels() {
+  auto menu = makeMenu();
+  openRootSection(menu, 5);
+  moveNext(menu, 7);
+  require(!menu.update({.confirm = true}));
+  settleTransition(menu);
+  moveNext(menu, 1);
+  require(!menu.update({.confirm = true}));
+  settleTransition(menu);
+
+  require(menu.update({.confirm = true}).type ==
+          sf::game::PauseCommandType::begin_controller_binding);
+  require(menu.controllerBindingPending());
+  require(!menu.completeControllerBinding(0x0010U));
+  require(menu.controllerBindingPending());
+  require(!menu.completeControllerBinding(0x6000U));
+  require(menu.controllerBindingPending());
+
+  // Change Weapon starts on SELECT and Shoot starts on SQUARE. Assigning
+  // SQUARE to Change Weapon swaps Shoot to SELECT rather than leaving two
+  // actions on the same physical control.
+  const auto rebound = menu.completeControllerBinding(0x8000U);
+  require(rebound.type == sf::game::PauseCommandType::preview_setting);
+  require(!menu.controllerBindingPending());
+  require(sf::game::controllerButtonForAction(
+              menu.settings(), sf::game::ControllerAction::change_weapon) ==
+          0x8000U);
+  require(sf::game::controllerButtonForAction(
+              menu.settings(), sf::game::ControllerAction::shoot) == 0x0001U);
+
+  auto labels = std::array<std::string, 16U>{};
+  labels[0U] = "VIEW";
+  labels[15U] = "X";
+  menu.setControllerButtonLabels(std::move(labels));
+  const auto commands = menu.buildRenderCommands();
+  require(std::ranges::any_of(commands, [](const auto &command) {
+    return command.text == "Change Weapon: X";
+  }));
+  require(std::ranges::any_of(commands, [](const auto &command) {
+    return command.text == "Shoot: VIEW";
+  }));
+
+  // Cancelling capture returns to the binding list without discarding the
+  // last valid custom layout.
+  settleTransition(menu);
+  require(menu.update({.confirm = true}).type ==
+          sf::game::PauseCommandType::begin_controller_binding);
+  menu.cancelControllerBinding();
+  require(!menu.controllerBindingPending());
+  require(menu.screen() == PauseScreen::controller_bindings);
 }
 
 void testRetailControllerPresetsApplyBindings() {
@@ -1593,6 +1645,7 @@ int main() {
     testOptionsConfirmationAndBinding();
     testDenseObjectivesStayInsidePanel();
     testWeaponLabelsAndControllerRecovery();
+    testControllerBindingValidationConflictAndLabels();
     testRetailControllerPresetsApplyBindings();
     testRetailControllerTransaction();
     testExactGuestMissionEntries();

@@ -671,16 +671,16 @@ std::string reconstructOriginalHudText(
   return result;
 }
 
-bool drawBoundKeyboardMousePrompt(
-    const HudTextureAtlas &textures,
-    const game::LegacyUiMessageBridgeState &message,
-    const KeyboardMouseBindings &bindings, int offset_x, int offset_y) {
+bool drawBoundInputPrompt(const HudTextureAtlas &textures,
+                          const game::LegacyUiMessageBridgeState &message,
+                          const InputPromptBindings &bindings, int offset_x,
+                          int offset_y) {
   auto reconstructed = std::string{};
   auto reconstructed_source = false;
-  auto prompt = keyboardMousePromptText(message.text, bindings);
+  auto prompt = inputPromptText(message.text, bindings);
   if (!prompt) {
     reconstructed = reconstructOriginalHudText(message.glyphs);
-    prompt = keyboardMousePromptText(reconstructed, bindings);
+    prompt = inputPromptText(reconstructed, bindings);
     reconstructed_source = prompt.has_value();
   }
   if (!prompt || message.glyphs.empty()) {
@@ -840,11 +840,9 @@ std::size_t originalHudLineCount(std::string_view text) noexcept {
              : static_cast<std::size_t>(std::ranges::count(text, '\n')) + 1U;
 }
 
-std::optional<GameplayMessageLayout>
-buildGameplayMessageLayout(const game::LegacyUiMessageBridgeState &message,
-                           int offset_x, int offset_y,
-                           const KeyboardMouseBindings &bindings,
-                           game::CampaignDifficulty difficulty) {
+std::optional<GameplayMessageLayout> buildGameplayMessageLayout(
+    const game::LegacyUiMessageBridgeState &message, int offset_x, int offset_y,
+    const InputPromptBindings &bindings, game::CampaignDifficulty difficulty) {
   if (message.glyphs.empty()) {
     return std::nullopt;
   }
@@ -859,9 +857,8 @@ buildGameplayMessageLayout(const game::LegacyUiMessageBridgeState &message,
     }
     const auto completed = game::completeGameplayTextSource(observed);
     const auto use_completed =
-        completed &&
-        (russian_language ||
-         game::completedGameplayTextRequiredInEnglish(*completed));
+        completed && (russian_language ||
+                      game::completedGameplayTextRequiredInEnglish(*completed));
     source = std::string{use_completed ? *completed : observed};
     presented = game::localizeTextCopy(source);
     // Some retail FONT/TEXT builders expose an identifiable source prefix
@@ -892,7 +889,9 @@ buildGameplayMessageLayout(const game::LegacyUiMessageBridgeState &message,
   // The retail contact template uses printf's first %s for the controller
   // icon. Preserve the second, already-authored contact name, but convert the
   // semantic button slot before the common native-token resolver runs.
-  const auto prompt = keyboardMousePromptText(source, bindings);
+  const auto prompt = inputPromptText(source, bindings);
+  const auto prompt_action =
+      prompt ? prompt->action : InputPromptAction::confirm;
   if (prompt) {
     if (!russian_language) {
       presented = prompt->bound_text;
@@ -901,11 +900,14 @@ buildGameplayMessageLayout(const game::LegacyUiMessageBridgeState &message,
       presented.replace(slot, 2U, "%x");
     }
   }
-  presented = keyboardMouseHintText(presented, bindings);
+  presented =
+      inputHintText(presented, bindings,
+                    InputPromptTokenActions{.x = prompt_action,
+                                            .t = InputPromptAction::pause});
 
-  const auto source_glyph_count =
-      std::max(std::size_t{1U}, originalHudSourceGlyphCount(
-                                    reveal_source, reconstructed_source));
+  const auto source_glyph_count = std::max(
+      std::size_t{1U},
+      originalHudSourceGlyphCount(reveal_source, reconstructed_source));
   const auto presentation_glyph_count =
       originalHudDrawableGlyphCount(presented);
   if (source_glyph_count == 0U || presentation_glyph_count == 0U) {
@@ -1984,8 +1986,8 @@ void drawGameplayHud(const HudTextureAtlas &textures,
                      const game::CameraState &camera,
                      const std::optional<Vector3> &target_anchor,
                      std::span<const WorldCalloutAnchor> world_callouts,
-                     const KeyboardMouseBindings &bindings,
-                     bool first_person_aim, std::int32_t aim_heading,
+                     const InputPromptBindings &bindings, bool first_person_aim,
+                     std::int32_t aim_heading,
                      double presented_weapon_switch_frames,
                      double presentation_delta_seconds, int offset_x,
                      int offset_y, double visibility, double normal_hud_phase,
@@ -2419,8 +2421,8 @@ void drawGameplayHud(const HudTextureAtlas &textures,
                          textures.retailEnglishFont());
     } else if (message_layouts[index]) {
       drawGameplayMessage(textures, message, *message_layouts[index]);
-    } else if (!drawBoundKeyboardMousePrompt(textures, message, bindings,
-                                             offset_x, offset_y)) {
+    } else if (!drawBoundInputPrompt(textures, message, bindings, offset_x,
+                                     offset_y)) {
       drawRetailUiGlyphs(textures, message.glyphs, offset_x, offset_y);
     }
   }

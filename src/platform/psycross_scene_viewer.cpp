@@ -116,6 +116,59 @@ constexpr std::uint16_t chopper_gun_pickup_resident_y = 240U;
 constexpr std::string_view chopper_gun_pickup_texture = "CHNGUN_PICKUP.TIM";
 constexpr std::uint16_t environment_resident_clut_y = 251U;
 
+ControllerPromptFamily controllerPromptFamily(int family) noexcept {
+  switch (family) {
+  case PSYX_CONTROLLER_FAMILY_XBOX:
+    return ControllerPromptFamily::xbox;
+  case PSYX_CONTROLLER_FAMILY_PLAYSTATION:
+    return ControllerPromptFamily::playstation;
+  case PSYX_CONTROLLER_FAMILY_NINTENDO:
+    return ControllerPromptFamily::nintendo;
+  default:
+    return ControllerPromptFamily::generic;
+  }
+}
+
+InputPromptBindings
+controllerPromptBindings(const PsyXControllerSnapshot &snapshot,
+                         const game::PauseSettings &settings) {
+  constexpr std::uint16_t start_button = 0x0008U;
+  constexpr std::uint16_t triangle_button = 0x1000U;
+  constexpr std::uint16_t cross_button = 0x4000U;
+  constexpr std::uint16_t square_button = 0x8000U;
+  const auto family = controllerPromptFamily(snapshot.family);
+  const auto action_button = [&settings](game::ControllerAction action,
+                                         std::uint16_t fallback) {
+    const auto mapped = game::controllerButtonForAction(settings, action);
+    return static_cast<std::uint16_t>(mapped != 0U ? mapped : fallback);
+  };
+  const auto name = [family](std::uint16_t button) {
+    return controllerButtonPromptName(family, button);
+  };
+  return controllerInputPromptBindings(
+      ControllerInputProtocol::unknown,
+      InputPromptBindingNames{
+          .confirm = name(cross_button),
+          .cancel = name(triangle_button),
+          .pause = name(start_button),
+          .interact = name(action_button(game::ControllerAction::use_zoom_in,
+                                         triangle_button)),
+          .fire =
+              name(action_button(game::ControllerAction::shoot, square_button)),
+      });
+}
+
+std::array<std::string, 16U>
+controllerButtonLabels(const PsyXControllerSnapshot &snapshot) {
+  const auto family = controllerPromptFamily(snapshot.family);
+  auto labels = std::array<std::string, 16U>{};
+  for (std::size_t bit = 0U; bit < labels.size(); ++bit) {
+    labels[bit] = controllerButtonPromptName(
+        family, static_cast<std::uint16_t>(1U << bit));
+  }
+  return labels;
+}
+
 [[nodiscard]] bool textureDiagnosticsEnabled() noexcept {
   static const auto enabled = [] {
     const auto *value = SDL_getenv("SF_TEXTURE_DIAGNOSTICS");

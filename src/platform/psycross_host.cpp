@@ -70,6 +70,28 @@ void configureGraphics(const GraphicsSettings &settings) noexcept {
   g_cfg_vblankThread = 0;
 }
 
+void configureControllerProtocol(ControllerProtocol protocol) noexcept {
+  const auto set = [](const char *name, bool enabled) {
+    static_cast<void>(
+        SDL_SetHintWithPriority(name, enabled ? "1" : "0", SDL_HINT_OVERRIDE));
+  };
+
+  // Fix the Windows joystick driver set before SDL initializes it. Forced
+  // modes disable competing drivers so one physical pad is opened once.
+  const auto automatic = protocol == ControllerProtocol::automatic;
+  set(SDL_HINT_XINPUT_ENABLED,
+      automatic || protocol == ControllerProtocol::xinput);
+  set(SDL_HINT_DIRECTINPUT_ENABLED,
+      automatic || protocol == ControllerProtocol::direct_input);
+  set(SDL_HINT_JOYSTICK_RAWINPUT,
+      automatic || protocol == ControllerProtocol::raw_input);
+  set(SDL_HINT_JOYSTICK_RAWINPUT_CORRELATE_XINPUT, true);
+  set(SDL_HINT_JOYSTICK_WGI, automatic);
+  set(SDL_HINT_JOYSTICK_HIDAPI, automatic);
+  set(SDL_HINT_JOYSTICK_HIDAPI_PS4_RUMBLE, true);
+  set(SDL_HINT_JOYSTICK_HIDAPI_PS5_RUMBLE, true);
+}
+
 void configurePresentation(const GraphicsSettings &settings) noexcept {
   // SDL's high-resolution timer and GL context both exist only after
   // PsyX_Initialise. Apply the two independent presentation controls here:
@@ -108,6 +130,7 @@ public:
 
   void run() override {
     configureGraphics(graphics_);
+    configureControllerProtocol(graphics_.controller_protocol);
     PsyX_Initialise(title_.data(), graphics_.width, graphics_.height, 0);
     configurePresentation(graphics_);
     [[maybe_unused]] detail::PsyCrossWindowMode window_mode{
@@ -476,6 +499,48 @@ void drawTitleSprite(const game::TitleSprite &source, std::uint8_t brightness) {
   DrawPrim(&sprite);
 }
 
+class ControllerBindingsPersistence final {
+public:
+  ControllerBindingsPersistence(
+      GraphicsSettings &graphics,
+      const ControllerBindingsCommitCallback &callback) noexcept
+      : graphics_(graphics), callback_(callback) {}
+
+  [[nodiscard]] bool
+  commit(const ControllerButtonBindings &bindings) noexcept {
+    graphics_.controller_bindings = bindings;
+    return persistCurrent();
+  }
+
+  void retry() noexcept {
+    if (!pending_) {
+      return;
+    }
+    if (!persistCurrent()) {
+      PsyX_Log_Warning(
+          "Controller bindings persistence remains pending\n");
+    }
+  }
+
+private:
+  [[nodiscard]] bool persistCurrent() noexcept {
+    if (!callback_) {
+      pending_ = false;
+      return true;
+    }
+    try {
+      pending_ = !callback_(graphics_.controller_bindings);
+    } catch (...) {
+      pending_ = true;
+    }
+    return !pending_;
+  }
+
+  GraphicsSettings &graphics_;
+  const ControllerBindingsCommitCallback &callback_;
+  bool pending_{};
+};
+
 class PsyCrossTitleHost final : public Host {
 public:
   PsyCrossTitleHost(std::string title, game::TitleAssets assets,
@@ -484,18 +549,23 @@ public:
                     std::filesystem::path cue_path,
                     std::string supported_game_serial,
                     GraphicsSettings graphics, KeyboardMouseBindings input,
-                    game::RetailCheatState cheats)
+                    game::RetailCheatState cheats,
+                    ControllerBindingsCommitCallback controller_bindings_commit)
       : title_(title.begin(), title.end()), assets_(std::move(assets)),
         movies_(std::move(movies)),
         initial_mission_(std::move(initial_mission)),
         cue_path_(std::move(cue_path)),
         supported_game_serial_(std::move(supported_game_serial)),
-        graphics_(graphics), input_(input), cheats_(cheats) {
+        graphics_(graphics), input_(input), cheats_(cheats),
+        controller_bindings_commit_(std::move(controller_bindings_commit)) {
     title_.push_back('\0');
   }
 
   void run() override {
+    ControllerBindingsPersistence controller_bindings_persistence{
+        graphics_, controller_bindings_commit_};
     configureGraphics(graphics_);
+    configureControllerProtocol(graphics_.controller_protocol);
     PsyX_Initialise(title_.data(), graphics_.width, graphics_.height, 0);
     configurePresentation(graphics_);
     [[maybe_unused]] detail::PsyCrossWindowMode window_mode{
@@ -529,9 +599,8 @@ public:
                                                              input_};
     const detail::MovieOverlayCallbacks overlay{
         [this, &pad, &ui_audio, &title_keyboard_initialized,
-         &title_interact_was_down,
-         &title_pause_was_down](std::uint16_t pressed,
-                                std::uint32_t movie_frame) {
+         &title_interact_was_down, &title_pause_was_down](
+            std::uint16_t pressed, std::uint32_t movie_frame) {
           ui_audio.update();
           const auto actions = sampleHostKeyboardMouseActions(input_);
           const auto interact_down = actions[KeyboardMouseAction::interact];
@@ -598,11 +667,9 @@ public:
           if (menu_.phase() == game::TitlePhase::load_slots) {
             title_load_renderer.drawLoadSlots(menu_.saveSlots(),
                                               menu_.loadSlotSelection());
-          } else if (menu_.phase() ==
-                     game::TitlePhase::select_difficulty) {
+          } else if (menu_.phase() == game::TitlePhase::select_difficulty) {
             title_load_renderer.drawDifficultySelection(menu_);
-          } else if (menu_.phase() ==
-                     game::TitlePhase::agent_warning) {
+          } else if (menu_.phase() == game::TitlePhase::agent_warning) {
             title_load_renderer.drawAgentModeWarning();
           } else {
             for (std::size_t index = 0; index < game::TitleMenu::visual_count;
@@ -674,16 +741,23 @@ public:
           menu_.setSaveSlots(loadTitleSaveSlots(save_path));
           continue;
         }
-        PsyX_Log_Info("New Game FMV complete; opening unsaved mission %u "
-                      "on %s difficulty\n",
-                      campaign->missionIndex() + 1U,
-                      game::campaignDifficultyDisplayName(
-                          campaign->difficulty())
-                          .data());
+        PsyX_Log_Info(
+            "New Game FMV complete; opening unsaved mission %u "
+            "on %s difficulty\n",
+            campaign->missionIndex() + 1U,
+            game::campaignDifficultyDisplayName(campaign->difficulty()).data());
       }
+      controller_bindings_persistence.retry();
       detail::PsyCrossMissionStart mission_start;
-      detail::PsyCrossSceneViewer scene_viewer{
-          input_, cheats_, campaign->difficulty()};
+      const auto commit_controller_bindings =
+          [&controller_bindings_persistence](
+              const ControllerButtonBindings &bindings) {
+            return controller_bindings_persistence.commit(bindings);
+          };
+      detail::PsyCrossSceneViewer scene_viewer{input_, cheats_,
+                                               campaign->difficulty(),
+                                               graphics_.controller_bindings,
+                                               commit_controller_bindings};
       std::optional<game::MissionPackage> loaded_mission;
       auto exit_application = false;
       while (campaign->active()) {
@@ -753,6 +827,7 @@ public:
                              campaign->maximumUnlockedMission(),
                              mission_start.takePreloadedGameplay(),
                              mission_start.takePreloadedAudio());
+        controller_bindings_persistence.retry();
         previous_buttons = scene_result.previous_buttons;
         if (scene_result.reason == detail::SceneExitReason::mission_selected &&
             scene_result.selected_mission) {
@@ -761,9 +836,8 @@ public:
             // Reaching this branch requires the explicit all-missions cheat;
             // normal mission selection can never move beyond the high-water
             // mark of the loaded save.
-            auto replacement =
-                game::CampaignProgress::startUnsaved(
-                    selected, false, campaign->difficulty());
+            auto replacement = game::CampaignProgress::startUnsaved(
+                selected, false, campaign->difficulty());
             if (!replacement) {
               PsyX_Log_Error("Pause mission selection rejected mission %u\n",
                              selected + 1U);
@@ -881,21 +955,27 @@ private:
   GraphicsSettings graphics_;
   KeyboardMouseBindings input_;
   game::RetailCheatState cheats_;
+  ControllerBindingsCommitCallback controller_bindings_commit_;
 };
 
 class PsyCrossSceneHost final : public Host {
 public:
   PsyCrossSceneHost(std::string title, game::MissionPackage mission,
                     std::filesystem::path cue_path, GraphicsSettings graphics,
-                    KeyboardMouseBindings input, game::RetailCheatState cheats)
+                    KeyboardMouseBindings input, game::RetailCheatState cheats,
+                    ControllerBindingsCommitCallback controller_bindings_commit)
       : title_(title.begin(), title.end()), mission_(std::move(mission)),
         cue_path_(std::move(cue_path)), graphics_(graphics), input_(input),
-        cheats_(cheats) {
+        cheats_(cheats),
+        controller_bindings_commit_(std::move(controller_bindings_commit)) {
     title_.push_back('\0');
   }
 
   void run() override {
+    ControllerBindingsPersistence controller_bindings_persistence{
+        graphics_, controller_bindings_commit_};
     configureGraphics(graphics_);
+    configureControllerProtocol(graphics_.controller_protocol);
     PsyX_Initialise(title_.data(), graphics_.width, graphics_.height, 0);
     configurePresentation(graphics_);
     [[maybe_unused]] detail::PsyCrossWindowMode window_mode{
@@ -915,12 +995,21 @@ public:
     detail::PsyCrossMissionStart mission_start;
     previous_buttons =
         mission_start.run(mission_, pad, previous_buttons, input_);
-    detail::PsyCrossSceneViewer scene_viewer{
-        input_, cheats_, game::CampaignDifficulty::original};
+    controller_bindings_persistence.retry();
+    const auto commit_controller_bindings =
+        [&controller_bindings_persistence](
+            const ControllerButtonBindings &bindings) {
+          return controller_bindings_persistence.commit(bindings);
+        };
+    detail::PsyCrossSceneViewer scene_viewer{input_, cheats_,
+                                             game::CampaignDifficulty::original,
+                                             graphics_.controller_bindings,
+                                             commit_controller_bindings};
     const auto result = scene_viewer.run(mission_, pad, previous_buttons,
                                          cue_path_, mission_.definition().index,
                                          mission_start.takePreloadedGameplay(),
                                          mission_start.takePreloadedAudio());
+    controller_bindings_persistence.retry();
     if (result.reason == detail::SceneExitReason::mission_complete &&
         !mission_.endingMovie().path.empty()) {
       static_cast<void>(movie_player.playStandalone(
@@ -937,6 +1026,7 @@ private:
   GraphicsSettings graphics_;
   KeyboardMouseBindings input_;
   game::RetailCheatState cheats_;
+  ControllerBindingsCommitCallback controller_bindings_commit_;
 };
 
 } // namespace
@@ -950,11 +1040,13 @@ std::unique_ptr<Host> createPsyCrossTitleHost(
     std::string title, game::TitleAssets assets, game::TitleMovies movies,
     game::MissionPackage initial_mission, std::filesystem::path cue_path,
     std::string supported_game_serial, GraphicsSettings graphics,
-    KeyboardMouseBindings input, game::RetailCheatState cheats) {
+    KeyboardMouseBindings input, game::RetailCheatState cheats,
+    ControllerBindingsCommitCallback controller_bindings_commit) {
   return std::make_unique<PsyCrossTitleHost>(
       std::move(title), std::move(assets), std::move(movies),
       std::move(initial_mission), std::move(cue_path),
-      std::move(supported_game_serial), graphics, input, cheats);
+      std::move(supported_game_serial), graphics, input, cheats,
+      std::move(controller_bindings_commit));
 }
 
 std::unique_ptr<Host> createPsyCrossSceneHost(std::string title,
@@ -962,10 +1054,11 @@ std::unique_ptr<Host> createPsyCrossSceneHost(std::string title,
                                               std::filesystem::path cue_path,
                                               GraphicsSettings graphics,
                                               KeyboardMouseBindings input,
-                                              game::RetailCheatState cheats) {
+                                              game::RetailCheatState cheats,
+                                              ControllerBindingsCommitCallback controller_bindings_commit) {
   return std::make_unique<PsyCrossSceneHost>(
       std::move(title), std::move(mission), std::move(cue_path), graphics,
-      input, cheats);
+      input, cheats, std::move(controller_bindings_commit));
 }
 
 } // namespace sf::platform

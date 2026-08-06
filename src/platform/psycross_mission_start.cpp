@@ -35,6 +35,39 @@ std::uint16_t readButtons(const PADRAW &pad) noexcept {
          (static_cast<std::uint16_t>(pad.buttons[1]) << 8U);
 }
 
+ControllerPromptFamily briefingControllerFamily(int family) noexcept {
+  switch (family) {
+  case PSYX_CONTROLLER_FAMILY_XBOX:
+    return ControllerPromptFamily::xbox;
+  case PSYX_CONTROLLER_FAMILY_PLAYSTATION:
+    return ControllerPromptFamily::playstation;
+  case PSYX_CONTROLLER_FAMILY_NINTENDO:
+    return ControllerPromptFamily::nintendo;
+  default:
+    return ControllerPromptFamily::generic;
+  }
+}
+
+InputPromptBindings
+briefingControllerPrompts(const PsyXControllerSnapshot &snapshot) {
+  constexpr std::uint16_t start_button = 0x0008U;
+  constexpr std::uint16_t triangle_button = 0x1000U;
+  constexpr std::uint16_t cross_button = 0x4000U;
+  constexpr std::uint16_t square_button = 0x8000U;
+  const auto family = briefingControllerFamily(snapshot.family);
+  const auto name = [family](std::uint16_t button) {
+    return controllerButtonPromptName(family, button);
+  };
+  return controllerInputPromptBindings(ControllerInputProtocol::unknown,
+                                       InputPromptBindingNames{
+                                           .confirm = name(cross_button),
+                                           .cancel = name(triangle_button),
+                                           .pause = name(start_button),
+                                           .interact = name(triangle_button),
+                                           .fire = name(square_button),
+                                       });
+}
+
 void drawMissionStartFade(std::uint8_t intensity) {
   if (intensity == 0U) {
     return;
@@ -83,7 +116,7 @@ PsyCrossMissionStart::run(const game::MissionPackage &mission, PADRAW &pad,
   RECT16 whole_vram{0, 0, 1024, 512};
   ClearImage(&whole_vram, 0, 0, 0);
   DrawSync(0);
-  PsyCrossRetailBriefing retail_briefing{mission, bindings};
+  PsyCrossRetailBriefing retail_briefing{mission};
   preloaded_gameplay_.reset();
   preloaded_audio_ = std::make_unique<PsyCrossAudioOutput>();
   auto preload = std::async(std::launch::async, [&mission, carry,
@@ -112,6 +145,10 @@ PsyCrossMissionStart::run(const game::MissionPackage &mission, PADRAW &pad,
   std::uint64_t audio_pcm_frames_pumped{};
   std::uint64_t audio_pcm_blocks_pumped{};
   std::uint64_t audio_diagnostic_sequence{};
+  auto active_prompt_bindings = keyboardMouseInputPromptBindings(bindings);
+  auto previous_controller_buttons = std::uint16_t{0xffffU};
+  auto previous_controller_instance = -1;
+  KeyboardMouseActionSnapshot previous_bound_actions;
   const auto periodic_audio_diagnostics = psyCrossAudioDiagnosticsEnabled();
   auto next_audio_diagnostic_counter =
       SDL_GetPerformanceCounter() + performance_frequency;
@@ -149,6 +186,35 @@ PsyCrossMissionStart::run(const game::MissionPackage &mission, PADRAW &pad,
                       .mouse_x2 = (mouse_buttons & SDL_BUTTON_X2MASK) != 0U,
                       .mouse_wheel_delta = consumePsyCrossMouseWheel(),
                   });
+    PsyXControllerSnapshot controller_snapshot{};
+    static_cast<void>(PsyX_Pad_GetControllerSnapshot(0, &controller_snapshot));
+    const auto controller_buttons = static_cast<std::uint16_t>(
+        static_cast<std::uint16_t>(controller_snapshot.buttons[0]) |
+        (static_cast<std::uint16_t>(controller_snapshot.buttons[1]) << 8U));
+    const auto controller_identity_changed =
+        controller_snapshot.connected != 0U &&
+        controller_snapshot.instanceId != previous_controller_instance;
+    const auto controller_pressed =
+        controller_identity_changed
+            ? std::uint16_t{}
+            : static_cast<std::uint16_t>(previous_controller_buttons &
+                                         ~controller_buttons);
+    auto pc_action_edge = false;
+    for (std::size_t index = 0U; index < bound_actions.held.size(); ++index) {
+      pc_action_edge = pc_action_edge || (bound_actions.held[index] &&
+                                          !previous_bound_actions.held[index]);
+    }
+    if (controller_snapshot.connected == 0U || pc_action_edge) {
+      active_prompt_bindings = keyboardMouseInputPromptBindings(bindings);
+    } else if (controller_pressed != 0U || controller_identity_changed ||
+               active_prompt_bindings.device == InputPromptDevice::controller) {
+      active_prompt_bindings = briefingControllerPrompts(controller_snapshot);
+    }
+    previous_bound_actions = bound_actions;
+    previous_controller_buttons = controller_buttons;
+    previous_controller_instance = controller_snapshot.connected != 0U
+                                       ? controller_snapshot.instanceId
+                                       : -1;
 
     if (!preloaded_gameplay_ && preload.wait_for(std::chrono::seconds{0}) ==
                                     std::future_status::ready) {
@@ -239,8 +305,8 @@ PsyCrossMissionStart::run(const game::MissionPackage &mission, PADRAW &pad,
         game::MissionStartGate::fadeOutIntensity(fade_out_elapsed);
     auto text_animation_complete = false;
     if (PsyX_BeginScene() != 0) {
-      text_animation_complete =
-          retail_briefing.draw(mission.briefing(), retail_time);
+      text_animation_complete = retail_briefing.draw(
+          mission.briefing(), retail_time, active_prompt_bindings);
       drawMissionStartFade(fade_out_intensity);
       PsyX_EndScene();
     }

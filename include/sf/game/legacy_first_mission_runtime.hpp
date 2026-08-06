@@ -32,10 +32,9 @@ mergeRetryInventoryState(const LegacyInventoryBridgeState &restored,
   }
   const auto restored_current =
       static_cast<std::size_t>(restored.current_weapon);
-  const auto restored_current_bit =
-      restored_current < weapon_slot_count
-          ? std::uint32_t{1U} << restored_current
-          : std::uint32_t{};
+  const auto restored_current_bit = restored_current < weapon_slot_count
+                                        ? std::uint32_t{1U} << restored_current
+                                        : std::uint32_t{};
   const auto preserve_mission_local_current =
       restored_current_bit != 0U &&
       (restored_current_bit & campaign_persistent_weapon_mask) == 0U &&
@@ -293,6 +292,8 @@ public:
   setPark2FlameLineOfSight(std::optional<bool> line_of_sight_clear) noexcept;
   [[nodiscard]] bool restoreHostPlayerHeading(std::int32_t yaw) noexcept;
   [[nodiscard]] std::uint64_t hostAimRayPatchCount() const noexcept;
+  [[nodiscard]] LegacyPadMotorState padMotorState() const noexcept;
+  [[nodiscard]] bool setRetailVibrationEnabled(bool enabled) noexcept;
   [[nodiscard]] bool applyHostWeaponMenuInput(bool held,
                                               std::int32_t delta) noexcept;
   [[nodiscard]] bool applyHostFirstPersonAim(bool active) noexcept;

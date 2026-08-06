@@ -1556,6 +1556,11 @@ bool GameplaySession::setAudioVolumes(
   });
 }
 
+bool GameplaySession::setVibrationEnabled(bool enabled) noexcept {
+  return legacy_first_mission_ &&
+         legacy_first_mission_->setRetailVibrationEnabled(enabled);
+}
+
 std::optional<GameplayAudioVolumes>
 GameplaySession::audioVolumes() const noexcept {
   if (!legacy_first_mission_) {
@@ -2619,20 +2624,17 @@ GameplaySession::park2GirdeuxFlameLineOfSight() const noexcept {
     const auto local_z =
         (static_cast<double>(bounds.minimum_z) + bounds.maximum_z) * 0.5;
     const auto component = [&](std::size_t row) {
-      return (static_cast<double>(hand_transform.rotation[row * 3U]) *
-                  local_x +
+      return (static_cast<double>(hand_transform.rotation[row * 3U]) * local_x +
               static_cast<double>(hand_transform.rotation[row * 3U + 1U]) *
                   local_y +
               static_cast<double>(hand_transform.rotation[row * 3U + 2U]) *
                   local_z) /
              4096.0;
     };
-    const auto origin = Point3{static_cast<double>(hand_transform.x) +
-                                   component(0U),
-                               -static_cast<double>(hand_transform.y) +
-                                   component(1U),
-                               static_cast<double>(hand_transform.z) +
-                                   component(2U)};
+    const auto origin =
+        Point3{static_cast<double>(hand_transform.x) + component(0U),
+               -static_cast<double>(hand_transform.y) + component(1U),
+               static_cast<double>(hand_transform.z) + component(2U)};
     const auto &target = player();
     const auto origin_x = static_cast<double>(origin.x);
     const auto origin_y = static_cast<double>(origin.y);
@@ -2656,9 +2658,8 @@ GameplaySession::park2GirdeuxFlameLineOfSight() const noexcept {
     };
     std::array<bool, legacy_park2_flame_visibility_sample_count> visible{};
     std::ranges::transform(targets, visible.begin(), [&](const Point3 &sample) {
-      return traceWorldSegment(origin_x, origin_y, origin_z, sample.x,
-                               sample.y, sample.z) >=
-             target_visibility_limit;
+      return traceWorldSegment(origin_x, origin_y, origin_z, sample.x, sample.y,
+                               sample.z) >= target_visibility_limit;
     });
     return legacyPark2FlameDamageVisible(visible);
   }
@@ -4021,6 +4022,11 @@ std::optional<std::uint16_t> GameplaySession::legacyVirusScannerMarkerObject(
 std::uint64_t GameplaySession::legacyAimRayPatchCount() const noexcept {
   return legacy_first_mission_ ? legacy_first_mission_->hostAimRayPatchCount()
                                : 0U;
+}
+
+LegacyPadMotorState GameplaySession::legacyPadMotorState() const noexcept {
+  return legacy_first_mission_ ? legacy_first_mission_->padMotorState()
+                               : LegacyPadMotorState{};
 }
 
 bool GameplaySession::legacyScriptedCameraActive() const noexcept {

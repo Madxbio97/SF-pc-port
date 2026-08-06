@@ -60,6 +60,26 @@ typedef struct
 	float y;
 } PsyXPresentationScale;
 
+typedef enum
+{
+	PSYX_CONTROLLER_FAMILY_UNKNOWN = 0,
+	PSYX_CONTROLLER_FAMILY_GENERIC,
+	PSYX_CONTROLLER_FAMILY_XBOX,
+	PSYX_CONTROLLER_FAMILY_PLAYSTATION,
+	PSYX_CONTROLLER_FAMILY_NINTENDO,
+} PsyXControllerFamily;
+
+typedef struct
+{
+	unsigned char connected;
+	unsigned char rumbleSupported;
+	unsigned char buttons[2];
+	unsigned char analog[4];
+	int family;
+	int type;
+	int instanceId;
+} PsyXControllerSnapshot;
+
 //------------------------------------------------------------------------
 
 #if defined(_LANGUAGE_C_PLUS_PLUS) || defined(__cplusplus) || \
@@ -139,6 +159,18 @@ extern "C"
 
 	/* Explicitly updates emulator input loop */
 	extern void PsyX_UpdateInput(void);
+
+	/* Copies the latest physical-controller state for a pad slot. Buttons use
+	 * active-low PlayStation bits; analog order is RH, RV, LH, LV. */
+	extern int PsyX_Pad_GetControllerSnapshot(int slot,
+										 PsyXControllerSnapshot* snapshot);
+
+	/* Reports and controls rumble for the physical controller in a pad slot. */
+	extern int PsyX_Pad_HasRumble(int slot);
+	extern int PsyX_Pad_SetRumble(int slot, unsigned short low16,
+								unsigned short high16,
+								unsigned int duration_ms);
+	extern void PsyX_Pad_StopRumble(int slot);
 
 	/* Returns keyboard mapping index */
 	extern int PsyX_LookupKeyboardMapping(const char* str, int default_value);

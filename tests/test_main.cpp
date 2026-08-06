@@ -1866,6 +1866,48 @@ public:
   }
 };
 
+void testPlayerInputContinuousLatch() {
+  sf::game::PlayerInput latched{
+      .move = -1.0,
+      .turn = -2.0,
+      .run = false,
+      .aim = false,
+      .next_weapon = true,
+      .strafe = -3.0,
+      .look_yaw = -4.0,
+      .look_pitch = -5.0,
+      .fire_pressed = true,
+      .fire_held = false,
+      .target_lock_held = false,
+      .weapon_menu_delta = 7,
+      .aim_peek = -6.0,
+  };
+  const sf::game::PlayerInput sampled{
+      .move = 1.0,
+      .turn = 2.0,
+      .run = true,
+      .aim = true,
+      .strafe = 3.0,
+      .look_yaw = 176.0,
+      .look_pitch = -160.0,
+      .fire_held = true,
+      .target_lock_held = true,
+      .aim_peek = 0.5,
+  };
+
+  sf::game::latchLatestPlayerInputState(latched, sampled);
+
+  require(latched.move == 1.0 && latched.turn == 2.0 && latched.run &&
+              latched.aim && latched.strafe == 3.0 &&
+              latched.look_yaw == 176.0 && latched.look_pitch == -160.0 &&
+              latched.fire_held && latched.target_lock_held &&
+              latched.aim_peek == 0.5,
+          "Continuous input latch dropped the first-person right stick");
+  require(latched.next_weapon && latched.fire_pressed &&
+              latched.weapon_menu_delta == 7,
+          "Continuous input latch overwrote accumulated edges or impulses");
+}
+
 void testPlayerController() {
   constexpr std::array walking{
       sf::assets::HmdRootMotionFrame{0, 0, 10, 0},
@@ -4616,6 +4658,7 @@ int main() {
     testHmdAnimation();
     testActorAnimationBank();
     testChaseCamera();
+    testPlayerInputContinuousLatch();
     testPlayerController();
     testPlayerRootMotionCadence();
     testPlayerPersistentActions();

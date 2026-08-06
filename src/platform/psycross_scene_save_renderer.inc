@@ -1,9 +1,9 @@
 struct PsyCrossCampaignSaveRenderer::State {
   State(const game::MissionPackage &mission, KeyboardMouseBindings input)
-      : textures{mission}, input{input} {}
+      : textures{mission}, input{keyboardMouseInputPromptBindings(input)} {}
 
   HudTextureAtlas textures;
-  KeyboardMouseBindings input;
+  InputPromptBindings input;
   std::uint64_t animation_tick{};
 };
 

@@ -208,16 +208,110 @@ keyboardMouseActionName(KeyboardMouseAction action) noexcept;
 [[nodiscard]] std::string_view
 keyboardMouseActionConfigKey(KeyboardMouseAction action) noexcept;
 
+// Presentation distinguishes the active device from the controller transport.
+// The latter is metadata: button labels come from the selected backend/device
+// mapping because DirectInput and Raw Input devices do not share one physical
+// face-button layout.
+enum class InputPromptDevice : std::uint8_t {
+  keyboard_mouse,
+  controller,
+};
+
+enum class ControllerInputProtocol : std::uint8_t {
+  unknown,
+  xinput,
+  direct_input,
+  raw_input,
+};
+
+enum class ControllerPromptFamily : std::uint8_t {
+  generic,
+  xbox,
+  playstation,
+  nintendo,
+};
+
+enum class InputPromptAction : std::uint8_t {
+  confirm,
+  cancel,
+  pause,
+  interact,
+  fire,
+  count,
+};
+
+inline constexpr auto input_prompt_action_count =
+    static_cast<std::size_t>(InputPromptAction::count);
+
+// Owns final, physical button/key labels so callers may rebuild it from any
+// backend without exposing SDL or Windows input types to the portable layer.
+// Controller labels should describe the actual mapped control (A, CROSS,
+// BUTTON 2, and so on), not merely the logical PS1 action.
+struct InputPromptBindings {
+  InputPromptDevice device{InputPromptDevice::keyboard_mouse};
+  ControllerInputProtocol controller_protocol{ControllerInputProtocol::unknown};
+  std::array<std::string, input_prompt_action_count> values{};
+
+  [[nodiscard]] std::string_view
+  operator[](InputPromptAction action) const noexcept {
+    const auto index = static_cast<std::size_t>(action);
+    return index < values.size() ? std::string_view{values[index]}
+                                 : std::string_view{};
+  }
+
+  friend bool operator==(const InputPromptBindings &,
+                         const InputPromptBindings &) = default;
+};
+
+struct InputPromptBindingNames {
+  std::string_view confirm;
+  std::string_view cancel;
+  std::string_view pause;
+  std::string_view interact;
+  std::string_view fire;
+};
+
+// %x/%t are portable guest/native UI tokens. Their semantic role is supplied
+// by the caller because %t means Start on the root pause screen but Cancel on
+// nested screens. Keyboard/mouse maps both roles to the configured pause key.
+struct InputPromptTokenActions {
+  InputPromptAction x{InputPromptAction::confirm};
+  InputPromptAction t{InputPromptAction::pause};
+};
+
+[[nodiscard]] std::string_view
+controllerButtonPromptName(ControllerPromptFamily family,
+                           std::uint16_t ps1_active_high_bit) noexcept;
+
+[[nodiscard]] InputPromptBindings
+keyboardMouseInputPromptBindings(const KeyboardMouseBindings &bindings);
+[[nodiscard]] InputPromptBindings
+controllerInputPromptBindings(ControllerInputProtocol protocol,
+                              InputPromptBindingNames names);
+[[nodiscard]] std::string_view
+inputPromptLabel(const InputPromptBindings &bindings,
+                 InputPromptAction action) noexcept;
+
 // Retail strings keep their original control tokens so the guest remains the
 // authority for message timing and animation. Presentation may replace only
 // a recognized prompt token with the launcher's active keyboard/mouse bind.
 struct KeyboardMousePromptText {
   std::string retail_text;
   std::string bound_text;
+  InputPromptAction action{InputPromptAction::confirm};
 
   friend bool operator==(const KeyboardMousePromptText &,
                          const KeyboardMousePromptText &) = default;
 };
+
+using InputPromptText = KeyboardMousePromptText;
+
+[[nodiscard]] std::optional<InputPromptText>
+inputPromptText(std::string_view source, const InputPromptBindings &bindings);
+
+[[nodiscard]] std::string inputHintText(std::string_view source,
+                                        const InputPromptBindings &bindings,
+                                        InputPromptTokenActions tokens = {});
 
 [[nodiscard]] std::optional<KeyboardMousePromptText>
 keyboardMousePromptText(std::string_view source,
@@ -410,6 +504,13 @@ struct FirstPersonAimInput {
 // guest tick at 60 Hz without changing the authoritative retail PAD state.
 inline constexpr double retail_first_person_yaw_units_per_tick = 10.0;
 inline constexpr double retail_first_person_pitch_units_per_tick = 13.0;
+// A modern right stick needs a wider full-deflection rate than the retail
+// digital sight step, while retaining the same linear fine-aim response near
+// centre. These rates affect only controller look; mouse input stays lossless.
+inline constexpr double controller_first_person_yaw_units_per_tick =
+    retail_first_person_yaw_units_per_tick * 4.0;
+inline constexpr double controller_first_person_pitch_units_per_tick =
+    retail_first_person_pitch_units_per_tick * 2.5;
 
 // First-person routing separates locomotion, sight, and the dedicated L2/R2
 // corner channel. Relative mouse input remains separate so it can be

@@ -3,6 +3,36 @@
 All notable public-test changes are documented here. The project currently uses
 pre-release tags rather than a stable semantic-versioning promise.
 
+## 0.1.0-public-test.26 - 2026-08-07
+
+### Controller support
+
+- Added selectable Automatic, XInput, DirectInput and Raw Input controller
+  backends with stable hot-plug handling and physical-device snapshots.
+- Restored retail vibration commands with safe motor shutdown on pause, focus
+  loss, disconnect, restart and scene teardown.
+- Added physical gamepad rebinding to the launcher and pause menu, including
+  controller-family button labels, conflict swaps and disconnect-safe capture.
+- Unified both rebind interfaces on one canonical action catalog, validation
+  path and `[ControllerBindings]` section in `launcher.ini`.
+- Made Apply/Resume persist the active layout while Cancel, window close and
+  capture cancellation leave the committed layout unchanged. Failed writes
+  remain live in memory and retry across Return to Title.
+- Switched service-message prompts between keyboard/mouse and the active
+  controller family without changing the underlying retail actions.
+
+### Aiming and input timing
+
+- Restored right-stick movement in first-person aiming and calibrated it for a
+  faster response while retaining proportional fine control.
+- Kept native-rate controller samples current between 20 Hz retail updates so
+  held look input and short button edges are not dropped.
+
+### Validation
+
+- Windows x64 PsyCross Release build completed successfully.
+- Full PsyCross CTest suite passed: 41/41, including supported-ROM probes.
+
 ## 0.1.0-public-test.25 - 2026-08-06
 
 ### Mission presentation and retries
