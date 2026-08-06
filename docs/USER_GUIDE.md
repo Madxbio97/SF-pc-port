@@ -87,8 +87,8 @@ The current build enables only these validated mission-specific overrides:
 - **Washington Park:** the timer is 15:00; Marcos uses ordinary fragmentation
   grenades at a faster cadence; each damaging player hit on a validated CBDC
   bomb technician deducts 30 seconds.
-- **Freedom Memorial:** the HUD shows bomb-detonation and Girdeux fuel-tank
-  damage meters. The bomb budget is capped at 100%: shotgun hits add 50%, .45
+- **Freedom Memorial:** the HUD shows the bomb-detonation meter. The bomb
+  budget is capped at 100%: shotgun hits add 50%, .45
   hits 40%, M-16 hits 10%, and 9 mm-class weapons and rifles add 2%. An M-79
   hit or a thrown fragmentation/gas grenade fills it immediately; the taser
   and flashlight add nothing. Reaching 100% invokes the retail bomb failure.

@@ -16,7 +16,6 @@ enum class AgentMissionHudMeterKind : std::uint8_t {
   bomb_technician_health,
   aramov_escape,
   bomb_detonation,
-  girdeux_tank_damage,
   suspicion,
   phagan_health,
   aramov_health,
@@ -149,8 +148,6 @@ struct AgentMissionHudState {
   std::optional<AgentMissionHudSample> bomb_technician_health;
   std::optional<AgentMissionHudSample> aramov_escape;
   std::optional<AgentMissionHudSample> bomb_detonation;
-  // This is accumulated weak-point damage, not remaining tank health.
-  std::optional<AgentMissionHudSample> girdeux_tank_damage;
   std::optional<AgentMissionHudSample> suspicion;
   std::optional<AgentMissionHudSample> phagan_health;
   std::optional<AgentMissionHudSample> aramov_health;
@@ -177,8 +174,6 @@ agentMissionHudLabel(AgentMissionHudMeterKind kind) noexcept {
     return "ARAMOV ESCAPE";
   case AgentMissionHudMeterKind::bomb_detonation:
     return "BOMB DETONATION";
-  case AgentMissionHudMeterKind::girdeux_tank_damage:
-    return "FUEL TANK";
   case AgentMissionHudMeterKind::suspicion:
     return "SUSPICION";
   case AgentMissionHudMeterKind::phagan_health:
@@ -199,10 +194,6 @@ agentMissionHudTone(AgentMissionHudMeterKind kind,
     return percent <= 25U   ? AgentMissionHudTone::critical
            : percent <= 50U ? AgentMissionHudTone::warning
                             : AgentMissionHudTone::friendly;
-  case AgentMissionHudMeterKind::girdeux_tank_damage:
-    return percent >= 75U   ? AgentMissionHudTone::friendly
-           : percent >= 50U ? AgentMissionHudTone::warning
-                            : AgentMissionHudTone::neutral;
   case AgentMissionHudMeterKind::aramov_escape:
   case AgentMissionHudMeterKind::bomb_detonation:
   case AgentMissionHudMeterKind::suspicion:
@@ -251,8 +242,6 @@ makeAgentMissionHudMeters(std::uint32_t mission_index,
     break;
   case 4U:
     append(AgentMissionHudMeterKind::bomb_detonation, state.bomb_detonation);
-    append(AgentMissionHudMeterKind::girdeux_tank_damage,
-           state.girdeux_tank_damage);
     break;
   case 6U:
     append(AgentMissionHudMeterKind::phagan_health, state.phagan_health);

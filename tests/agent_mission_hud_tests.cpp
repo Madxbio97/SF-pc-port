@@ -40,9 +40,7 @@ void testScalarNormalizationAndTones() {
               agentMissionHudTone(AgentMissionHudMeterKind::aramov_health,
                                   51U) == AgentMissionHudTone::friendly &&
               agentMissionHudTone(AgentMissionHudMeterKind::aramov_escape,
-                                  75U) == AgentMissionHudTone::critical &&
-              agentMissionHudTone(AgentMissionHudMeterKind::girdeux_tank_damage,
-                                  75U) == AgentMissionHudTone::friendly,
+                                  75U) == AgentMissionHudTone::critical,
           "Agent HUD semantic thresholds are inconsistent");
 }
 
@@ -107,7 +105,6 @@ void testExactMissionRouting() {
   state.bomb_technician_health = AgentMissionHudSample{125U, 250U};
   state.aramov_escape = AgentMissionHudSample{40U, 100U};
   state.bomb_detonation = AgentMissionHudSample{62U, 100U};
-  state.girdeux_tank_damage = AgentMissionHudSample{80U, 100U};
   state.suspicion = AgentMissionHudSample{25U, 100U};
   state.phagan_health = AgentMissionHudSample{10U, 20U};
   state.aramov_health = AgentMissionHudSample{75U, 100U};
@@ -127,12 +124,10 @@ void testExactMissionRouting() {
           "Main Subway Line did not select Aramov escape progress");
 
   const auto memorial = makeAgentMissionHudMeters(4U, state);
-  require(memorial.count == 2U &&
+  require(memorial.count == 1U &&
               memorial.values[0].kind ==
-                  AgentMissionHudMeterKind::bomb_detonation &&
-              memorial.values[1].kind ==
-                  AgentMissionHudMeterKind::girdeux_tank_damage,
-          "Freedom Memorial meter order is not deterministic");
+                  AgentMissionHudMeterKind::bomb_detonation,
+          "Freedom Memorial retained the redundant fuel-tank meter");
 
   const auto reception = makeAgentMissionHudMeters(5U, state);
   require(reception.count == 0U,
@@ -164,8 +159,6 @@ void testLocalizedLabels() {
                      u8"\u041f\u041e\u0411\u0415\u0413 \u0410\u0420\u0410\u041c\u041e\u0412\u041e\u0419"},
       LocalizedLabel{"BOMB DETONATION",
                      u8"\u0414\u0415\u0422\u041e\u041d\u0410\u0426\u0418\u042f \u0411\u041e\u041c\u0411\u042b"},
-      LocalizedLabel{"FUEL TANK",
-                     u8"\u0422\u041e\u041f\u041b\u0418\u0412\u041d\u042b\u0419 \u0411\u0410\u041a"},
       LocalizedLabel{"SUSPICION",
                      u8"\u041f\u041e\u0414\u041e\u0417\u0420\u0415\u041d\u0418\u0415"},
       LocalizedLabel{"PHAGAN", u8"\u0424\u042d\u0419\u0413\u0410\u041d"},

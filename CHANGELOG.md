@@ -3,6 +3,25 @@
 All notable public-test changes are documented here. The project currently uses
 pre-release tags rather than a stable semantic-versioning promise.
 
+## 0.1.0-public-test.27 - 2026-08-07
+
+### Controller navigation
+
+- Increased the title-menu analog deadzone to reject ordinary DualSense stick
+  drift without changing gameplay aiming or movement sensitivity.
+- Resolved opposing-axis priority so the dominant intentional stick movement
+  controls title and campaign-save navigation.
+
+### Agent mission HUD
+
+- Removed the redundant Girdeux `FUEL TANK` meter from Freedom Memorial while
+  preserving the bomb-detonation budget and the tank weak-point mechanics.
+
+### Validation
+
+- Windows x64 PsyCross Release build completed successfully.
+- Full PsyCross CTest suite passed: 41/41, including supported-ROM probes.
+
 ## 0.1.0-public-test.26 - 2026-08-07
 
 ### Controller support

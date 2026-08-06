@@ -237,9 +237,6 @@ constexpr std::array utf8_translations{
         "ARAMOV ESCAPE",
         u8"\u041f\u041e\u0411\u0415\u0413 \u0410\u0420\u0410\u041c\u041e\u0412\u041e\u0419"},
     Utf8Translation{
-        "FUEL TANK",
-        u8"\u0422\u041e\u041f\u041b\u0418\u0412\u041d\u042b\u0419 \u0411\u0410\u041a"},
-    Utf8Translation{
         "SUSPICION",
         u8"\u041f\u041e\u0414\u041e\u0417\u0420\u0415\u041d\u0418\u0415"},
     Utf8Translation{"PHAGAN",

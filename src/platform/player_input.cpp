@@ -274,6 +274,22 @@ std::string hudInputName(KeyboardMouseInput input) {
 
 } // namespace
 
+int controllerMenuDirection(std::uint8_t horizontal, std::uint8_t vertical,
+                            int previous_direction) noexcept {
+  constexpr int center = 128;
+  constexpr int engage_deadzone = 32;
+  constexpr int release_deadzone = 24;
+  const auto x = static_cast<int>(horizontal) - center;
+  const auto y = static_cast<int>(vertical) - center;
+  const auto dominant = std::abs(y) >= std::abs(x) ? y : x;
+  const auto deadzone =
+      previous_direction == 0 ? engage_deadzone : release_deadzone;
+  if (std::abs(dominant) <= deadzone) {
+    return 0;
+  }
+  return dominant < 0 ? -1 : 1;
+}
+
 KeyboardMouseBindings defaultKeyboardMouseBindings() noexcept {
   KeyboardMouseBindings result;
   for (std::size_t index = 0U; index < keyboard_mouse_actions.size(); ++index) {

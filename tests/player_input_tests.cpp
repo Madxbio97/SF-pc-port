@@ -18,6 +18,39 @@ bool near(double first, double second) {
   return std::abs(first - second) < 0.000001;
 }
 
+void testControllerMenuDirectionRejectsDrift() {
+  using sf::platform::controllerMenuDirection;
+
+  require(controllerMenuDirection(128U, 128U) == 0,
+          "Centered controller moved the menu");
+  require(controllerMenuDirection(100U, 156U) == 0,
+          "DualSense-sized stick drift escaped the menu deadzone");
+  require(controllerMenuDirection(96U, 128U) == 0 &&
+              controllerMenuDirection(160U, 128U) == 0,
+          "Menu engage boundary was not neutral");
+  require(controllerMenuDirection(95U, 128U) == -1 &&
+              controllerMenuDirection(161U, 128U) == 1,
+          "Deliberate horizontal menu movement was rejected");
+  require(controllerMenuDirection(128U, 95U) == -1 &&
+              controllerMenuDirection(128U, 161U) == 1,
+          "Deliberate vertical menu movement was rejected");
+
+  // Once engaged, the smaller release threshold prevents threshold noise
+  // without forcing the player to move through nearly half the stick travel.
+  require(controllerMenuDirection(128U, 153U, 1) == 1 &&
+              controllerMenuDirection(128U, 152U, 1) == 0,
+          "Menu direction hysteresis did not release deterministically");
+
+  // A smaller opposing-axis deflection used to win solely because its sign
+  // was checked first, making DualSense navigation appear stuck or reversed.
+  require(controllerMenuDirection(68U, 220U) == 1,
+          "Negative horizontal drift overrode deliberate downward input");
+  require(controllerMenuDirection(230U, 60U) == 1,
+          "Negative vertical drift overrode deliberate rightward input");
+  require(controllerMenuDirection(40U, 200U) == -1,
+          "Dominant negative menu movement was not preserved");
+}
+
 sf::platform::PcPlayerInputRaw
 expectedPcInputForAction(sf::platform::KeyboardMouseAction action) {
   using sf::platform::KeyboardMouseAction;
@@ -1021,6 +1054,7 @@ void testMergedDeviceActionEdges() {
 
 int main() {
   try {
+    testControllerMenuDirectionRejectsDrift();
     testKeyboardMouseBindingCatalog();
     testKeyboardMousePromptText();
     testDeviceAwareInputPromptText();

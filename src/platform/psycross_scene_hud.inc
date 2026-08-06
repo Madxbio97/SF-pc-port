@@ -1233,33 +1233,6 @@ agentNpcRouteProgressSample(const game::GameplaySession &gameplay,
   return std::nullopt;
 }
 
-std::optional<game::AgentMissionHudSample>
-agentGirdeuxTankDamageSample(const game::GameplaySession &gameplay) {
-  constexpr auto girdeux_source = std::uint16_t{9U};
-  constexpr auto girdeux_class = std::uint32_t{0x3cU};
-  constexpr auto girdeux_health = std::uint32_t{100U};
-  const auto &objects = gameplay.objects();
-  for (std::size_t index = 0U;
-       index < objects.size() &&
-       index <=
-           static_cast<std::size_t>(std::numeric_limits<std::uint16_t>::max());
-       ++index) {
-    const auto &object = objects[index];
-    if (object.source_index != girdeux_source ||
-        object.class_id != girdeux_class) {
-      continue;
-    }
-    const auto scene = static_cast<std::uint16_t>(index);
-    if (!gameplay.legacyDedicatedActorPresentation(scene)) {
-      return std::nullopt;
-    }
-    const auto health =
-        std::min<std::uint32_t>(gameplay.objectHealth(scene), girdeux_health);
-    return game::AgentMissionHudSample{girdeux_health - health, girdeux_health};
-  }
-  return std::nullopt;
-}
-
 game::AgentMissionHudState
 agentMissionHudState(const game::GameplaySession &gameplay) {
   game::AgentMissionHudState state;
@@ -1271,7 +1244,6 @@ agentMissionHudState(const game::GameplaySession &gameplay) {
     if (const auto detonation = gameplay.agentPark2BombDetonationPercent()) {
       state.bomb_detonation = game::AgentMissionHudSample{*detonation, 100U};
     }
-    state.girdeux_tank_damage = agentGirdeuxTankDamageSample(gameplay);
     break;
   case 6U:
     state.phagan_health = agentNpcHealthSample(gameplay, 183U, 0x4cU);

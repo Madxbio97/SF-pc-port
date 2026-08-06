@@ -12,6 +12,14 @@ namespace sf::platform {
 
 inline constexpr std::size_t quick_weapon_slot_count = 10U;
 
+// Converts the left stick into a linear menu direction. Menu input uses a
+// wider deadzone than gameplay so ordinary controller drift cannot hold the
+// navigation latch away from neutral. When both axes are active, the user's
+// dominant movement wins instead of a smaller opposing-axis drift.
+[[nodiscard]] int controllerMenuDirection(std::uint8_t horizontal,
+                                          std::uint8_t vertical,
+                                          int previous_direction = 0) noexcept;
+
 // Keyboard values intentionally match SDL scancodes (USB HID usages). Mouse
 // values occupy a separate stable range so launcher settings remain portable
 // and do not depend on Windows virtual-key codes.

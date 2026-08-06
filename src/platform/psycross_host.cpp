@@ -281,7 +281,7 @@ storeTitleSaveSlotsWithRecovery(const std::filesystem::path &path,
   }
 }
 
-int titleAnalogDirection(const PADRAW &pad) noexcept;
+int titleAnalogDirection(const PADRAW &pad, int previous_direction) noexcept;
 
 game::CampaignSaveResult runCampaignSaveMenu(
     const game::MissionPackage &mission, const game::TitleSaveSlots &slots,
@@ -319,7 +319,7 @@ game::CampaignSaveResult runCampaignSaveMenu(
     keyboard_initialized = true;
     interact_was_down = interact_down;
     pause_was_down = pause_down;
-    const auto current_analog = titleAnalogDirection(pad);
+    const auto current_analog = titleAnalogDirection(pad, analog_direction);
     const auto analog_previous = current_analog < 0 && analog_direction == 0;
     const auto analog_next = current_analog > 0 && analog_direction == 0;
     analog_direction = current_analog;
@@ -363,17 +363,9 @@ game::CampaignSaveResult runCampaignSaveMenu(
   }
 }
 
-int titleAnalogDirection(const PADRAW &pad) noexcept {
-  constexpr int analog_deadzone = 24;
-  const auto analog_x = static_cast<int>(pad.analog[2]) - 128;
-  const auto analog_y = static_cast<int>(pad.analog[3]) - 128;
-  if (analog_y < -analog_deadzone || analog_x < -analog_deadzone) {
-    return -1;
-  }
-  if (analog_y > analog_deadzone || analog_x > analog_deadzone) {
-    return 1;
-  }
-  return 0;
+int titleAnalogDirection(const PADRAW &pad, int previous_direction) noexcept {
+  return controllerMenuDirection(pad.analog[2], pad.analog[3],
+                                 previous_direction);
 }
 
 std::vector<u_long> packWords(std::span<const std::uint16_t> words) {
@@ -613,7 +605,8 @@ public:
           title_keyboard_initialized = true;
           title_interact_was_down = interact_down;
           title_pause_was_down = pause_down;
-          const auto analog_direction = titleAnalogDirection(pad);
+          const auto analog_direction =
+              titleAnalogDirection(pad, title_analog_direction_);
           const auto analog_previous =
               analog_direction < 0 && title_analog_direction_ == 0;
           const auto analog_next =
@@ -697,7 +690,7 @@ public:
     for (;;) {
       selected_command_ = game::TitleCommand::none;
       title_analog_direction_ =
-          play_startup_movies ? 0 : titleAnalogDirection(pad);
+          play_startup_movies ? 0 : titleAnalogDirection(pad, 0);
       previous_buttons = movie_player.play(movies_, pad, previous_buttons,
                                            overlay, play_startup_movies);
       if (selected_command_ == game::TitleCommand::training_video) {
