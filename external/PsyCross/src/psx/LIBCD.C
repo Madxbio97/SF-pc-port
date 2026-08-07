@@ -8,7 +8,9 @@
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
+#if !defined(__APPLE__) // macOS keeps malloc() in stdlib.h
 #include <malloc.h>
+#endif
 
 #ifdef _WIN32
 #include <direct.h>

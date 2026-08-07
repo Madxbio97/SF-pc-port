@@ -46,6 +46,8 @@ extern int rename(char* unk00, char *);
 extern int cd(char* unk00);
 */
 	
+struct EXEC; // defined in psx/kernel.h; forward declaration keeps C prototypes consistent
+
 extern int LoadTest(char*  unk00, struct EXEC *);
 extern int Load(char * unk00, struct EXEC *);
 extern int Exec(struct EXEC * unk00, int, char **);

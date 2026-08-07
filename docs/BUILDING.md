@@ -66,6 +66,37 @@ cmake --build --preset windows-core-release
 
 This stops at `sf_game` and avoids compiling the platform executable.
 
+## macOS build
+
+The full stack, including the playable PsyCross application, also builds on
+macOS (Apple Silicon and Intel). Dependencies come from Homebrew instead of
+vcpkg:
+
+```sh
+brew install cmake ninja sdl2 openal-soft ffmpeg
+```
+
+Configure, build and test with the checked-in presets:
+
+```sh
+cmake --preset macos-psycross
+cmake --build --preset macos-psycross-release
+ctest --preset macos-psycross-release
+```
+
+The executable is written to `build/macos-psycross/syphon_filter`. A core-only
+build is available as the `macos` preset.
+
+The Win32 launcher GUI is not available on macOS; launch the game from the
+command line instead:
+
+```sh
+./build/macos-psycross/syphon_filter --no-launcher 'Syphon Filter (USA) (v1.1).cue'
+```
+
+User data is stored under `~/.local/share/SyphonFilterPC` unless
+`XDG_DATA_HOME` is set.
+
 ## Full validation
 
 The full presets compile every enabled target and run the deterministic tests:

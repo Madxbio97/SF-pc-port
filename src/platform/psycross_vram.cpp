@@ -35,17 +35,21 @@ namespace {
          (std::to_integer<std::uint32_t>(bytes[offset + 3]) << 24U);
 }
 
-[[nodiscard]] std::vector<u_long>
+[[nodiscard]] std::vector<std::uint32_t>
 packVramWords(std::span<const std::byte> bytes) {
   if ((bytes.size() & 1U) != 0U) {
     throw core::Error{core::ErrorCode::invalid_format,
                       "VRAM payload has an odd byte count"};
   }
+  // LoadImage reinterprets the buffer as a dense u16 array, so the packed
+  // words must be gapless 32-bit units. Packing into u_long leaves the high
+  // half of every 8-byte element zero on LP64 hosts, striping the upload.
   const auto word_count = bytes.size() / 2U;
-  std::vector<u_long> result((word_count + 1U) / 2U);
+  std::vector<std::uint32_t> result((word_count + 1U) / 2U);
   for (std::size_t index = 0; index < word_count; ++index) {
     const auto value = readLe16(bytes, index * 2U);
-    result[index / 2U] |= static_cast<u_long>(value) << ((index & 1U) * 16U);
+    result[index / 2U] |= static_cast<std::uint32_t>(value)
+                          << ((index & 1U) * 16U);
   }
   return result;
 }
@@ -128,7 +132,7 @@ void uploadTexturePage(unsigned int page, std::span<const std::byte> bytes) {
   }
   auto rect = texturePageRect(page);
   auto packed = packVramWords(bytes);
-  LoadImage(&rect, packed.data());
+  LoadImage(&rect, reinterpret_cast<u_long *>(packed.data()));
 }
 
 void uploadTexturePageAt(unsigned int physical_page,
@@ -151,7 +155,7 @@ void uploadTexturePageAt(unsigned int physical_page,
   }
   auto rect = physicalTexturePageRect(physical_page);
   auto packed = packVramWords(bytes);
-  LoadImage(&rect, packed.data());
+  LoadImage(&rect, reinterpret_cast<u_long *>(packed.data()));
 }
 
 void readTexturePageAt(unsigned int physical_page,
@@ -265,7 +269,7 @@ void uploadClut(std::span<const std::byte> bytes) {
   RECT16 rect{static_cast<short>(mission_clut_resident_x),
               static_cast<short>(mission_clut_resident_y), 256, 32};
   auto packed = packVramWords(bytes);
-  LoadImage(&rect, packed.data());
+  LoadImage(&rect, reinterpret_cast<u_long *>(packed.data()));
 }
 
 int texturePageMode(assets::TimPixelMode mode) noexcept {

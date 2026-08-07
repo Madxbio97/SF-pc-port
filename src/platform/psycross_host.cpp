@@ -368,11 +368,13 @@ int titleAnalogDirection(const PADRAW &pad, int previous_direction) noexcept {
                                  previous_direction);
 }
 
-std::vector<u_long> packWords(std::span<const std::uint16_t> words) {
-  std::vector<u_long> packed((words.size() + 1U) / 2U);
+std::vector<std::uint32_t> packWords(std::span<const std::uint16_t> words) {
+  // LoadImage reads the buffer as dense u16 units; pack without the padding
+  // that LP64 hosts (8-byte u_long) would leave between the words.
+  std::vector<std::uint32_t> packed((words.size() + 1U) / 2U);
   for (std::size_t index = 0; index < words.size(); ++index) {
     const auto shift = static_cast<unsigned int>((index & 1U) * 16U);
-    packed[index / 2U] |= static_cast<u_long>(words[index]) << shift;
+    packed[index / 2U] |= static_cast<std::uint32_t>(words[index]) << shift;
   }
   return packed;
 }
@@ -396,7 +398,7 @@ RECT16 blockRect(const assets::TimBlock &block) {
 void uploadBlock(const assets::TimBlock &block) {
   auto rect = blockRect(block);
   auto packed = packWords(block.words);
-  LoadImage(&rect, packed.data());
+  LoadImage(&rect, reinterpret_cast<u_long *>(packed.data()));
 }
 
 int texturePageMode(assets::TimPixelMode mode) {

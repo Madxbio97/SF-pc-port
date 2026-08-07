@@ -110,12 +110,14 @@ void uploadTimBlock(const assets::TimBlock &block) {
   };
   RECT16 rect{checked(block.x), checked(block.y), checked(block.width_words),
               checked(block.height)};
-  std::vector<u_long> packed((block.words.size() + 1U) / 2U);
+  // Dense 32-bit packing: LoadImage reinterprets the buffer as u16 units,
+  // and u_long leaves zero gaps between them on LP64 hosts.
+  std::vector<std::uint32_t> packed((block.words.size() + 1U) / 2U);
   for (std::size_t index = 0U; index < block.words.size(); ++index) {
-    packed[index / 2U] |= static_cast<u_long>(block.words[index])
+    packed[index / 2U] |= static_cast<std::uint32_t>(block.words[index])
                           << ((index & 1U) * 16U);
   }
-  LoadImage(&rect, packed.data());
+  LoadImage(&rect, reinterpret_cast<u_long *>(packed.data()));
 }
 
 void drawSolidRect(int x, int y, int width, int height, Rgb color) {
