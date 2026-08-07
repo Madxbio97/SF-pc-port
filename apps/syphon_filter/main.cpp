@@ -322,10 +322,12 @@ int main(int argc, char **argv) {
     }
 
     std::unique_ptr<sf::platform::Host> host;
-    const sf::platform::ControllerBindingsCommitCallback
-        persist_controller_bindings =
-            [](const sf::platform::ControllerButtonBindings &bindings) {
-              return sf::platform::saveLauncherControllerBindings(bindings);
+    const sf::platform::ControllerSettingsCommitCallback
+        persist_controller_settings =
+            [](const sf::platform::ControllerButtonBindings &bindings,
+               bool vibration) {
+              return sf::platform::saveLauncherControllerSettings(bindings,
+                                                                  vibration);
             };
     if (launch->mode == LaunchMode::game ||
         launch->mode == LaunchMode::title_test) {
@@ -347,7 +349,7 @@ int main(int argc, char **argv) {
                             : "Syphon Filter PC",
           std::move(assets), std::move(movies), std::move(selected_mission),
           std::move(mission_cue_path), std::move(supported_game_serial),
-          graphics, input, retail_cheats, persist_controller_bindings);
+          graphics, input, retail_cheats, persist_controller_settings);
     } else if (launch->mode == LaunchMode::scene_test) {
       const auto &definition = sf::game::missionDefinition(mission_index);
       std::cout << "Disc verified. Starting native scene test at mission "
@@ -356,7 +358,7 @@ int main(int argc, char **argv) {
       host = sf::platform::createPsyCrossSceneHost(
           "Syphon Filter PC - scene test",
           sf::game::MissionPackage::load(disc, mission_index), disc.cuePath(),
-          graphics, input, retail_cheats, persist_controller_bindings);
+          graphics, input, retail_cheats, persist_controller_settings);
     } else {
       std::cout << "Disc verified. Starting PsyCross platform test; "
                    "close the window to exit.\n";

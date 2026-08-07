@@ -12,13 +12,46 @@ namespace sf::platform {
 
 inline constexpr std::size_t quick_weapon_slot_count = 10U;
 
-// Converts the left stick into a linear menu direction. Menu input uses a
-// wider deadzone than gameplay so ordinary controller drift cannot hold the
-// navigation latch away from neutral. When both axes are active, the user's
-// dominant movement wins instead of a smaller opposing-axis drift.
+// Converts a stick into a linear menu direction. Menu input uses a wider
+// deadzone than gameplay so ordinary controller drift cannot hold the
+// navigation latch away from neutral. Once engaged, the direction remains
+// latched until both axes return to the release zone.
 [[nodiscard]] int controllerMenuDirection(std::uint8_t horizontal,
                                           std::uint8_t vertical,
                                           int previous_direction = 0) noexcept;
+
+// Title/save menus accept either physical stick regardless of the selected
+// gameplay layout. Returns the strongest axis, with vertical axes preferred
+// on an exact tie.
+[[nodiscard]] std::uint8_t dominantControllerMenuAxis(
+    std::uint8_t right_horizontal, std::uint8_t right_vertical,
+    std::uint8_t left_horizontal, std::uint8_t left_vertical) noexcept;
+
+struct ControllerMenuSample {
+  bool connected{};
+  int instance_id{-1};
+  std::uint8_t horizontal{128U};
+  std::uint8_t vertical{128U};
+};
+
+struct ControllerMenuStep {
+  bool previous{};
+  bool next{};
+};
+
+// Edge-only navigation state shared by the title and save menus. A newly
+// connected device is sampled as a baseline first, so a held or drifting
+// stick cannot move the selection during startup or hot-plug.
+class ControllerMenuNavigator final {
+public:
+  [[nodiscard]] ControllerMenuStep update(ControllerMenuSample sample) noexcept;
+  void reset() noexcept;
+
+private:
+  int instance_id_{-1};
+  int direction_{};
+  bool initialized_{};
+};
 
 // Keyboard values intentionally match SDL scancodes (USB HID usages). Mouse
 // values occupy a separate stable range so launcher settings remain portable
@@ -296,6 +329,8 @@ keyboardMouseInputPromptBindings(const KeyboardMouseBindings &bindings);
 [[nodiscard]] InputPromptBindings
 controllerInputPromptBindings(ControllerInputProtocol protocol,
                               InputPromptBindingNames names);
+[[nodiscard]] InputPromptBindings
+retailMenuControllerInputPromptBindings(ControllerPromptFamily family) noexcept;
 [[nodiscard]] std::string_view
 inputPromptLabel(const InputPromptBindings &bindings,
                  InputPromptAction action) noexcept;
@@ -428,9 +463,13 @@ struct RawPlayerInput {
   ControllerPlayerInputRaw controller;
 };
 
+// DualSense center noise can reach roughly 28 of the 128 signed axis units.
+// Rescaling after this deadzone retains the full deliberate camera range.
+inline constexpr double controller_camera_deadzone = 0.25;
+
 struct PlayerInputConfiguration {
   double movement_deadzone{0.1875};
-  double look_deadzone{0.1875};
+  double look_deadzone{controller_camera_deadzone};
   double mouse_yaw_sensitivity{1.0};
   double mouse_pitch_sensitivity{1.0};
   double controller_yaw_sensitivity{1.0};

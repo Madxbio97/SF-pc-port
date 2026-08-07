@@ -13,6 +13,11 @@ PsyCrossCampaignSaveRenderer::PsyCrossCampaignSaveRenderer(
 
 PsyCrossCampaignSaveRenderer::~PsyCrossCampaignSaveRenderer() = default;
 
+void PsyCrossCampaignSaveRenderer::setInputPromptBindings(
+    InputPromptBindings bindings) {
+  state_->input = std::move(bindings);
+}
+
 void PsyCrossCampaignSaveRenderer::draw(const game::CampaignSaveMenu &menu,
                                         const game::TitleSaveSlots &slots) {
   GR_SetBlendMode(BM_NONE);
@@ -32,7 +37,8 @@ void PsyCrossCampaignSaveRenderer::draw(const game::CampaignSaveMenu &menu,
                         game::PauseTextAlignment alignment =
                             game::PauseTextAlignment::left) {
     drawMenuText(value, bounds, 1, color, alignment, 11, state_->textures,
-                 state_->input);
+                 state_->input,
+                 InputPromptTokenActions{.t = InputPromptAction::cancel});
   };
 
   text("Mission Complete", {52, 35, 165, 10}, selected);
@@ -107,7 +113,8 @@ void PsyCrossCampaignSaveRenderer::drawLoadSlots(
                         game::PauseTextAlignment alignment =
                             game::PauseTextAlignment::left) {
     drawMenuText(value, bounds, 1, color, alignment, 11, state_->textures,
-                 state_->input);
+                 state_->input,
+                 InputPromptTokenActions{.t = InputPromptAction::cancel});
   };
 
   drawBorderedRect({18, 18, 284, 204}, {2U, 4U, 18U}, muted);
@@ -142,7 +149,8 @@ void PsyCrossCampaignSaveRenderer::drawLoadSlots(
                    cancel_active ? selected : muted);
   text("Cancel", {36, 192, 248, 10}, cancel_active ? selected : normal,
        game::PauseTextAlignment::center);
-  text("%x load   %t back", {30, 211, 260, 10}, normal,
+  drawBorderedRect({30, 208, 260, 14}, {0U, 0U, 0U}, muted);
+  text("%x load   %t back", {34, 211, 252, 10}, normal,
        game::PauseTextAlignment::center);
   DrawSync(0);
 }
@@ -166,7 +174,8 @@ void PsyCrossCampaignSaveRenderer::drawDifficultySelection(
                         game::PauseTextAlignment alignment =
                             game::PauseTextAlignment::left) {
     drawMenuText(value, bounds, 1, color, alignment, 11, state_->textures,
-                 state_->input);
+                 state_->input,
+                 InputPromptTokenActions{.t = InputPromptAction::cancel});
   };
 
   drawBorderedRect({42, 60, 236, 23}, {0U, 0U, 0U}, selected);
@@ -189,11 +198,11 @@ void PsyCrossCampaignSaveRenderer::drawDifficultySelection(
     drawBorderedRect({42, y, 236, 23}, {0U, 0U, 0U},
                      brightness == 0U ? muted : color);
     text(labels[index], {48, static_cast<std::int16_t>(y + 7), 224, 10},
-         brightness == 0U ? normal : color,
-         game::PauseTextAlignment::center);
+         brightness == 0U ? normal : color, game::PauseTextAlignment::center);
   }
 
-  text("%x select   %t back", {30, 211, 260, 10}, normal,
+  drawBorderedRect({42, 202, 236, 24}, {0U, 0U, 0U}, muted);
+  text("%x select   %t back", {48, 209, 224, 10}, normal,
        game::PauseTextAlignment::center);
   DrawSync(0);
 }
@@ -213,7 +222,8 @@ void PsyCrossCampaignSaveRenderer::drawAgentModeWarning() {
                         game::PauseTextAlignment alignment =
                             game::PauseTextAlignment::left) {
     drawMenuText(value, bounds, 1, color, alignment, 11, state_->textures,
-                 state_->input);
+                 state_->input,
+                 InputPromptTokenActions{.t = InputPromptAction::cancel});
   };
 
   drawBorderedRect({24, 52, 272, 142}, {0U, 0U, 0U}, muted);
@@ -226,7 +236,8 @@ void PsyCrossCampaignSaveRenderer::drawAgentModeWarning() {
        "are more accurate and aggressive, and some missions have stricter "
        "conditions.",
        {40, 112, 240, 70}, normal, game::PauseTextAlignment::center);
-  text("%x - continue; %t - back", {30, 211, 260, 10}, normal,
+  drawBorderedRect({42, 202, 236, 24}, {0U, 0U, 0U}, muted);
+  text("%x continue   %t back", {48, 209, 224, 10}, normal,
        game::PauseTextAlignment::center);
   DrawSync(0);
 }

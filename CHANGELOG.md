@@ -3,6 +3,42 @@
 All notable public-test changes are documented here. The project currently uses
 pre-release tags rather than a stable semantic-versioning promise.
 
+## 0.1.0-public-test.28 - 2026-08-07
+
+### Controller stability and configuration
+
+- Added three persistent stick layouts: character-left/camera-right,
+  character-right/camera-left and the original one-stick scheme.
+- Unified stick-layout and vibration settings between the launcher and the
+  in-game controller menu, including reliable retry after a settings-write
+  failure.
+- Made both sticks navigate title and save menus on either axis, with
+  connection baselining and stronger hysteresis to reject DualSense drift.
+- Applied a calibrated camera deadzone in gameplay and first-person aiming
+  while preserving proportional movement outside the deadzone.
+- Fixed native rumble delivery and added working vibration toggles and preview
+  feedback to the launcher and in-game options.
+
+### Menu prompts
+
+- Replaced hard-coded keyboard instructions on the load, difficulty and Agent
+  warning screens with framed prompts for the active input device.
+- Corrected controller-family labels so the displayed confirm and back buttons
+  match the fixed retail menu controls.
+
+### Kazakhstan rendering
+
+- Removed exact helper-shell duplicates over authored rockets and cisterns in
+  the base exterior, bunker and escape missions, eliminating z-fighting and
+  leaked collision-tile textures without changing gameplay or collision.
+
+### Validation
+
+- Windows x64 PsyCross Release build completed successfully.
+- Full PsyCross CTest suite passed: 41/41, including supported-ROM probes.
+- Temporary renderer probes and diagnostic hotkeys were removed before
+  packaging; the interactive game was not launched during automated checks.
+
 ## 0.1.0-public-test.27 - 2026-08-07
 
 ### Controller navigation

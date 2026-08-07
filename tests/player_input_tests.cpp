@@ -25,21 +25,26 @@ void testControllerMenuDirectionRejectsDrift() {
           "Centered controller moved the menu");
   require(controllerMenuDirection(100U, 156U) == 0,
           "DualSense-sized stick drift escaped the menu deadzone");
-  require(controllerMenuDirection(96U, 128U) == 0 &&
-              controllerMenuDirection(160U, 128U) == 0,
+  require(controllerMenuDirection(72U, 128U) == 0 &&
+              controllerMenuDirection(184U, 128U) == 0,
           "Menu engage boundary was not neutral");
-  require(controllerMenuDirection(95U, 128U) == -1 &&
-              controllerMenuDirection(161U, 128U) == 1,
+  require(controllerMenuDirection(71U, 128U) == -1 &&
+              controllerMenuDirection(185U, 128U) == 1,
           "Deliberate horizontal menu movement was rejected");
-  require(controllerMenuDirection(128U, 95U) == -1 &&
-              controllerMenuDirection(128U, 161U) == 1,
+  require(controllerMenuDirection(128U, 71U) == -1 &&
+              controllerMenuDirection(128U, 185U) == 1,
           "Deliberate vertical menu movement was rejected");
 
-  // Once engaged, the smaller release threshold prevents threshold noise
-  // without forcing the player to move through nearly half the stick travel.
-  require(controllerMenuDirection(128U, 153U, 1) == 1 &&
-              controllerMenuDirection(128U, 152U, 1) == 0,
+  require(controllerMenuDirection(128U, 169U, 1) == 1 &&
+              controllerMenuDirection(128U, 168U, 1) == 0,
           "Menu direction hysteresis did not release deterministically");
+
+  require(controllerMenuDirection(128U, 220U) == 1 &&
+              controllerMenuDirection(100U, 156U, 1) == 0 &&
+              controllerMenuDirection(128U, 220U) == 1,
+          "Resting DualSense drift kept the menu latch engaged");
+  require(controllerMenuDirection(220U, 60U, 1) == 1,
+          "Diagonal noise flipped an active menu direction");
 
   // A smaller opposing-axis deflection used to win solely because its sign
   // was checked first, making DualSense navigation appear stuck or reversed.
@@ -49,6 +54,66 @@ void testControllerMenuDirectionRejectsDrift() {
           "Negative vertical drift overrode deliberate rightward input");
   require(controllerMenuDirection(40U, 200U) == -1,
           "Dominant negative menu movement was not preserved");
+}
+
+void testControllerMenuAcceptsEitherStickAndAxis() {
+  using sf::platform::controllerMenuDirection;
+  using sf::platform::dominantControllerMenuAxis;
+
+  const auto direction = [](std::uint8_t right_x, std::uint8_t right_y,
+                            std::uint8_t left_x, std::uint8_t left_y) {
+    return controllerMenuDirection(
+        128U, dominantControllerMenuAxis(right_x, right_y, left_x, left_y));
+  };
+  require(direction(128U, 128U, 128U, 220U) == 1 &&
+              direction(128U, 128U, 40U, 128U) == -1,
+          "Left stick could not navigate a controller menu on both axes");
+  require(direction(128U, 220U, 128U, 128U) == 1 &&
+              direction(40U, 128U, 128U, 128U) == -1,
+          "Right stick could not navigate a controller menu on both axes");
+  require(direction(100U, 156U, 128U, 128U) == 0 &&
+              direction(128U, 128U, 100U, 156U) == 0,
+          "Center noise from either physical stick moved a controller menu");
+  require(direction(68U, 128U, 128U, 220U) == 1,
+          "Weaker noise overrode a deliberate gesture on the other stick");
+
+  require(dominantControllerMenuAxis(128U, 185U, 185U, 128U) == 185U,
+          "Vertical menu axis did not win an exact tie");
+  require(dominantControllerMenuAxis(128U, 128U, 128U, 128U) == 128U,
+          "Centered sticks did not remain centered");
+}
+
+void testControllerMenuNavigatorBaselinesDevices() {
+  using sf::platform::ControllerMenuNavigator;
+
+  ControllerMenuNavigator navigator;
+  require(
+      !navigator.update({.connected = true, .instance_id = 7, .vertical = 220U})
+           .next,
+      "First title frame treated a held stick as a navigation edge");
+  require(!navigator
+               .update({.connected = true,
+                        .instance_id = 7,
+                        .horizontal = 100U,
+                        .vertical = 156U})
+               .next,
+          "Resting drift emitted a navigation edge");
+  require(
+      navigator.update({.connected = true, .instance_id = 7, .vertical = 220U})
+          .next,
+      "Deliberate movement after neutral did not navigate");
+
+  require(!navigator.update({}).next, "Disconnect emitted a navigation edge");
+  require(
+      !navigator.update({.connected = true, .instance_id = 9, .vertical = 60U})
+           .previous,
+      "Hot-plug inherited the previous controller latch");
+  require(!navigator.update({.connected = true, .instance_id = 9}).previous,
+          "Neutral hot-plug baseline emitted a navigation edge");
+  require(
+      navigator.update({.connected = true, .instance_id = 9, .vertical = 60U})
+          .previous,
+      "Reconnected controller could not navigate after neutral");
 }
 
 sf::platform::PcPlayerInputRaw
@@ -399,6 +464,23 @@ void testDeviceAwareInputPromptText() {
   require(xbox.device == InputPromptDevice::controller &&
               xbox.controller_protocol == ControllerInputProtocol::xinput,
           "XInput prompt metadata was not retained");
+
+  const auto retail_xbox =
+      sf::platform::retailMenuControllerInputPromptBindings(
+          ControllerPromptFamily::xbox);
+  const auto retail_playstation =
+      sf::platform::retailMenuControllerInputPromptBindings(
+          ControllerPromptFamily::playstation);
+  require(sf::platform::inputHintText(
+              "%x select   %t back", retail_xbox,
+              InputPromptTokenActions{.t = InputPromptAction::cancel}) ==
+                  "A select   B back" &&
+              sf::platform::inputHintText(
+                  "%x select   %t back", retail_playstation,
+                  InputPromptTokenActions{.t = InputPromptAction::cancel}) ==
+                  "CROSS select   CIRCLE back",
+          "Retail menu prompt did not match its fixed confirm/cancel masks");
+
   require(
       sf::platform::inputPromptText("Press %x to continue", xbox) ==
               InputPromptText{"Press X to continue", "Press A to continue"} &&
@@ -649,16 +731,46 @@ void testTurnControllerLookAndInvert() {
   half_stick.controller.aim = true;
   half_stick.controller.right_x = 0.5;
   half_stick.controller.right_y = -0.5;
-  const auto first_person = sf::platform::firstPersonAimInput(
-      proportional.update(half_stick));
-  require(near(first_person.directional_look_per_guest_tick.yaw,
+  const auto first_person =
+      sf::platform::firstPersonAimInput(proportional.update(half_stick));
+  require(
+      near(first_person.directional_look_per_guest_tick.yaw,
+           sf::platform::controller_first_person_yaw_units_per_tick * 0.5) &&
+          near(first_person.directional_look_per_guest_tick.pitch,
+               -sf::platform::controller_first_person_pitch_units_per_tick *
+                   0.5),
+      "Half-stick first-person aim was clamped to a digital full-rate "
+      "sample");
+}
+
+void testControllerCameraDeadzoneRejectsDualSenseDrift() {
+  sf::platform::PlayerInputMapper mapper{
+      sf::platform::PlayerInputConfiguration{
+          .look_deadzone = sf::platform::controller_camera_deadzone,
+      }};
+  sf::platform::RawPlayerInput raw;
+  raw.controller.aim = true;
+  raw.controller.right_x = 28.0 / 128.0;
+  raw.controller.right_y = -28.0 / 128.0;
+  const auto drift = sf::platform::firstPersonAimInput(mapper.update(raw));
+  require(near(drift.directional_look_per_guest_tick.yaw, 0.0) &&
+              near(drift.directional_look_per_guest_tick.pitch, 0.0),
+          "DualSense center noise moved first-person aim");
+
+  raw.controller.right_x = 0.5;
+  raw.controller.right_y = -0.5;
+  const auto deliberate =
+      sf::platform::firstPersonAimInput(mapper.update(raw));
+  constexpr auto expected_axis =
+      (0.5 - sf::platform::controller_camera_deadzone) /
+      (1.0 - sf::platform::controller_camera_deadzone);
+  require(near(deliberate.directional_look_per_guest_tick.yaw,
                sf::platform::controller_first_person_yaw_units_per_tick *
-                   0.5) &&
-              near(first_person.directional_look_per_guest_tick.pitch,
+                   expected_axis) &&
+              near(deliberate.directional_look_per_guest_tick.pitch,
                    -sf::platform::controller_first_person_pitch_units_per_tick *
-                       0.5),
-          "Half-stick first-person aim was clamped to a digital full-rate "
-          "sample");
+                       expected_axis),
+          "Camera deadzone did not preserve proportional deliberate aim");
 }
 
 void testRefreshIndependentLookLatch() {
@@ -990,17 +1102,18 @@ void testPcAimAndOpposingControlConflicts() {
   const auto neutral_mouse = mapper.update(raw);
   const auto neutral_first_person =
       sf::platform::firstPersonAimInput(neutral_mouse);
-  require(near(neutral_first_person.mouse_look.yaw, 0.0) &&
-              near(neutral_first_person.mouse_look.pitch, 0.0) &&
-              near(neutral_first_person.directional_look_per_guest_tick.yaw,
-                   sf::platform::controller_first_person_yaw_units_per_tick) &&
-              near(neutral_first_person.directional_look_per_guest_tick.pitch,
-                   -sf::platform::controller_first_person_pitch_units_per_tick) &&
-              near(neutral_first_person.move, 1.0) &&
-              near(neutral_first_person.strafe, -1.0) &&
-              !near(neutral_mouse.controller_look_yaw, 0.0) &&
-              !near(neutral_mouse.controller_look_pitch, 0.0),
-          "First-person right-stick sight or WASD movement channel was lost");
+  require(
+      near(neutral_first_person.mouse_look.yaw, 0.0) &&
+          near(neutral_first_person.mouse_look.pitch, 0.0) &&
+          near(neutral_first_person.directional_look_per_guest_tick.yaw,
+               sf::platform::controller_first_person_yaw_units_per_tick) &&
+          near(neutral_first_person.directional_look_per_guest_tick.pitch,
+               -sf::platform::controller_first_person_pitch_units_per_tick) &&
+          near(neutral_first_person.move, 1.0) &&
+          near(neutral_first_person.strafe, -1.0) &&
+          !near(neutral_mouse.controller_look_yaw, 0.0) &&
+          !near(neutral_mouse.controller_look_pitch, 0.0),
+      "First-person right-stick sight or WASD movement channel was lost");
 
   mapper.reset();
   raw = {};
@@ -1055,6 +1168,8 @@ void testMergedDeviceActionEdges() {
 int main() {
   try {
     testControllerMenuDirectionRejectsDrift();
+    testControllerMenuAcceptsEitherStickAndAxis();
+    testControllerMenuNavigatorBaselinesDevices();
     testKeyboardMouseBindingCatalog();
     testKeyboardMousePromptText();
     testDeviceAwareInputPromptText();
@@ -1062,6 +1177,7 @@ int main() {
     testPcActionsAndEdges();
     testFirstPersonMousePrecisionTuning();
     testTurnControllerLookAndInvert();
+    testControllerCameraDeadzoneRejectsDualSenseDrift();
     testRefreshIndependentLookLatch();
     testPadNeutralAndDisconnect();
     testSynchronizationMenuAndKeyboardZero();

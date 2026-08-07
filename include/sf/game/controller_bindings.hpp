@@ -21,6 +21,12 @@ enum class ControllerAction : std::uint32_t {
   aim,
 };
 
+enum class ControllerStickLayout : std::uint8_t {
+  character_left_camera_right = 0,
+  character_right_camera_left = 1,
+  original_one_stick = 2,
+};
+
 inline constexpr std::size_t controller_action_count = 9U;
 
 inline constexpr std::uint32_t controller_select_button = 0x0001U;
@@ -34,9 +40,9 @@ inline constexpr std::uint32_t controller_cross_button = 0x4000U;
 inline constexpr std::uint32_t controller_square_button = 0x8000U;
 inline constexpr std::uint32_t bindable_controller_button_mask =
     controller_select_button | controller_l2_button | controller_r2_button |
-    controller_l1_button | controller_r1_button |
-    controller_triangle_button | controller_circle_button |
-    controller_cross_button | controller_square_button;
+    controller_l1_button | controller_r1_button | controller_triangle_button |
+    controller_circle_button | controller_cross_button |
+    controller_square_button;
 
 struct ControllerActionMetadata {
   ControllerAction action{ControllerAction::change_weapon};
@@ -58,6 +64,8 @@ struct ControllerButtonBindings {
       controller_triangle_button,
       controller_l1_button,
   }};
+  ControllerStickLayout stick_layout{
+      ControllerStickLayout::character_left_camera_right};
 
   [[nodiscard]] constexpr std::uint32_t
   operator[](ControllerAction action) const noexcept {
@@ -70,6 +78,13 @@ struct ControllerButtonBindings {
 
   friend bool operator==(const ControllerButtonBindings &,
                          const ControllerButtonBindings &) = default;
+};
+
+struct ControllerStickAxes {
+  std::uint8_t character_horizontal{};
+  std::uint8_t character_vertical{};
+  std::uint8_t camera_horizontal{};
+  std::uint8_t camera_vertical{};
 };
 
 struct ControllerBinding {
@@ -99,6 +114,17 @@ controllerActionName(ControllerAction action) noexcept;
 [[nodiscard]] std::string_view
 controllerActionConfigKey(ControllerAction action) noexcept;
 [[nodiscard]] bool isValidControllerAction(ControllerAction action) noexcept;
+[[nodiscard]] bool
+isValidControllerStickLayout(ControllerStickLayout layout) noexcept;
+[[nodiscard]] ControllerStickLayout
+cycledControllerStickLayout(ControllerStickLayout layout,
+                            int direction = 1) noexcept;
+[[nodiscard]] std::string_view
+controllerStickLayoutName(ControllerStickLayout layout) noexcept;
+[[nodiscard]] ControllerStickAxes
+controllerStickAxes(ControllerStickLayout layout, std::uint8_t left_horizontal,
+                    std::uint8_t left_vertical, std::uint8_t right_horizontal,
+                    std::uint8_t right_vertical) noexcept;
 [[nodiscard]] bool isBindableControllerButton(std::uint32_t button) noexcept;
 [[nodiscard]] bool
 areControllerBindingsValid(const ControllerButtonBindings &bindings) noexcept;
@@ -113,6 +139,7 @@ rebindControllerButton(ControllerButtonBindings &bindings,
 [[nodiscard]] std::array<ControllerBinding, controller_action_count>
 controllerBindingEntries(const ControllerButtonBindings &bindings) noexcept;
 [[nodiscard]] std::optional<ControllerButtonBindings>
-controllerBindingsFromEntries(std::span<const ControllerBinding> entries) noexcept;
+controllerBindingsFromEntries(
+    std::span<const ControllerBinding> entries) noexcept;
 
 } // namespace sf::game

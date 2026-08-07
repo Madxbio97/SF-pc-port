@@ -63,6 +63,7 @@ constexpr int trilinear_control_id = 1018;
 constexpr int volumetric_fog_control_id = 1020;
 constexpr int controller_protocol_control_id = 1021;
 constexpr int binding_list_control_id = 2001;
+constexpr int controller_vibration_control_id = 1022;
 constexpr int change_binding_control_id = 2002;
 constexpr int clear_binding_control_id = 2003;
 constexpr int default_bindings_control_id = 2004;
@@ -90,6 +91,10 @@ constexpr COLORREF launcher_launch_color = RGB(68, 211, 151);
 constexpr COLORREF dossier_accent_color = RGB(183, 239, 67);
 
 constexpr UINT controller_capture_timer_id = 1U;
+constexpr std::size_t controller_stick_layout_row =
+    game::controller_action_count;
+constexpr std::size_t controller_controls_row_count =
+    game::controller_action_count + 1U;
 
 std::filesystem::path executableDirectory();
 std::wstring widenUtf8(std::string_view text);
@@ -515,16 +520,15 @@ int readProfileInteger(const std::filesystem::path &path,
       section, key, static_cast<UINT>(fallback), path.c_str()));
 }
 
-void writeProfileInteger(const std::filesystem::path &path,
+bool writeProfileInteger(const std::filesystem::path &path,
                          const wchar_t *section, const wchar_t *key,
                          int value) {
   const auto text = std::to_wstring(value);
-  static_cast<void>(
-      WritePrivateProfileStringW(section, key, text.c_str(), path.c_str()));
+  return WritePrivateProfileStringW(section, key, text.c_str(), path.c_str()) !=
+         FALSE;
 }
-bool writeControllerBindingsFile(
-    const std::filesystem::path &path,
-    const ControllerButtonBindings &bindings) {
+bool writeControllerBindingsFile(const std::filesystem::path &path,
+                                 const ControllerButtonBindings &bindings) {
   if (!game::areControllerBindingsValid(bindings)) {
     return false;
   }
@@ -538,6 +542,9 @@ bool writeControllerBindingsFile(
     section_data.append(value);
     section_data.push_back(L'\0');
   }
+  section_data.append(L"StickLayout=");
+  section_data.append(std::to_wstring(static_cast<int>(bindings.stick_layout)));
+  section_data.push_back(L'\0');
   section_data.push_back(L'\0');
   const auto stored =
       WritePrivateProfileSectionW(L"ControllerBindings", section_data.c_str(),
@@ -622,6 +629,9 @@ void loadSettingsFile(GraphicsSettings &graphics, KeyboardMouseBindings &input,
     graphics.controller_protocol =
         static_cast<ControllerProtocol>(controller_protocol);
   }
+  graphics.controller_vibration =
+      readProfileInteger(path, L"Controller", L"Vibration",
+                         graphics.controller_vibration ? 1 : 0) != 0;
   language = readProfileInteger(path, L"Game", L"Locale", 0) == 1
                  ? game::GameLanguage::russian_vit
                  : game::GameLanguage::english;
@@ -645,6 +655,9 @@ void loadSettingsFile(GraphicsSettings &graphics, KeyboardMouseBindings &input,
         static_cast<int>(loaded_controller[metadata.action])));
     loaded_controller[metadata.action] = loaded;
   }
+  loaded_controller.stick_layout = static_cast<game::ControllerStickLayout>(
+      readProfileInteger(path, L"ControllerBindings", L"StickLayout",
+                         static_cast<int>(loaded_controller.stick_layout)));
   if (game::areControllerBindingsValid(loaded_controller)) {
     graphics.controller_bindings = loaded_controller;
   }
@@ -678,6 +691,8 @@ void saveSettingsFile(const GraphicsSettings &graphics,
                                                                          : 1);
   writeProfileInteger(path, L"Controller", L"Protocol",
                       static_cast<int>(graphics.controller_protocol));
+  writeProfileInteger(path, L"Controller", L"Vibration",
+                      graphics.controller_vibration ? 1 : 0);
   writeProfileInteger(path, L"Game", L"Locale",
                       language == game::GameLanguage::russian_vit ? 1 : 0);
   for (std::size_t index = 0U; index < keyboard_mouse_action_count; ++index) {
@@ -686,7 +701,8 @@ void saveSettingsFile(const GraphicsSettings &graphics,
     writeProfileInteger(path, L"KeyboardMouse", key.c_str(),
                         static_cast<int>(input[action]));
   }
-  static_cast<void>(writeControllerBindingsFile(path, graphics.controller_bindings));
+  static_cast<void>(
+      writeControllerBindingsFile(path, graphics.controller_bindings));
   saveGameImagePath(cue_path);
 }
 
@@ -914,6 +930,12 @@ void refreshControlsList(ControlsState &state) {
       SendMessageW(state.list, LB_ADDSTRING, 0,
                    reinterpret_cast<LPARAM>(row.c_str()));
     }
+    const auto stick_layout_row = L"Stick Layout    [" +
+                                  widenAscii(game::controllerStickLayoutName(
+                                      state.controller->stick_layout)) +
+                                  L"]";
+    SendMessageW(state.list, LB_ADDSTRING, 0,
+                 reinterpret_cast<LPARAM>(stick_layout_row.c_str()));
   } else {
     for (std::size_t index = 0U; index < keyboard_mouse_action_count; ++index) {
       const auto action = static_cast<KeyboardMouseAction>(index);
@@ -925,17 +947,21 @@ void refreshControlsList(ControlsState &state) {
     }
   }
   const auto action_count = state.controller_mode
-                                ? game::controller_action_count
+                                ? controller_controls_row_count
                                 : keyboard_mouse_action_count;
   state.selected = std::min(state.selected, action_count - 1U);
   SendMessageW(state.list, LB_SETCURSEL, static_cast<WPARAM>(state.selected),
                0);
   if (state.controller_mode) {
-    const auto label =
-        L"Change: " +
-        controllerButtonName(state.controller_capture.family(),
-                             state.controller->buttons[state.selected]);
-    SetWindowTextW(state.change_button, label.c_str());
+    if (state.selected == controller_stick_layout_row) {
+      SetWindowTextW(state.change_button, L"Next layout");
+    } else {
+      const auto label =
+          L"Change: " +
+          controllerButtonName(state.controller_capture.family(),
+                               state.controller->buttons[state.selected]);
+      SetWindowTextW(state.change_button, label.c_str());
+    }
     EnableWindow(state.clear_button, FALSE);
   } else {
     const auto action = static_cast<KeyboardMouseAction>(state.selected);
@@ -972,6 +998,15 @@ void cancelBindingCapture(ControlsState &state) {
 
 void beginBindingCapture(ControlsState &state) {
   if (state.controller_mode) {
+    if (state.selected == controller_stick_layout_row) {
+      state.controller->stick_layout =
+          game::cycledControllerStickLayout(state.controller->stick_layout);
+      state.capture.reset();
+      state.controller_capture.cancelCapture();
+      refreshControlsList(state);
+      SetWindowTextW(state.status, L"Stick layout updated.");
+      return;
+    }
     if (!state.controller_capture.initialize(state.protocol)) {
       SetWindowTextW(state.status,
                      L"Controller input could not be initialized.");
@@ -1442,7 +1477,7 @@ LRESULT CALLBACK controlsWindowProc(HWND window, UINT message, WPARAM w_param,
       if (HIWORD(w_param) == LBN_SELCHANGE || HIWORD(w_param) == LBN_DBLCLK) {
         const auto selected = SendMessageW(state->list, LB_GETCURSEL, 0, 0);
         const auto action_count = state->controller_mode
-                                      ? game::controller_action_count
+                                      ? controller_controls_row_count
                                       : keyboard_mouse_action_count;
         if (selected >= 0 &&
             static_cast<std::size_t>(selected) < action_count) {
@@ -1450,10 +1485,13 @@ LRESULT CALLBACK controlsWindowProc(HWND window, UINT message, WPARAM w_param,
           state->capture.reset();
           state->controller_capture.cancelCapture();
           refreshControlsList(*state);
-          SetWindowTextW(state->status,
-                         state->controller_mode
-                             ? L"Choose a button, then assign it to an action."
-                             : L"Select an action, then press Change.");
+          SetWindowTextW(
+              state->status,
+              state->controller_mode
+                  ? state->selected == controller_stick_layout_row
+                        ? L"Press Next layout to choose a stick scheme."
+                        : L"Choose a button, then assign it to an action."
+                  : L"Select an action, then press Change.");
           if (HIWORD(w_param) == LBN_DBLCLK) {
             beginBindingCapture(*state);
           }
@@ -2309,6 +2347,9 @@ void acceptSettings(HWND window, LauncherState &state) {
       IsDlgButtonChecked(window, fullscreen_control_id) == BST_CHECKED;
   const auto controller_protocol = static_cast<int>(
       SendMessageW(state.controller_protocol_combo, CB_GETCURSEL, 0, 0));
+  state.settings.controller_vibration =
+      IsDlgButtonChecked(window, controller_vibration_control_id) ==
+      BST_CHECKED;
   if (controller_protocol >= 0 &&
       controller_protocol <= static_cast<int>(ControllerProtocol::raw_input)) {
     state.settings.controller_protocol =
@@ -2523,6 +2564,9 @@ LRESULT CALLBACK launcherWindowProc(HWND window, UINT message, WPARAM w_param,
     state->controller_protocol_combo = createControl(
         window, L"COMBOBOX", L"", WS_TABSTOP | CBS_DROPDOWNLIST, 516, 340, 204,
         128, controller_protocol_control_id, state->ui_font);
+    createControl(window, L"BUTTON", L"Controller vibration",
+                  WS_TABSTOP | BS_AUTOCHECKBOX, 414, 366, 294, 24,
+                  controller_vibration_control_id, state->ui_font);
     createControl(window, L"BUTTON", L"INPUT CONFIGURATION",
                   WS_TABSTOP | BS_OWNERDRAW, 414, 448, 294, 38,
                   controls_control_id, state->heading_font);
@@ -2552,6 +2596,9 @@ LRESULT CALLBACK launcherWindowProc(HWND window, UINT message, WPARAM w_param,
     populateFrameLimits(*state);
     populateLanguages(*state);
     populateControllerProtocols(*state);
+    CheckDlgButton(window, controller_vibration_control_id,
+                   state->settings.controller_vibration ? BST_CHECKED
+                                                        : BST_UNCHECKED);
     CheckDlgButton(window, fullscreen_control_id,
                    state->settings.fullscreen ||
                            selectedResolutionIsDesktop(*state)
@@ -2661,17 +2708,20 @@ void loadLauncherSettings(GraphicsSettings &graphics,
     // startup; the caller's defaults remain authoritative.
   }
 }
-bool saveLauncherControllerBindings(
-    const ControllerButtonBindings &bindings) noexcept {
+bool saveLauncherControllerSettings(const ControllerButtonBindings &bindings,
+                                    bool vibration) noexcept {
   try {
-    return writeControllerBindingsFile(launcherSettingsPath(true), bindings);
+    const auto path = launcherSettingsPath(true);
+    const auto vibration_stored = writeProfileInteger(
+        path, L"Controller", L"Vibration", vibration ? 1 : 0);
+    const auto bindings_stored = writeControllerBindingsFile(path, bindings);
+    return vibration_stored && bindings_stored;
   } catch (...) {
     // Gameplay keeps the committed in-memory layout even when the optional
     // per-user launcher file is temporarily unavailable.
     return false;
   }
 }
-
 
 bool showGraphicsLauncher(GraphicsSettings &settings,
                           KeyboardMouseBindings &input,
@@ -2790,11 +2840,10 @@ namespace sf::platform {
 
 void loadLauncherSettings(GraphicsSettings &, KeyboardMouseBindings &,
                           game::GameLanguage &) noexcept {}
-bool saveLauncherControllerBindings(
-    const ControllerButtonBindings &) noexcept {
+bool saveLauncherControllerSettings(const ControllerButtonBindings &,
+                                    bool) noexcept {
   return true;
 }
-
 
 bool showGraphicsLauncher(GraphicsSettings &, KeyboardMouseBindings &,
                           game::GameLanguage &, std::filesystem::path &) {

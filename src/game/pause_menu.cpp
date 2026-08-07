@@ -33,7 +33,7 @@ constexpr std::array retail_root_sections{
 constexpr auto root_item_count = retail_root_sections.size();
 constexpr std::size_t option_item_count = 9;
 constexpr std::size_t sound_item_count = 3;
-constexpr std::size_t controller_item_count = 7;
+constexpr std::size_t controller_item_count = 8;
 constexpr std::size_t binding_item_count = controller_action_count;
 constexpr std::int32_t volume_step = 5;
 constexpr std::int32_t brightness_step = 5;
@@ -684,10 +684,16 @@ PauseMenuCommand PauseMenu::updateController(const PauseMenuInput &input) {
     return preview(PauseSetting::controller_preset, preset);
   }
   if (selection == 2 && (input.left || input.right)) {
+    settings_.bindings.stick_layout = cycledControllerStickLayout(
+        settings_.bindings.stick_layout, input.left ? -1 : 1);
+    return preview(PauseSetting::bindings,
+                   static_cast<std::int32_t>(settings_.bindings.stick_layout));
+  }
+  if (selection == 3 && (input.left || input.right)) {
     settings_.invert_aim = !settings_.invert_aim;
     return preview(PauseSetting::invert_aim, settings_.invert_aim ? 1 : 0);
   }
-  if (selection == 3 && (input.left || input.right)) {
+  if (selection == 4 && (input.left || input.right)) {
     settings_.vibration = !settings_.vibration;
     return preview(PauseSetting::vibration, settings_.vibration ? 1 : 0);
   }
@@ -709,21 +715,27 @@ PauseMenuCommand PauseMenu::updateController(const PauseMenuInput &input) {
     push(PauseScreen::controller_bindings);
     return {};
   case 2:
+    settings_.bindings.stick_layout =
+        cycledControllerStickLayout(settings_.bindings.stick_layout);
+    return preview(PauseSetting::bindings,
+                   static_cast<std::int32_t>(settings_.bindings.stick_layout));
+  case 3:
     settings_.invert_aim = !settings_.invert_aim;
     return preview(PauseSetting::invert_aim, settings_.invert_aim ? 1 : 0);
-  case 3:
+  case 4:
     settings_.vibration = !settings_.vibration;
     return preview(PauseSetting::vibration, settings_.vibration ? 1 : 0);
-  case 4:
+  case 5:
     settings_.invert_aim = false;
     settings_.vibration = true;
+    settings_.bindings = ControllerButtonBindings{};
     applyControllerPreset(settings_, ControllerPreset::standard);
     return preview(PauseSetting::bindings, 0);
-  case 5:
+  case 6:
     committed_settings_ = settings_;
     pop();
     return PauseMenuCommand{PauseCommandType::commit_settings};
-  case 6:
+  case 7:
     settings_.controller_preset = committed_settings_.controller_preset;
     settings_.invert_aim = committed_settings_.invert_aim;
     settings_.vibration = committed_settings_.vibration;
@@ -1443,6 +1455,9 @@ std::vector<PauseRenderCommand> PauseMenu::buildRenderCommands() const {
         std::string{"Preset config: "} +
             std::string{controllerPresetName(settings_.controller_preset)},
         std::string{"Controller Configuration:"},
+        std::string{"Stick Layout: "} +
+            std::string{
+                controllerStickLayoutName(settings_.bindings.stick_layout)},
         std::string{"Invert Aim: "} + (settings_.invert_aim ? "yes" : "no"),
         std::string{"Vibration: "} + (settings_.vibration ? "yes" : "no"),
         std::string{"Reset"},
@@ -1867,6 +1882,7 @@ std::string_view controllerPresetName(ControllerPreset preset) noexcept {
 }
 
 void applyControllerPreset(PauseSettings &settings, ControllerPreset preset) {
+  const auto stick_layout = settings.bindings.stick_layout;
   switch (preset) {
   case ControllerPreset::standard:
     settings.bindings =
@@ -1880,6 +1896,7 @@ void applyControllerPreset(PauseSettings &settings, ControllerPreset preset) {
     settings.controller_preset = preset;
     return;
   }
+  settings.bindings.stick_layout = stick_layout;
   settings.controller_preset = preset;
 }
 

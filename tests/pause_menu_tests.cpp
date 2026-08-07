@@ -419,9 +419,9 @@ void testRetailOptionsAndControllerOrder() {
   settleTransition(menu);
   constexpr std::array controller_prefixes{
       "Preset config: ", "Controller Configuration:",
-      "Invert Aim: ",    "Vibration: ",
-      "Reset",           "Accept",
-      "Cancel",
+      "Stick Layout: ",  "Invert Aim: ",
+      "Vibration: ",     "Reset",
+      "Accept",          "Cancel",
   };
   const auto controller = menu.buildRenderCommands();
   for (std::size_t index = 0; index < controller_prefixes.size(); ++index) {
@@ -985,9 +985,13 @@ void testControllerBindingValidationConflictAndLabels() {
 
 void testRetailControllerPresetsApplyBindings() {
   sf::game::PauseSettings settings;
+  settings.bindings.stick_layout =
+      sf::game::ControllerStickLayout::original_one_stick;
   sf::game::applyControllerPreset(settings,
                                   sf::game::ControllerPreset::alternate);
   require(settings.controller_preset == sf::game::ControllerPreset::alternate);
+  require(settings.bindings.stick_layout ==
+          sf::game::ControllerStickLayout::original_one_stick);
   constexpr std::array expected{
       std::pair{sf::game::ControllerAction::change_weapon, 0x0800U},
       std::pair{sf::game::ControllerAction::shoot, 0x2000U},
@@ -1016,6 +1020,68 @@ void testRetailControllerPresetsApplyBindings() {
               menu.settings(), sf::game::ControllerAction::shoot) == 0x2000U);
 }
 
+void testControllerStickLayoutTransaction() {
+  using sf::game::ControllerStickLayout;
+
+  auto menu = makeMenu();
+  openRootSection(menu, 5);
+  moveNext(menu, 7);
+  require(!menu.update({.confirm = true}));
+  settleTransition(menu);
+  moveNext(menu, 2);
+
+  const auto previous = menu.update({.left = true});
+  require(previous.type == sf::game::PauseCommandType::preview_setting &&
+          menu.settings().bindings.stick_layout ==
+              ControllerStickLayout::original_one_stick);
+  require(menu.update({.right = true}).type ==
+          sf::game::PauseCommandType::preview_setting);
+  require(menu.settings().bindings.stick_layout ==
+          ControllerStickLayout::character_left_camera_right);
+
+  const auto swapped = menu.update({.right = true});
+  require(swapped.type == sf::game::PauseCommandType::preview_setting &&
+          swapped.subject ==
+              static_cast<std::uint32_t>(sf::game::PauseSetting::bindings) &&
+          menu.settings().bindings.stick_layout ==
+              ControllerStickLayout::character_right_camera_left);
+  const auto original = menu.update({.right = true});
+  require(original.type == sf::game::PauseCommandType::preview_setting &&
+          original.value == static_cast<std::int32_t>(
+                                ControllerStickLayout::original_one_stick) &&
+          menu.settings().bindings.stick_layout ==
+              ControllerStickLayout::original_one_stick);
+
+  moveNext(menu, 4);
+  require(menu.update({.confirm = true}).type ==
+          sf::game::PauseCommandType::commit_settings);
+  settleTransition(menu);
+
+  require(!menu.update({.confirm = true}));
+  settleTransition(menu);
+  moveNext(menu, 2);
+  require(menu.update({.confirm = true}).type ==
+          sf::game::PauseCommandType::preview_setting);
+  require(menu.settings().bindings.stick_layout ==
+          ControllerStickLayout::character_left_camera_right);
+  moveNext(menu, 5);
+  require(menu.update({.confirm = true}).type ==
+          sf::game::PauseCommandType::revert_settings);
+  require(menu.settings().bindings.stick_layout ==
+          ControllerStickLayout::original_one_stick);
+  settleTransition(menu);
+
+  require(!menu.update({.confirm = true}));
+  settleTransition(menu);
+  moveNext(menu, 5);
+  require(menu.update({.confirm = true}).type ==
+          sf::game::PauseCommandType::preview_setting);
+  require(menu.settings().controller_preset ==
+              sf::game::ControllerPreset::standard &&
+          menu.settings().bindings.stick_layout ==
+              ControllerStickLayout::character_left_camera_right);
+}
+
 void testRetailControllerTransaction() {
   auto menu = makeMenu();
   openRootSection(menu, 5);
@@ -1026,7 +1092,7 @@ void testRetailControllerTransaction() {
 
   const auto alternate = menu.update({.right = true});
   require(alternate.type == sf::game::PauseCommandType::preview_setting);
-  moveNext(menu, 2);
+  moveNext(menu, 3);
   require(menu.update({.confirm = true}).type ==
           sf::game::PauseCommandType::preview_setting);
   moveNext(menu);
@@ -1058,7 +1124,7 @@ void testRetailControllerTransaction() {
           sf::game::PauseCommandType::preview_setting);
   require(menu.settings().controller_preset ==
           sf::game::ControllerPreset::alternate);
-  moveNext(menu, 6);
+  moveNext(menu, 7);
   const auto cancel = menu.update({.confirm = true});
   require(cancel.type == sf::game::PauseCommandType::revert_settings);
   require(menu.screen() == PauseScreen::options);
@@ -1171,6 +1237,28 @@ void testCompoundRussianMenuLocalization() {
           vit(u8"\u0421\u041b\u041e\u0416\u041d\u041e\u0421\u0422\u042c: \u0412\u042b\u0421\u041e\u041a\u0410\u042f"));
   require(sf::game::localizeTextCopy("Playing Agent mode") ==
           vit(u8"\u0412\u042b\u0411\u0420\u0410\u041d\u041d\u0410\u042f \u0421\u041b\u041e\u0416\u041d\u041e\u0421\u0422\u042c: \u0410\u0413\u0415\u041d\u0422"));
+  require(sf::game::localizeTextCopy("Stick Layout") ==
+          vit(u8"\u0420\u0410\u0421\u041a\u041b\u0410\u0414\u041a\u0410 \u0421\u0422\u0418\u041a\u041e\u0412"));
+  require(sf::game::localizeTextCopy(
+              "Stick Layout: Character Left / Camera Right") ==
+          vit(u8"\u0420\u0410\u0421\u041a\u041b\u0410\u0414\u041a\u0410 \u0421\u0422\u0418\u041a\u041e\u0412") + ": " +
+              vit(u8"\u041f\u0415\u0420\u0421\u041e\u041d\u0410\u0416: \u041b\u0415\u0412\u042b\u0419 / \u041a\u0410\u041c\u0415\u0420\u0410: \u041f\u0420\u0410\u0412\u042b\u0419"));
+  require(sf::game::localizeTextCopy(
+              "Stick Layout: Character Right / Camera Left") ==
+          vit(u8"\u0420\u0410\u0421\u041a\u041b\u0410\u0414\u041a\u0410 "
+              u8"\u0421\u0422\u0418\u041a\u041e\u0412") +
+              ": " +
+              vit(u8"\u041f\u0415\u0420\u0421\u041e\u041d\u0410\u0416: "
+                  u8"\u041f\u0420\u0410\u0412\u042b\u0419 / "
+                  u8"\u041a\u0410\u041c\u0415\u0420\u0410: "
+                  u8"\u041b\u0415\u0412\u042b\u0419"));
+  require(sf::game::localizeTextCopy("Stick Layout: Original (One Stick)") ==
+          vit(u8"\u0420\u0410\u0421\u041a\u041b\u0410\u0414\u041a\u0410 "
+              u8"\u0421\u0422\u0418\u041a\u041e\u0412") +
+              ": " +
+              vit(u8"\u041e\u0420\u0418\u0413\u0418\u041d\u0410\u041b\u042c"
+                  u8"\u041d\u0410\u042f (\u041e\u0414\u0418\u041d "
+                  u8"\u0421\u0422\u0418\u041a)"));
   const auto slots = sf::game::localizeTextCopy("Slot 2  Empty");
   require(slots.find("Slot") == std::string::npos &&
           slots.find("Empty") == std::string::npos);
@@ -1647,6 +1735,7 @@ int main() {
     testWeaponLabelsAndControllerRecovery();
     testControllerBindingValidationConflictAndLabels();
     testRetailControllerPresetsApplyBindings();
+    testControllerStickLayoutTransaction();
     testRetailControllerTransaction();
     testExactGuestMissionEntries();
     testNoReconnaissanceRootPreview();

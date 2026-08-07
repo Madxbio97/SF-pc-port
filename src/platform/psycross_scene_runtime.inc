@@ -265,7 +265,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
           // remains smooth at the display refresh. Raw counts stay linear and
           // the lower gain preserves fine target selection without adding
           // refresh-dependent acceleration.
-          .look_deadzone = 0.10,
+          .look_deadzone = sf::platform::controller_camera_deadzone,
           .mouse_yaw_sensitivity =
               sf::platform::first_person_mouse_yaw_sensitivity,
           .mouse_pitch_sensitivity =
@@ -283,7 +283,8 @@ SceneViewerResult PsyCrossSceneViewer::run(
                                 game::ControllerPreset::standard);
     const auto default_controller_bindings = ControllerButtonBindings{};
     pause_settings.bindings = controller_bindings_;
-    if (controller_bindings_ != default_controller_bindings) {
+    pause_settings.vibration = controller_vibration_;
+    if (controller_bindings_.buttons != default_controller_bindings.buttons) {
       pause_settings.controller_preset = game::ControllerPreset::custom;
     }
     if (const auto volumes = gameplay.audioVolumes()) {
@@ -302,6 +303,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
   KeyboardMouseActionSnapshot previous_bound_actions;
   auto delivered_pad_motor_sequence = gameplay.legacyPadMotorState().sequence;
   auto controller_rumble_lease_active = false;
+  auto controller_rumble_failure_reported = false;
   const auto stop_controller_rumble = [&] {
     PsyX_Pad_StopRumble(0);
     controller_rumble_lease_active = false;
@@ -334,8 +336,15 @@ SceneViewerResult PsyCrossSceneViewer::run(
     } else {
       // Refresh the lease every retail update while output remains active.
       // One second tolerates frame hitches without leaving a stuck motor.
-      static_cast<void>(
-          PsyX_Pad_SetRumble(0, low, high, rumble_lease_milliseconds));
+      if (PsyX_Pad_SetRumble(0, low, high, rumble_lease_milliseconds) == 0) {
+        if (!controller_rumble_failure_reported) {
+          PsyX_Log_Warning("Controller rejected gameplay vibration output\n");
+          controller_rumble_failure_reported = true;
+        }
+        controller_rumble_lease_active = false;
+        return;
+      }
+      controller_rumble_failure_reported = false;
       controller_rumble_lease_active = true;
     }
     delivered_pad_motor_sequence = motors.sequence;
@@ -396,22 +405,24 @@ SceneViewerResult PsyCrossSceneViewer::run(
     ui_audio.setVoiceVolumePercent(settings.voice_volume);
     return true;
   };
-  const auto commit_controller_bindings = [&] {
+  const auto commit_controller_settings = [&] {
     const auto &bindings = pause_settings.bindings;
     if (!game::areControllerBindingsValid(bindings)) {
       PsyX_Log_Warning("Rejected invalid committed controller bindings\n");
       return;
     }
-    if (bindings == controller_bindings_) {
+    if (bindings == controller_bindings_ &&
+        pause_settings.vibration == controller_vibration_) {
       return;
     }
     controller_bindings_ = bindings;
-    if (!controller_bindings_commit_) {
+    controller_vibration_ = pause_settings.vibration;
+    if (!controller_settings_commit_) {
       return;
     }
-    if (!controller_bindings_commit_(bindings)) {
+    if (!controller_settings_commit_(bindings, controller_vibration_)) {
       PsyX_Log_Warning(
-          "Cannot persist controller bindings to launcher settings\n");
+          "Cannot persist controller settings to launcher settings\n");
     }
   };
   if (!apply_pause_settings(pause_settings)) {
@@ -1052,8 +1063,13 @@ SceneViewerResult PsyCrossSceneViewer::run(
     interact_was_down = interact_down;
     const auto controller_movement =
         static_cast<std::uint16_t>(controller_held & movement_buttons);
-    const auto analog_x = static_cast<int>(controller_analog[2]) - 128;
-    const auto analog_y = static_cast<int>(controller_analog[3]) - 128;
+    const auto controller_sticks = game::controllerStickAxes(
+        pause_settings.bindings.stick_layout, controller_analog[2],
+        controller_analog[3], controller_analog[0], controller_analog[1]);
+    const auto analog_x =
+        static_cast<int>(controller_sticks.character_horizontal) - 128;
+    const auto analog_y =
+        static_cast<int>(controller_sticks.character_vertical) - 128;
     const auto analog_forward = analog_y < -analog_deadzone;
     const auto analog_backward = analog_y > analog_deadzone;
     const auto analog_left = analog_x < -analog_deadzone;
@@ -1124,10 +1140,10 @@ SceneViewerResult PsyCrossSceneViewer::run(
                                              : analog_move;
     raw_player_input.controller.left_x =
         digital_left != digital_right ? digital_left ? -1.0 : 1.0 : analog_turn;
-    raw_player_input.controller.right_x =
-        normalizedAnalogAxis(static_cast<int>(controller_analog[0]) - 128, 0);
-    raw_player_input.controller.right_y =
-        -normalizedAnalogAxis(static_cast<int>(controller_analog[1]) - 128, 0);
+    raw_player_input.controller.right_x = normalizedAnalogAxis(
+        static_cast<int>(controller_sticks.camera_horizontal) - 128, 0);
+    raw_player_input.controller.right_y = -normalizedAnalogAxis(
+        static_cast<int>(controller_sticks.camera_vertical) - 128, 0);
     const auto action_button =
         [&pause_settings](game::ControllerAction action) {
           return static_cast<std::uint16_t>(
@@ -1418,7 +1434,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
           return SceneViewerResult{previous_buttons,
                                    SceneExitReason::return_to_title};
         }
-        commit_controller_bindings();
+        commit_controller_settings();
         player_input.synchronize(raw_player_input);
         clear_latched_gameplay_input();
         movement_armed = false;
@@ -1440,11 +1456,19 @@ SceneViewerResult PsyCrossSceneViewer::run(
         }
         if (command.subject ==
             static_cast<std::uint32_t>(game::PauseSetting::vibration)) {
-          unsigned char motors[2]{
-              static_cast<unsigned char>(pause_settings.vibration ? 0x40U : 0U),
-              static_cast<unsigned char>(pause_settings.vibration ? 0x40U : 0U),
-          };
-          PadSetAct(0, motors, 2);
+          if (pause_settings.vibration) {
+            constexpr unsigned int preview_milliseconds = 180U;
+            constexpr unsigned short preview_strength = 0x6000U;
+            if (PsyX_Pad_SetRumble(0, preview_strength, preview_strength,
+                                   preview_milliseconds) == 0) {
+              PsyX_Log_Warning("Controller rejected vibration preview\n");
+              controller_rumble_failure_reported = true;
+            } else {
+              controller_rumble_failure_reported = false;
+            }
+          } else {
+            stop_controller_rumble();
+          }
         } else if (command.subject == static_cast<std::uint32_t>(
                                           game::PauseSetting::voice_volume)) {
           ui_audio.playVoicePreview();
@@ -1456,7 +1480,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
           return SceneViewerResult{previous_buttons,
                                    SceneExitReason::return_to_title};
         }
-        commit_controller_bindings();
+        commit_controller_settings();
         break;
       case game::PauseCommandType::revert_settings:
         pause_settings = pause_menu.settings();

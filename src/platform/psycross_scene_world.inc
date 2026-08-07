@@ -123,6 +123,16 @@ legacyDistantAuthoredFireEmitter(
   return {fire, authored_owner_warm, owner_reveal};
 }
 
+bool objectUsesEmbeddedWorldGeometry(std::uint32_t mission,
+                                     std::uint32_t class_id,
+                                     std::string_view name) noexcept {
+  const auto bunker_helper = mission == 8U && class_id == 0x64U &&
+                             (name == "MSHELL.GMD" || name == "WESSL.GMD");
+  const auto exterior_tank_helper = (mission == 7U || mission == 10U) &&
+                                    class_id == 0x67U && name == "GHOST.GMD";
+  return bunker_helper || exterior_tank_helper;
+}
+
 void renderObjects(const game::GameplaySession &gameplay,
                    const FireAnimation &fire_animation,
                    const FireTexturePlacement &fire_texture_placement,
@@ -170,6 +180,10 @@ void renderObjects(const game::GameplaySession &gameplay,
       continue;
     }
     const auto &object_model = *displayed_model;
+    if (objectUsesEmbeddedWorldGeometry(
+            gameplay.missionIndex(), object.class_id, object_model.name)) {
+      continue;
+    }
     // Retail class 0x63 is the mission keycard pickup. Its KEYCARD.GMD is
     // placement/size metadata; the visible pickup is the authored two-part
     // KEYCARDA/B interface sprite rendered below.

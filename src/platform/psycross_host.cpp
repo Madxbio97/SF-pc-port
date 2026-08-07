@@ -281,7 +281,13 @@ storeTitleSaveSlotsWithRecovery(const std::filesystem::path &path,
   }
 }
 
-int titleAnalogDirection(const PADRAW &pad, int previous_direction) noexcept;
+ControllerMenuSample
+controllerMenuSample(const PsyXControllerSnapshot &snapshot) noexcept;
+ControllerMenuSample updateTitleInputPromptBindings(
+    detail::PsyCrossCampaignSaveRenderer &renderer,
+    const KeyboardMouseBindings &keyboard_bindings,
+    const KeyboardMouseActionSnapshot &keyboard_actions,
+    InputPromptBindings &active_bindings, int &previous_controller_instance);
 
 game::CampaignSaveResult runCampaignSaveMenu(
     const game::MissionPackage &mission, const game::TitleSaveSlots &slots,
@@ -291,9 +297,12 @@ game::CampaignSaveResult runCampaignSaveMenu(
   // original font/ACD renderer instead of switching to the debug-font movie
   // target whose VRAM page has been overwritten by the mission renderer.
   detail::PsyCrossCampaignSaveRenderer renderer{mission, bindings};
+  auto active_prompt_bindings = keyboardMouseInputPromptBindings(bindings);
+  auto previous_controller_instance = -1;
+
   PsyX_Log_Info("Campaign save UI entered\n");
   game::CampaignSaveMenu menu;
-  auto analog_direction = 0;
+  ControllerMenuNavigator analog_navigation;
   auto first_frame_presented = false;
   constexpr std::uint16_t previous_buttons_mask = 0x80U | 0x10U;
   constexpr std::uint16_t next_buttons_mask = 0x20U | 0x40U;
@@ -319,13 +328,13 @@ game::CampaignSaveResult runCampaignSaveMenu(
     keyboard_initialized = true;
     interact_was_down = interact_down;
     pause_was_down = pause_down;
-    const auto current_analog = titleAnalogDirection(pad, analog_direction);
-    const auto analog_previous = current_analog < 0 && analog_direction == 0;
-    const auto analog_next = current_analog > 0 && analog_direction == 0;
-    analog_direction = current_analog;
+    const auto menu_sample = updateTitleInputPromptBindings(
+        renderer, bindings, actions, active_prompt_bindings,
+        previous_controller_instance);
+    const auto analog = analog_navigation.update(menu_sample);
     const game::CampaignSaveInput input{
-        (pressed & previous_buttons_mask) != 0U || analog_previous,
-        (pressed & next_buttons_mask) != 0U || analog_next,
+        (pressed & previous_buttons_mask) != 0U || analog.previous,
+        (pressed & next_buttons_mask) != 0U || analog.next,
         (pressed & confirm_buttons_mask) != 0U || interact_pressed,
         (pressed & cancel_buttons_mask) != 0U || pause_pressed,
     };
@@ -363,9 +372,58 @@ game::CampaignSaveResult runCampaignSaveMenu(
   }
 }
 
-int titleAnalogDirection(const PADRAW &pad, int previous_direction) noexcept {
-  return controllerMenuDirection(pad.analog[2], pad.analog[3],
-                                 previous_direction);
+ControllerMenuSample
+controllerMenuSample(const PsyXControllerSnapshot &snapshot) noexcept {
+  if (snapshot.connected == 0U) {
+    return {};
+  }
+  // Menus must remain usable after either gameplay stick layout is selected.
+  // Collapse both physical sticks to the strongest axis; the stateful menu
+  // navigator below rejects center noise and emits one edge per gesture.
+  const auto axis =
+      dominantControllerMenuAxis(snapshot.analog[0], snapshot.analog[1],
+                                 snapshot.analog[2], snapshot.analog[3]);
+  return ControllerMenuSample{.connected = true,
+                              .instance_id = snapshot.instanceId,
+                              .horizontal = 128U,
+                              .vertical = axis};
+}
+
+ControllerMenuSample updateTitleInputPromptBindings(
+    detail::PsyCrossCampaignSaveRenderer &renderer,
+    const KeyboardMouseBindings &keyboard_bindings,
+    const KeyboardMouseActionSnapshot &keyboard_actions,
+    InputPromptBindings &active_bindings, int &previous_controller_instance) {
+  PsyXControllerSnapshot snapshot{};
+  static_cast<void>(PsyX_Pad_GetControllerSnapshot(0, &snapshot));
+  const auto menu_sample = controllerMenuSample(snapshot);
+  auto keyboard_mouse_activity = false;
+  for (const auto held : keyboard_actions.held) {
+    keyboard_mouse_activity = keyboard_mouse_activity || held;
+  }
+  const auto buttons = static_cast<std::uint16_t>(
+      static_cast<std::uint16_t>(snapshot.buttons[0]) |
+      (static_cast<std::uint16_t>(snapshot.buttons[1]) << 8U));
+  const auto controller_held = static_cast<std::uint16_t>(~buttons);
+  constexpr int prompt_axis_deadzone = 56;
+  const auto axis_offset = static_cast<int>(menu_sample.vertical) - 128;
+  const auto controller_activity = controller_held != 0U ||
+                                   axis_offset < -prompt_axis_deadzone ||
+                                   axis_offset > prompt_axis_deadzone;
+  const auto controller_identity_changed =
+      menu_sample.connected &&
+      snapshot.instanceId != previous_controller_instance;
+  if (!menu_sample.connected || keyboard_mouse_activity) {
+    active_bindings = keyboardMouseInputPromptBindings(keyboard_bindings);
+  } else if (controller_activity || controller_identity_changed ||
+             active_bindings.device == InputPromptDevice::controller) {
+    active_bindings =
+        detail::titleControllerInputPromptBindings(snapshot.family);
+  }
+  renderer.setInputPromptBindings(active_bindings);
+  previous_controller_instance =
+      menu_sample.connected ? snapshot.instanceId : -1;
+  return menu_sample;
 }
 
 std::vector<u_long> packWords(std::span<const std::uint16_t> words) {
@@ -491,16 +549,17 @@ void drawTitleSprite(const game::TitleSprite &source, std::uint8_t brightness) {
   DrawPrim(&sprite);
 }
 
-class ControllerBindingsPersistence final {
+class ControllerSettingsPersistence final {
 public:
-  ControllerBindingsPersistence(
+  ControllerSettingsPersistence(
       GraphicsSettings &graphics,
-      const ControllerBindingsCommitCallback &callback) noexcept
+      const ControllerSettingsCommitCallback &callback) noexcept
       : graphics_(graphics), callback_(callback) {}
 
-  [[nodiscard]] bool
-  commit(const ControllerButtonBindings &bindings) noexcept {
+  [[nodiscard]] bool commit(const ControllerButtonBindings &bindings,
+                            bool vibration) noexcept {
     graphics_.controller_bindings = bindings;
+    graphics_.controller_vibration = vibration;
     return persistCurrent();
   }
 
@@ -509,8 +568,7 @@ public:
       return;
     }
     if (!persistCurrent()) {
-      PsyX_Log_Warning(
-          "Controller bindings persistence remains pending\n");
+      PsyX_Log_Warning("Controller settings persistence remains pending\n");
     }
   }
 
@@ -521,7 +579,8 @@ private:
       return true;
     }
     try {
-      pending_ = !callback_(graphics_.controller_bindings);
+      pending_ = !callback_(graphics_.controller_bindings,
+                            graphics_.controller_vibration);
     } catch (...) {
       pending_ = true;
     }
@@ -529,7 +588,7 @@ private:
   }
 
   GraphicsSettings &graphics_;
-  const ControllerBindingsCommitCallback &callback_;
+  const ControllerSettingsCommitCallback &callback_;
   bool pending_{};
 };
 
@@ -542,20 +601,20 @@ public:
                     std::string supported_game_serial,
                     GraphicsSettings graphics, KeyboardMouseBindings input,
                     game::RetailCheatState cheats,
-                    ControllerBindingsCommitCallback controller_bindings_commit)
+                    ControllerSettingsCommitCallback controller_settings_commit)
       : title_(title.begin(), title.end()), assets_(std::move(assets)),
         movies_(std::move(movies)),
         initial_mission_(std::move(initial_mission)),
         cue_path_(std::move(cue_path)),
         supported_game_serial_(std::move(supported_game_serial)),
         graphics_(graphics), input_(input), cheats_(cheats),
-        controller_bindings_commit_(std::move(controller_bindings_commit)) {
+        controller_settings_commit_(std::move(controller_settings_commit)) {
     title_.push_back('\0');
   }
 
   void run() override {
-    ControllerBindingsPersistence controller_bindings_persistence{
-        graphics_, controller_bindings_commit_};
+    ControllerSettingsPersistence controller_settings_persistence{
+        graphics_, controller_settings_commit_};
     configureGraphics(graphics_);
     configureControllerProtocol(graphics_.controller_protocol);
     PsyX_Initialise(title_.data(), graphics_.width, graphics_.height, 0);
@@ -587,11 +646,16 @@ public:
     bool title_pause_was_down{};
     detail::PsyCrossUiAudio ui_audio{cue_path_};
     detail::PsyCrossMoviePlayer movie_player;
+    auto active_title_prompt_bindings =
+        keyboardMouseInputPromptBindings(input_);
+    auto previous_title_controller_instance = -1;
     detail::PsyCrossCampaignSaveRenderer title_load_renderer{initial_mission_,
                                                              input_};
     const detail::MovieOverlayCallbacks overlay{
         [this, &pad, &ui_audio, &title_keyboard_initialized,
-         &title_interact_was_down, &title_pause_was_down](
+         &title_interact_was_down, &title_pause_was_down,
+         &title_load_renderer, &active_title_prompt_bindings,
+         &previous_title_controller_instance](
             std::uint16_t pressed, std::uint32_t movie_frame) {
           ui_audio.update();
           const auto actions = sampleHostKeyboardMouseActions(input_);
@@ -605,16 +669,14 @@ public:
           title_keyboard_initialized = true;
           title_interact_was_down = interact_down;
           title_pause_was_down = pause_down;
-          const auto analog_direction =
-              titleAnalogDirection(pad, title_analog_direction_);
-          const auto analog_previous =
-              analog_direction < 0 && title_analog_direction_ == 0;
-          const auto analog_next =
-              analog_direction > 0 && title_analog_direction_ == 0;
-          title_analog_direction_ = analog_direction;
+          const auto menu_sample = updateTitleInputPromptBindings(
+              title_load_renderer, input_, actions,
+              active_title_prompt_bindings,
+              previous_title_controller_instance);
+          const auto analog = title_menu_navigation_.update(menu_sample);
           const game::TitleInput input{
-              .previous = (pressed & (0x80U | 0x10U)) != 0 || analog_previous,
-              .next = (pressed & (0x20U | 0x40U)) != 0 || analog_next,
+              .previous = (pressed & (0x80U | 0x10U)) != 0 || analog.previous,
+              .next = (pressed & (0x20U | 0x40U)) != 0 || analog.next,
               .confirm = (pressed & (0x4000U | 0x8000U | 0x08U)) != 0 ||
                          interact_pressed,
               .cancel = (pressed & (0x2000U | 0x01U)) != 0 || pause_pressed,
@@ -689,8 +751,10 @@ public:
     auto play_startup_movies = true;
     for (;;) {
       selected_command_ = game::TitleCommand::none;
-      title_analog_direction_ =
-          play_startup_movies ? 0 : titleAnalogDirection(pad, 0);
+      // Baseline the first live title frame. A stick held through startup,
+      // training video, or a return from gameplay must be released before it
+      // can move the selection.
+      title_menu_navigation_.reset();
       previous_buttons = movie_player.play(movies_, pad, previous_buttons,
                                            overlay, play_startup_movies);
       if (selected_command_ == game::TitleCommand::training_video) {
@@ -740,17 +804,19 @@ public:
             campaign->missionIndex() + 1U,
             game::campaignDifficultyDisplayName(campaign->difficulty()).data());
       }
-      controller_bindings_persistence.retry();
+      controller_settings_persistence.retry();
       detail::PsyCrossMissionStart mission_start;
-      const auto commit_controller_bindings =
-          [&controller_bindings_persistence](
-              const ControllerButtonBindings &bindings) {
-            return controller_bindings_persistence.commit(bindings);
+      const auto commit_controller_settings =
+          [&controller_settings_persistence](
+              const ControllerButtonBindings &bindings, bool vibration) {
+            return controller_settings_persistence.commit(bindings, vibration);
           };
-      detail::PsyCrossSceneViewer scene_viewer{input_, cheats_,
+      detail::PsyCrossSceneViewer scene_viewer{input_,
+                                               cheats_,
                                                campaign->difficulty(),
                                                graphics_.controller_bindings,
-                                               commit_controller_bindings};
+                                               graphics_.controller_vibration,
+                                               commit_controller_settings};
       std::optional<game::MissionPackage> loaded_mission;
       auto exit_application = false;
       while (campaign->active()) {
@@ -820,7 +886,7 @@ public:
                              campaign->maximumUnlockedMission(),
                              mission_start.takePreloadedGameplay(),
                              mission_start.takePreloadedAudio());
-        controller_bindings_persistence.retry();
+        controller_settings_persistence.retry();
         previous_buttons = scene_result.previous_buttons;
         if (scene_result.reason == detail::SceneExitReason::mission_selected &&
             scene_result.selected_mission) {
@@ -944,11 +1010,11 @@ private:
   std::string supported_game_serial_;
   game::TitleMenu menu_;
   game::TitleCommand selected_command_{game::TitleCommand::none};
-  int title_analog_direction_{};
+  ControllerMenuNavigator title_menu_navigation_;
   GraphicsSettings graphics_;
   KeyboardMouseBindings input_;
   game::RetailCheatState cheats_;
-  ControllerBindingsCommitCallback controller_bindings_commit_;
+  ControllerSettingsCommitCallback controller_settings_commit_;
 };
 
 class PsyCrossSceneHost final : public Host {
@@ -956,17 +1022,17 @@ public:
   PsyCrossSceneHost(std::string title, game::MissionPackage mission,
                     std::filesystem::path cue_path, GraphicsSettings graphics,
                     KeyboardMouseBindings input, game::RetailCheatState cheats,
-                    ControllerBindingsCommitCallback controller_bindings_commit)
+                    ControllerSettingsCommitCallback controller_settings_commit)
       : title_(title.begin(), title.end()), mission_(std::move(mission)),
         cue_path_(std::move(cue_path)), graphics_(graphics), input_(input),
         cheats_(cheats),
-        controller_bindings_commit_(std::move(controller_bindings_commit)) {
+        controller_settings_commit_(std::move(controller_settings_commit)) {
     title_.push_back('\0');
   }
 
   void run() override {
-    ControllerBindingsPersistence controller_bindings_persistence{
-        graphics_, controller_bindings_commit_};
+    ControllerSettingsPersistence controller_settings_persistence{
+        graphics_, controller_settings_commit_};
     configureGraphics(graphics_);
     configureControllerProtocol(graphics_.controller_protocol);
     PsyX_Initialise(title_.data(), graphics_.width, graphics_.height, 0);
@@ -988,21 +1054,23 @@ public:
     detail::PsyCrossMissionStart mission_start;
     previous_buttons =
         mission_start.run(mission_, pad, previous_buttons, input_);
-    controller_bindings_persistence.retry();
-    const auto commit_controller_bindings =
-        [&controller_bindings_persistence](
-            const ControllerButtonBindings &bindings) {
-          return controller_bindings_persistence.commit(bindings);
+    controller_settings_persistence.retry();
+    const auto commit_controller_settings =
+        [&controller_settings_persistence](
+            const ControllerButtonBindings &bindings, bool vibration) {
+          return controller_settings_persistence.commit(bindings, vibration);
         };
-    detail::PsyCrossSceneViewer scene_viewer{input_, cheats_,
+    detail::PsyCrossSceneViewer scene_viewer{input_,
+                                             cheats_,
                                              game::CampaignDifficulty::original,
                                              graphics_.controller_bindings,
-                                             commit_controller_bindings};
+                                             graphics_.controller_vibration,
+                                             commit_controller_settings};
     const auto result = scene_viewer.run(mission_, pad, previous_buttons,
                                          cue_path_, mission_.definition().index,
                                          mission_start.takePreloadedGameplay(),
                                          mission_start.takePreloadedAudio());
-    controller_bindings_persistence.retry();
+    controller_settings_persistence.retry();
     if (result.reason == detail::SceneExitReason::mission_complete &&
         !mission_.endingMovie().path.empty()) {
       static_cast<void>(movie_player.playStandalone(
@@ -1019,7 +1087,7 @@ private:
   GraphicsSettings graphics_;
   KeyboardMouseBindings input_;
   game::RetailCheatState cheats_;
-  ControllerBindingsCommitCallback controller_bindings_commit_;
+  ControllerSettingsCommitCallback controller_settings_commit_;
 };
 
 } // namespace
@@ -1034,24 +1102,22 @@ std::unique_ptr<Host> createPsyCrossTitleHost(
     game::MissionPackage initial_mission, std::filesystem::path cue_path,
     std::string supported_game_serial, GraphicsSettings graphics,
     KeyboardMouseBindings input, game::RetailCheatState cheats,
-    ControllerBindingsCommitCallback controller_bindings_commit) {
+    ControllerSettingsCommitCallback controller_settings_commit) {
   return std::make_unique<PsyCrossTitleHost>(
       std::move(title), std::move(assets), std::move(movies),
       std::move(initial_mission), std::move(cue_path),
       std::move(supported_game_serial), graphics, input, cheats,
-      std::move(controller_bindings_commit));
+      std::move(controller_settings_commit));
 }
 
-std::unique_ptr<Host> createPsyCrossSceneHost(std::string title,
-                                              game::MissionPackage mission,
-                                              std::filesystem::path cue_path,
-                                              GraphicsSettings graphics,
-                                              KeyboardMouseBindings input,
-                                              game::RetailCheatState cheats,
-                                              ControllerBindingsCommitCallback controller_bindings_commit) {
+std::unique_ptr<Host> createPsyCrossSceneHost(
+    std::string title, game::MissionPackage mission,
+    std::filesystem::path cue_path, GraphicsSettings graphics,
+    KeyboardMouseBindings input, game::RetailCheatState cheats,
+    ControllerSettingsCommitCallback controller_settings_commit) {
   return std::make_unique<PsyCrossSceneHost>(
       std::move(title), std::move(mission), std::move(cue_path), graphics,
-      input, cheats, std::move(controller_bindings_commit));
+      input, cheats, std::move(controller_settings_commit));
 }
 
 } // namespace sf::platform

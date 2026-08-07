@@ -277,17 +277,71 @@ std::string hudInputName(KeyboardMouseInput input) {
 int controllerMenuDirection(std::uint8_t horizontal, std::uint8_t vertical,
                             int previous_direction) noexcept {
   constexpr int center = 128;
-  constexpr int engage_deadzone = 32;
-  constexpr int release_deadzone = 24;
+  constexpr int engage_deadzone = 56;
+  constexpr int release_deadzone = 40;
   const auto x = static_cast<int>(horizontal) - center;
   const auto y = static_cast<int>(vertical) - center;
+  if (previous_direction != 0) {
+    if (std::abs(x) <= release_deadzone && std::abs(y) <= release_deadzone) {
+      return 0;
+    }
+    return previous_direction < 0 ? -1 : 1;
+  }
   const auto dominant = std::abs(y) >= std::abs(x) ? y : x;
-  const auto deadzone =
-      previous_direction == 0 ? engage_deadzone : release_deadzone;
-  if (std::abs(dominant) <= deadzone) {
+  if (std::abs(dominant) <= engage_deadzone) {
     return 0;
   }
   return dominant < 0 ? -1 : 1;
+}
+
+std::uint8_t dominantControllerMenuAxis(
+    std::uint8_t right_horizontal, std::uint8_t right_vertical,
+    std::uint8_t left_horizontal, std::uint8_t left_vertical) noexcept {
+  constexpr int center = 128;
+  // Prefer Y on ties so ordinary list navigation remains intuitive, but
+  // accept X as well: the retail title code maps every D-pad direction to
+  // previous/next and controller axis layouts are not part of save data.
+  const std::array candidates{left_vertical, right_vertical, left_horizontal,
+                              right_horizontal};
+  auto selected = std::uint8_t{center};
+  auto selected_magnitude = 0;
+  for (const auto candidate : candidates) {
+    const auto magnitude = std::abs(static_cast<int>(candidate) - center);
+    if (magnitude > selected_magnitude) {
+      selected = candidate;
+      selected_magnitude = magnitude;
+    }
+  }
+  return selected;
+}
+
+ControllerMenuStep
+ControllerMenuNavigator::update(ControllerMenuSample sample) noexcept {
+  if (!sample.connected) {
+    reset();
+    return {};
+  }
+
+  if (!initialized_ || instance_id_ != sample.instance_id) {
+    initialized_ = true;
+    instance_id_ = sample.instance_id;
+    direction_ = controllerMenuDirection(sample.horizontal, sample.vertical, 0);
+    return {};
+  }
+
+  const auto previous_direction = direction_;
+  direction_ = controllerMenuDirection(sample.horizontal, sample.vertical,
+                                       previous_direction);
+  if (previous_direction != 0 || direction_ == 0) {
+    return {};
+  }
+  return ControllerMenuStep{.previous = direction_ < 0, .next = direction_ > 0};
+}
+
+void ControllerMenuNavigator::reset() noexcept {
+  instance_id_ = -1;
+  direction_ = 0;
+  initialized_ = false;
 }
 
 KeyboardMouseBindings defaultKeyboardMouseBindings() noexcept {
@@ -558,6 +612,24 @@ controllerInputPromptBindings(ControllerInputProtocol protocol,
     result.values[index] = hudPromptName(labels[index]);
   }
   return result;
+}
+
+InputPromptBindings retailMenuControllerInputPromptBindings(
+    ControllerPromptFamily family) noexcept {
+  constexpr std::uint16_t start_button = 0x0008U;
+  constexpr std::uint16_t circle_button = 0x2000U;
+  constexpr std::uint16_t cross_button = 0x4000U;
+  constexpr std::uint16_t square_button = 0x8000U;
+  const auto name = [family](std::uint16_t button) {
+    return controllerButtonPromptName(family, button);
+  };
+  return controllerInputPromptBindings(
+      ControllerInputProtocol::unknown,
+      InputPromptBindingNames{.confirm = name(cross_button),
+                              .cancel = name(circle_button),
+                              .pause = name(start_button),
+                              .interact = name(cross_button),
+                              .fire = name(square_button)});
 }
 
 std::string_view inputPromptLabel(const InputPromptBindings &bindings,

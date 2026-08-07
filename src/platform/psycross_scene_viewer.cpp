@@ -235,6 +235,11 @@ std::uint32_t streamed_vlf_page_mask{};
 // clang-format on
 } // namespace
 
+InputPromptBindings titleControllerInputPromptBindings(int controller_family) {
+  return retailMenuControllerInputPromptBindings(
+      controllerPromptFamily(controller_family));
+}
+
 #include "psycross_scene_runtime.inc"
 #include "psycross_scene_save_renderer.inc"
 } // namespace sf::platform::detail

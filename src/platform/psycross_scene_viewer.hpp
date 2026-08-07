@@ -25,6 +25,8 @@ enum class SceneExitReason {
   mission_complete,
   mission_selected,
 };
+[[nodiscard]] InputPromptBindings
+titleControllerInputPromptBindings(int controller_family);
 
 struct SceneViewerResult {
   std::uint16_t previous_buttons{0xffffU};
@@ -51,6 +53,7 @@ public:
   void drawLoadSlots(const game::TitleSaveSlots &slots, std::size_t selection);
   void drawDifficultySelection(const game::TitleMenu &menu);
   void drawAgentModeWarning();
+  void setInputPromptBindings(InputPromptBindings bindings);
 
 private:
   struct State;
@@ -63,10 +66,12 @@ public:
       KeyboardMouseBindings input, game::RetailCheatState &cheats,
       game::CampaignDifficulty difficulty,
       ControllerButtonBindings controller_bindings = {},
-      ControllerBindingsCommitCallback controller_bindings_commit = {}) noexcept
+      bool controller_vibration = true,
+      ControllerSettingsCommitCallback controller_settings_commit = {}) noexcept
       : input_(input), cheats_(cheats), difficulty_(difficulty),
         controller_bindings_(controller_bindings),
-        controller_bindings_commit_(controller_bindings_commit) {}
+        controller_vibration_(controller_vibration),
+        controller_settings_commit_(controller_settings_commit) {}
 
   [[nodiscard]] SceneViewerResult
   run(const game::MissionPackage &mission, PADRAW &pad,
@@ -80,7 +85,8 @@ private:
   game::RetailCheatState &cheats_;
   game::CampaignDifficulty difficulty_{game::CampaignDifficulty::original};
   ControllerButtonBindings controller_bindings_;
-  ControllerBindingsCommitCallback controller_bindings_commit_;
+  bool controller_vibration_{true};
+  ControllerSettingsCommitCallback controller_settings_commit_;
   game::PauseSettings pause_settings_;
   bool pause_settings_initialized_{};
 };

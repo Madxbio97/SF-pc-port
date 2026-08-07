@@ -35,8 +35,8 @@ enum class ControllerProtocol {
 using ControllerButtonBindings = game::ControllerButtonBindings;
 inline constexpr auto controller_action_binding_count =
     game::controller_action_count;
-using ControllerBindingsCommitCallback =
-    std::function<bool(const ControllerButtonBindings &)>;
+using ControllerSettingsCommitCallback =
+    std::function<bool(const ControllerButtonBindings &, bool vibration)>;
 
 struct GraphicsSettings {
   int width{1280};
@@ -53,6 +53,7 @@ struct GraphicsSettings {
   bool fullscreen{};
   ControllerProtocol controller_protocol{ControllerProtocol::automatic};
   ControllerButtonBindings controller_bindings;
+  bool controller_vibration{true};
 };
 
 class Host {
@@ -76,13 +77,13 @@ createPsyCrossHost(std::string title, GraphicsSettings graphics = {});
     std::string supported_game_serial, GraphicsSettings graphics = {},
     KeyboardMouseBindings input = defaultKeyboardMouseBindings(),
     game::RetailCheatState cheats = {},
-    ControllerBindingsCommitCallback controller_bindings_commit = {});
+    ControllerSettingsCommitCallback controller_settings_commit = {});
 
 [[nodiscard]] std::unique_ptr<Host> createPsyCrossSceneHost(
     std::string title, game::MissionPackage mission,
     std::filesystem::path cue_path, GraphicsSettings graphics = {},
     KeyboardMouseBindings input = defaultKeyboardMouseBindings(),
     game::RetailCheatState cheats = {},
-    ControllerBindingsCommitCallback controller_bindings_commit = {});
+    ControllerSettingsCommitCallback controller_settings_commit = {});
 
 } // namespace sf::platform

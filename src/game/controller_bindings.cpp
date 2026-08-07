@@ -58,6 +58,73 @@ std::string_view controllerActionConfigKey(ControllerAction action) noexcept {
   return controllerActionMetadata(action).config_key;
 }
 
+bool isValidControllerStickLayout(ControllerStickLayout layout) noexcept {
+  return layout == ControllerStickLayout::character_left_camera_right ||
+         layout == ControllerStickLayout::character_right_camera_left ||
+         layout == ControllerStickLayout::original_one_stick;
+}
+
+ControllerStickLayout cycledControllerStickLayout(ControllerStickLayout layout,
+                                                  int direction) noexcept {
+  if (!isValidControllerStickLayout(layout)) {
+    return ControllerStickLayout::character_left_camera_right;
+  }
+  if (direction == 0) {
+    return layout;
+  }
+  if (direction < 0) {
+    switch (layout) {
+    case ControllerStickLayout::character_left_camera_right:
+      return ControllerStickLayout::original_one_stick;
+    case ControllerStickLayout::character_right_camera_left:
+      return ControllerStickLayout::character_left_camera_right;
+    case ControllerStickLayout::original_one_stick:
+      return ControllerStickLayout::character_right_camera_left;
+    }
+  }
+  switch (layout) {
+  case ControllerStickLayout::character_left_camera_right:
+    return ControllerStickLayout::character_right_camera_left;
+  case ControllerStickLayout::character_right_camera_left:
+    return ControllerStickLayout::original_one_stick;
+  case ControllerStickLayout::original_one_stick:
+    return ControllerStickLayout::character_left_camera_right;
+  }
+  return ControllerStickLayout::character_left_camera_right;
+}
+
+std::string_view
+controllerStickLayoutName(ControllerStickLayout layout) noexcept {
+  switch (layout) {
+  case ControllerStickLayout::character_right_camera_left:
+    return "Character Right / Camera Left";
+  case ControllerStickLayout::original_one_stick:
+    return "Original (One Stick)";
+  case ControllerStickLayout::character_left_camera_right:
+  default:
+    return "Character Left / Camera Right";
+  }
+}
+
+ControllerStickAxes controllerStickAxes(ControllerStickLayout layout,
+                                        std::uint8_t left_horizontal,
+                                        std::uint8_t left_vertical,
+                                        std::uint8_t right_horizontal,
+                                        std::uint8_t right_vertical) noexcept {
+  if (layout == ControllerStickLayout::character_right_camera_left) {
+    return ControllerStickAxes{right_horizontal, right_vertical,
+                               left_horizontal, left_vertical};
+  }
+  if (layout == ControllerStickLayout::original_one_stick) {
+    // Retail L1 aim already suppresses locomotion before the guest update, so
+    // the shared directional channel becomes sight movement while aiming.
+    return ControllerStickAxes{left_horizontal, left_vertical, left_horizontal,
+                               left_vertical};
+  }
+  return ControllerStickAxes{left_horizontal, left_vertical, right_horizontal,
+                             right_vertical};
+}
+
 bool isBindableControllerButton(std::uint32_t button) noexcept {
   return std::has_single_bit(button) &&
          (button & bindable_controller_button_mask) == button;
@@ -65,6 +132,9 @@ bool isBindableControllerButton(std::uint32_t button) noexcept {
 
 bool areControllerBindingsValid(
     const ControllerButtonBindings &bindings) noexcept {
+  if (!isValidControllerStickLayout(bindings.stick_layout)) {
+    return false;
+  }
   std::uint32_t assigned_buttons{};
   for (const auto button : bindings.buttons) {
     if (!isBindableControllerButton(button) ||
@@ -96,8 +166,7 @@ controllerButtonForAction(const ControllerButtonBindings &bindings,
 ControllerRebindResult
 rebindControllerButton(ControllerButtonBindings &bindings,
                        ControllerAction action, std::uint32_t button) noexcept {
-  if (!isValidControllerAction(action) ||
-      !isBindableControllerButton(button)) {
+  if (!isValidControllerAction(action) || !isBindableControllerButton(button)) {
     return ControllerRebindResult::invalid;
   }
 
@@ -126,8 +195,7 @@ controllerBindingEntries(const ControllerButtonBindings &bindings) noexcept {
   return entries;
 }
 
-std::optional<ControllerButtonBindings>
-controllerBindingsFromEntries(
+std::optional<ControllerButtonBindings> controllerBindingsFromEntries(
     std::span<const ControllerBinding> entries) noexcept {
   if (entries.size() != controller_action_count) {
     return std::nullopt;

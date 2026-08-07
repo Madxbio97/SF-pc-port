@@ -29,26 +29,40 @@ constexpr std::array base_utf8_translations{
         "A special PC-version mode not present in the original game. Enemies "
         "are more accurate and aggressive, and some missions have stricter "
         "conditions.",
-        u8"\u0421\u041f\u0415\u0426\u0418\u0410\u041b\u042c\u041d\u042b\u0419 \u0420\u0415\u0416\u0418\u041c "
-        u8"\u041f\u041a-\u0412\u0415\u0420\u0421\u0418\u0418, \u041a\u041e\u0422\u041e\u0420\u041e\u0413\u041e \u041d\u0415 \u0411\u042b\u041b\u041e \u0412 "
-        u8"\u041e\u0420\u0418\u0413\u0418\u041d\u0410\u041b\u042c\u041d\u041e\u0419 \u0418\u0413\u0420\u0415. \u0412\u0420\u0410\u0413\u0418 "
-        u8"\u0422\u041e\u0427\u041d\u0415\u0415 \u0418 \u0410\u0413\u0420\u0415\u0421\u0421\u0418\u0412\u041d\u0415\u0415, \u0410 \u0412 \u041d\u0415\u041a\u041e\u0422\u041e\u0420\u042b\u0425 "
-        u8"\u041c\u0418\u0421\u0421\u0418\u042f\u0425 \u0414\u0415\u0419\u0421\u0422\u0412\u0423\u042e\u0422 \u0411\u041e\u041b\u0415\u0415 \u0421\u0422\u0420\u041e\u0413\u0418\u0415 "
+        u8"\u0421\u041f\u0415\u0426\u0418\u0410\u041b\u042c\u041d\u042b\u0419 "
+        u8"\u0420\u0415\u0416\u0418\u041c "
+        u8"\u041f\u041a-\u0412\u0415\u0420\u0421\u0418\u0418, "
+        u8"\u041a\u041e\u0422\u041e\u0420\u041e\u0413\u041e \u041d\u0415 "
+        u8"\u0411\u042b\u041b\u041e \u0412 "
+        u8"\u041e\u0420\u0418\u0413\u0418\u041d\u0410\u041b\u042c\u041d\u041e"
+        u8"\u0419 \u0418\u0413\u0420\u0415. \u0412\u0420\u0410\u0413\u0418 "
+        u8"\u0422\u041e\u0427\u041d\u0415\u0415 \u0418 "
+        u8"\u0410\u0413\u0420\u0415\u0421\u0421\u0418\u0412\u041d\u0415\u0415, "
+        u8"\u0410 \u0412 "
+        u8"\u041d\u0415\u041a\u041e\u0422\u041e\u0420\u042b\u0425 "
+        u8"\u041c\u0418\u0421\u0421\u0418\u042f\u0425 "
+        u8"\u0414\u0415\u0419\u0421\u0422\u0412\u0423\u042e\u0422 "
+        u8"\u0411\u041e\u041b\u0415\u0415 "
+        u8"\u0421\u0422\u0420\u041e\u0413\u0418\u0415 "
         u8"\u0423\u0421\u041b\u041e\u0412\u0418\u042f."},
     Utf8Translation{
         "%x continue   %t back",
-        u8"%x \u041f\u0420\u041e\u0414\u041e\u041b\u0416\u0418\u0422\u042c   %t \u041d\u0410\u0417\u0410\u0414"},
+        u8"%x \u041f\u0420\u041e\u0414\u041e\u041b\u0416\u0418\u0422\u042c   "
+        u8"%t \u041d\u0410\u0417\u0410\u0414"},
     Utf8Translation{
         "%x - continue; %t - back",
-        u8"%x - \u041f\u0420\u041e\u0414\u041e\u041b\u0416\u0418\u0422\u042c; %t - \u041d\u0410\u0417\u0410\u0414"},
+        u8"%x - \u041f\u0420\u041e\u0414\u041e\u041b\u0416\u0418\u0422\u042c; "
+        u8"%t - \u041d\u0410\u0417\u0410\u0414"},
     Utf8Translation{"Select Difficulty",
-                    u8"\u0412\u042b\u0411\u0415\u0420\u0418\u0422\u0415 \u0421\u041b\u041e\u0416\u041d\u041e\u0421\u0422\u042c"},
+                    u8"\u0412\u042b\u0411\u0415\u0420\u0418\u0422\u0415 "
+                    u8"\u0421\u041b\u041e\u0416\u041d\u041e\u0421\u0422\u042c"},
     Utf8Translation{"Normal",
                     u8"\u041e\u0420\u0418\u0413\u0418\u041d\u0410\u041b"},
-    Utf8Translation{"Agent",
-                    u8"\u0410\u0413\u0415\u041d\u0422"},
+    Utf8Translation{"Agent", u8"\u0410\u0413\u0415\u041d\u0422"},
     Utf8Translation{"Playing Agent mode",
-                    u8"\u0412\u042b\u0411\u0420\u0410\u041d\u041d\u0410\u042f \u0421\u041b\u041e\u0416\u041d\u041e\u0421\u0422\u042c: \u0410\u0413\u0415\u041d\u0422"},
+                    u8"\u0412\u042b\u0411\u0420\u0410\u041d\u041d\u0410\u042f "
+                    u8"\u0421\u041b\u041e\u0416\u041d\u041e\u0421\u0422\u042c: "
+                    u8"\u0410\u0413\u0415\u041d\u0422"},
     Utf8Translation{"Map", u8"КАРТА"},
     Utf8Translation{"Objectives", u8"ЦЕЛИ"},
     Utf8Translation{"Parameters", u8"УСЛОВИЯ"},
@@ -77,6 +91,15 @@ constexpr std::array base_utf8_translations{
     Utf8Translation{"Controller", u8"УПРАВЛЕНИЕ"},
     Utf8Translation{"Controller Configuration:", u8"НАСТРОЙКА УПРАВЛЕНИЯ:"},
     Utf8Translation{"Controller Configuration", u8"НАСТРОЙКА УПРАВЛЕНИЯ"},
+    Utf8Translation{"Stick Layout", u8"РАСКЛАДКА СТИКОВ"},
+    Utf8Translation{"Character Left / Camera Right",
+                    u8"ПЕРСОНАЖ: ЛЕВЫЙ / КАМЕРА: ПРАВЫЙ"},
+    Utf8Translation{"Character Right / Camera Left",
+                    u8"ПЕРСОНАЖ: ПРАВЫЙ / КАМЕРА: ЛЕВЫЙ"},
+    Utf8Translation{
+        "Original (One Stick)",
+        u8"\u041e\u0420\u0418\u0413\u0418\u041d\u0410\u041b\u042c\u041d\u0410"
+        u8"\u042f (\u041e\u0414\u0418\u041d \u0421\u0422\u0418\u041a)"},
     Utf8Translation{"Reset", u8"СБРОСИТЬ"},
     Utf8Translation{"Accept", u8"ПРИНЯТЬ"},
     Utf8Translation{"Cancel", u8"ОТМЕНИТЬ"},
@@ -167,10 +190,8 @@ constexpr std::array base_utf8_translations{
     Utf8Translation{"N/A", u8"Н/Д"},
     Utf8Translation{"Infinite", u8"БЕСКОНЕЧНО"},
     Utf8Translation{"Mission Failed", u8"МИССИЯ ПРОВАЛЕНА"},
-    Utf8Translation{"Mission Parameter Failed",
-                    u8"УСЛОВИЕ МИССИИ НАРУШЕНО"},
-    Utf8Translation{"Mission Objective Failed",
-                    u8"ЦЕЛЬ МИССИИ НЕ ВЫПОЛНЕНА"},
+    Utf8Translation{"Mission Parameter Failed", u8"УСЛОВИЕ МИССИИ НАРУШЕНО"},
+    Utf8Translation{"Mission Objective Failed", u8"ЦЕЛЬ МИССИИ НЕ ВЫПОЛНЕНА"},
     Utf8Translation{"MISSION FAILED", u8"МИССИЯ ПРОВАЛЕНА"},
     Utf8Translation{"FIRE OR ACTION TO RETRY", u8"НАЖМИТЕ ОГОНЬ ИЛИ ДЕЙСТВИЕ"},
     Utf8Translation{"Objective", u8"ЦЕЛЬ"},
@@ -1555,7 +1576,8 @@ std::string localizeLine(std::string_view source) {
       std::string_view{"Slot"},          std::string_view{"Active"},
       std::string_view{"Completed"},     std::string_view{"Brightness"},
       std::string_view{"Ammo"},          std::string_view{"Preset config"},
-      std::string_view{"Invert Aim"},    std::string_view{"Vibration"},
+      std::string_view{"Stick Layout"}, std::string_view{"Invert Aim"},
+      std::string_view{"Vibration"},
       std::string_view{"Equipped"},      std::string_view{"Selected"},
       std::string_view{"Power"},         std::string_view{"Accuracy"},
       std::string_view{"Fire Rate"},     std::string_view{"Rate"},
