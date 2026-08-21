@@ -18,6 +18,27 @@ constexpr int minimum_window_height = 240;
 PsyCrossWindowMode* active_window_mode{};
 int mouse_wheel_delta{};
 
+void setMouseGrab(bool grabbed) noexcept {
+    if (g_window == nullptr) {
+        return;
+    }
+#if SDL_VERSION_ATLEAST(2, 0, 16)
+    SDL_SetWindowMouseGrab(g_window, grabbed ? SDL_TRUE : SDL_FALSE);
+#else
+    SDL_SetWindowGrab(g_window, grabbed ? SDL_TRUE : SDL_FALSE);
+#endif
+}
+
+void syncFullscreenMouseGrab() noexcept {
+    if (g_window == nullptr) {
+        return;
+    }
+    const auto flags = SDL_GetWindowFlags(g_window);
+    const auto fullscreen = (flags & SDL_WINDOW_FULLSCREEN) != 0;
+    const auto focused = (flags & SDL_WINDOW_INPUT_FOCUS) != 0;
+    setMouseGrab(fullscreen && focused);
+}
+
 bool isShortcutKey(const SDL_KeyboardEvent& event) noexcept {
     if (event.keysym.scancode == SDL_SCANCODE_F11) {
         return true;
@@ -46,6 +67,8 @@ PsyCrossWindowMode::PsyCrossWindowMode(bool start_fullscreen) {
 
     if (start_fullscreen) {
         setFullscreen(true);
+    } else {
+        syncFullscreenMouseGrab();
     }
 }
 
@@ -54,6 +77,7 @@ PsyCrossWindowMode::~PsyCrossWindowMode() {
         return;
     }
 
+    setMouseGrab(false);
     SDL_EventFilter current_filter{};
     void* current_userdata{};
     SDL_GetEventFilter(&current_filter, &current_userdata);
@@ -145,9 +169,22 @@ void PsyCrossWindowMode::captureWindowedBounds() noexcept {
 
 void PsyCrossWindowMode::observeWindowEvent(const SDL_WindowEvent& event) noexcept {
     if (switching_ || g_window == nullptr ||
-        event.windowID != SDL_GetWindowID(g_window) || isFullscreen()) {
+        event.windowID != SDL_GetWindowID(g_window)) {
         return;
     }
+
+    if (event.event == SDL_WINDOWEVENT_FOCUS_LOST) {
+        setMouseGrab(false);
+        return;
+    }
+    if (event.event == SDL_WINDOWEVENT_FOCUS_GAINED) {
+        syncFullscreenMouseGrab();
+        return;
+    }
+    if (isFullscreen()) {
+        return;
+    }
+
     if (event.event == SDL_WINDOWEVENT_MAXIMIZED) {
         windowed_bounds_.maximized = true;
     } else if (event.event == SDL_WINDOWEVENT_RESTORED) {
@@ -179,6 +216,7 @@ void PsyCrossWindowMode::restoreWindowedBounds() noexcept {
 
 void PsyCrossWindowMode::setFullscreen(bool fullscreen) noexcept {
     if (g_window == nullptr || fullscreen == isFullscreen()) {
+        syncFullscreenMouseGrab();
         return;
     }
     if (fullscreen) {
@@ -196,6 +234,7 @@ void PsyCrossWindowMode::setFullscreen(bool fullscreen) noexcept {
         restoreWindowedBounds();
     }
     switching_ = false;
+    syncFullscreenMouseGrab();
     syncRendererSize();
     PsyX_Log_Info("Window mode: %s (%dx%d)\n",
                   fullscreen ? "borderless fullscreen" : "windowed",
