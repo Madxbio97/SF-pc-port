@@ -734,6 +734,35 @@ void testInvalidAndFaultFrames() {
   require(static_cast<bool>(
               sf::game::buildLegacyPresentationFrame(1U, 0U, render, ui)),
           "Presentation bridge rejected coherent raw particle provenance");
+  for (const auto opcode : std::array<std::uint8_t, 2>{0x24U, 0x26U}) {
+    auto &glass = render.guest_raw_packets[0];
+    glass.word_count = 7U;
+    glass.opcode = opcode;
+    glass.words = {static_cast<std::uint32_t>(opcode) << 24U | 0x003f3f3fU,
+                   0x00100020U,
+                   0x79b0e010U,
+                   0x00300040U,
+                   0x00b0f020U,
+                   0x00500060U,
+                   0x0000ff30U};
+    const auto glass_frame =
+        sf::game::buildLegacyPresentationFrame(2U, 1U, render, ui);
+    require(glass_frame && glass_frame->renderer &&
+                glass_frame->renderer->state.guest_raw_packets.size() == 1U &&
+                glass_frame->renderer->state.guest_raw_packets[0].words ==
+                    glass.words,
+            "A valid textured glass fragment aborted presentation publication");
+    sf::game::LegacyWeaponEffectPresentationQueue glass_queue;
+    glass_queue.observe(glass_frame);
+    require(glass_queue.rawPackets().size() == 1U &&
+                glass_queue.rawPackets()[0].packet.words == glass.words &&
+                glass_queue.rawPackets()[0].packet.effect_position ==
+                    glass.effect_position,
+            "The published glass fragment lost texture or world provenance");
+    glass.word_count = 6U;
+    require(!sf::game::buildLegacyPresentationFrame(3U, 2U, render, ui),
+            "Presentation accepted a truncated textured glass packet");
+  }
   render.guest_raw_packets.clear();
 
   sf::game::LegacyGuestSpriteBridgeState guest_sprite;

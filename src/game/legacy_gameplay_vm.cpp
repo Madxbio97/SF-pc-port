@@ -5477,14 +5477,7 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
         packet.effect_particle = static_cast<std::int16_t>(particle);
       }
     }
-    const auto base_opcode = static_cast<std::uint8_t>(packet.opcode & 0xfdU);
-    const auto accepted = (packet.word_count == 2U && base_opcode == 0x68U) ||
-                          (packet.word_count == 3U && base_opcode == 0x40U) ||
-                          (packet.word_count == 4U &&
-                           (base_opcode == 0x20U || base_opcode == 0x50U)) ||
-                          (packet.word_count == 5U && base_opcode == 0x28U) ||
-                          (packet.word_count == 6U && base_opcode == 0x30U) ||
-                          legacyGuestRawPacketIsTexturedTriangle(packet);
+    const auto accepted = legacyGuestRawPacketFormatSupported(packet);
     // Match retail: unsupported raw nodes remain linked but are not sorted.
     if (!accepted || packet.opcode == 0U || (packet.opcode & 0x80U) != 0U) {
       return true;

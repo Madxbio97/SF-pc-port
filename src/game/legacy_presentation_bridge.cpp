@@ -455,12 +455,7 @@ bool validGuestPackets(const LegacyGameplayBridgeState &renderer) noexcept {
             packet.opcode == 0U || (packet.opcode & 0x80U) != 0U) {
           return false;
         }
-        const auto base = static_cast<std::uint8_t>(packet.opcode & 0xfdU);
-        return (packet.word_count == 2U && base == 0x68U) ||
-               (packet.word_count == 3U && base == 0x40U) ||
-               (packet.word_count == 4U && (base == 0x20U || base == 0x50U)) ||
-               (packet.word_count == 5U && base == 0x28U) ||
-               (packet.word_count == 6U && base == 0x30U);
+        return legacyGuestRawPacketFormatSupported(packet);
       });
 }
 

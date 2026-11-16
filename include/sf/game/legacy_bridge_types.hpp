@@ -523,6 +523,20 @@ struct LegacyRadarPolygon {
   return packet.word_count == 7U && (packet.opcode & 0xfdU) == 0x24U;
 }
 
+// The immutable VM reader and the presentation publisher must accept the same
+// packet formats. Otherwise a live effect can read successfully and terminate
+// gameplay when that coherent frame reaches the publisher.
+[[nodiscard]] constexpr bool legacyGuestRawPacketFormatSupported(
+    const LegacyGuestRawPacketBridgeState &packet) noexcept {
+  const auto base = static_cast<std::uint8_t>(packet.opcode & 0xfdU);
+  return (packet.word_count == 2U && base == 0x68U) ||
+         (packet.word_count == 3U && base == 0x40U) ||
+         (packet.word_count == 4U && (base == 0x20U || base == 0x50U)) ||
+         (packet.word_count == 5U && base == 0x28U) ||
+         (packet.word_count == 6U && base == 0x30U) ||
+         legacyGuestRawPacketIsTexturedTriangle(packet);
+}
+
 struct LegacyGuestRawPacketAddressRange {
   std::uint32_t begin{};
   std::uint32_t stride{};
