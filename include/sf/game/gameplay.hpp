@@ -736,6 +736,8 @@ struct SceneObject {
   std::array<std::int16_t, 3U> legacy_hmd_back_color_q12{0x1000, 0x1000,
                                                          0x1000};
   bool legacy_hmd_back_color_valid{};
+  // Retail display+0x08, including the close-camera fade exemption bit.
+  std::uint32_t legacy_hmd_pose_flags{};
 };
 
 // Nearest authored support plane used by renderer-only actor presentation.

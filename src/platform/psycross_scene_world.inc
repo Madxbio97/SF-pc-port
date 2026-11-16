@@ -1586,12 +1586,11 @@ void renderPresentedPlayer(
         {support_origin.x, support_origin.y, support_origin.z},
         player_shadow_key, presentation.guest_frame, interpolation_amount,
         shadow_cache, view, shadow_ordering_table, primitives, stats);
-    const auto visibility =
-        gameplay.playerAlive() && !gameplay.cinematic()
-            ? playerCameraVisibility(presentation.camera, presentation.player.x,
-                                     presentation.player.y,
-                                     presentation.player.z)
-            : PlayerCameraVisibility::opaque;
+    const auto visibility = playerCameraVisibility(
+        cameraDepth(view, makeVertex(player_object.transform.x,
+                                     player_object.transform.y,
+                                     player_object.transform.z)),
+        player_object.legacy_hmd_pose_flags);
     const auto translucent = visibility == PlayerCameraVisibility::translucent;
     if (visibility != PlayerCameraVisibility::hidden) {
       const auto wound_vertices = legacyHmdWoundVertices(

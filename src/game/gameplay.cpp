@@ -236,10 +236,11 @@ void syncLegacyHmdBones(SceneObject &object,
   object.legacy_hmd_root_space = false;
 }
 
-void syncLegacyHmdLighting(SceneObject &object,
-                           const LegacyObjectBridgeState &guest) noexcept {
+void syncLegacyHmdPresentation(SceneObject &object,
+                               const LegacyObjectBridgeState &guest) noexcept {
   object.legacy_hmd_back_color_q12 = guest.hmd_back_color_q12;
   object.legacy_hmd_back_color_valid = guest.hmd_back_color_valid;
+  object.legacy_hmd_pose_flags = guest.pose_flags;
 }
 
 void syncLegacyGroundContact(NpcState &state,
@@ -4987,7 +4988,7 @@ void GameplaySession::syncLegacyResidentObjects(
       return;
     }
     used_scene[scene] = true;
-    syncLegacyHmdLighting(objects_[scene], guest);
+    syncLegacyHmdPresentation(objects_[scene], guest);
     legacy_guest_slot_by_scene_object_[scene] =
         static_cast<std::int32_t>(guest.slot);
     const auto *actor_hmd =
@@ -5685,7 +5686,7 @@ void GameplaySession::syncLegacyGameplayBridge() {
         // Preserve those retail poses directly instead of substituting a
         // generic CLIMBA clip from control/camera heuristics.
         syncLegacyHmdBones(presentation, guest, false);
-        syncLegacyHmdLighting(presentation, guest);
+        syncLegacyHmdPresentation(presentation, guest);
         legacy_player_presentation_.emplace(std::move(presentation));
       } else {
         legacy_player_presentation_.reset();

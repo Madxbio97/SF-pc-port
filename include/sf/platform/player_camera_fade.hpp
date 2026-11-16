@@ -1,54 +1,34 @@
 #pragma once
 
-#include "sf/game/chase_camera.hpp"
-
 #include <algorithm>
-#include <cmath>
+#include <cstdint>
 
 namespace sf::platform {
 
 enum class PlayerCameraVisibility { opaque, translucent, hidden };
 
-// Camera collision can place the eye inside Gabe's HMD. Fade only while the
-// camera is still tracking his torso: scripted cameras which merely pass near
-// the actor must never make him randomly disappear.
-[[nodiscard]] inline PlayerCameraVisibility
-playerCameraVisibility(const game::CameraState &camera, double player_x,
-                       double player_y, double player_z) noexcept {
-  const auto finite = [](double value) { return std::isfinite(value); };
-  if (!finite(camera.x) || !finite(camera.y) || !finite(camera.z) ||
-      !finite(camera.target_x) || !finite(camera.target_y) ||
-      !finite(camera.target_z) || !finite(player_x) || !finite(player_y) ||
-      !finite(player_z)) {
-    return PlayerCameraVisibility::opaque;
-  }
-
-  constexpr auto torso_height = 220.0;
-  const auto torso_y = player_y - torso_height;
-  const auto squared_distance = [](double ax, double ay, double az, double bx,
-                                   double by, double bz) {
-    const auto x = ax - bx;
-    const auto y = ay - by;
-    const auto z = az - bz;
-    return x * x + y * y + z * z;
-  };
-  constexpr auto maximum_tracking_distance = 320.0;
-  if (squared_distance(camera.target_x, camera.target_y, camera.target_z,
-                       player_x, torso_y, player_z) >
-      maximum_tracking_distance * maximum_tracking_distance) {
-    return PlayerCameraVisibility::opaque;
-  }
-
-  const auto camera_distance_squared = squared_distance(
-      camera.x, camera.y, camera.z, player_x, torso_y, player_z);
-  constexpr auto hidden_distance = 56.0;
-  constexpr auto translucent_distance = 300.0;
-  const auto body_y = std::clamp(camera.y, player_y - 350.0, player_y - 80.0);
-  if (squared_distance(camera.x, camera.y, camera.z, player_x, body_y,
-                       player_z) <= hidden_distance * hidden_distance) {
+// USA v1.1 FUN_800d1898 returns (SZ3 * 3) >> 2 for the HMD root. The player
+// branch in FUN_800d0058 makes scores 37..69 semitransparent and skips scores
+// below 37. Display+0x0b bit 5 exempts scripted poses from this close fade.
+// Use the presented view's root depth, including camera interpolation, rather
+// than distance to a guessed torso or an unrelated camera target.
+[[nodiscard]] constexpr PlayerCameraVisibility
+playerCameraVisibility(std::int32_t root_camera_depth,
+                       std::uint32_t pose_flags = 0U) noexcept {
+  const auto depth =
+      static_cast<std::uint32_t>(std::clamp(root_camera_depth, 0, 65'535));
+  const auto score = (depth * 3U) >> 2U;
+  if (score == 0U) {
     return PlayerCameraVisibility::hidden;
   }
-  if (camera_distance_squared <= translucent_distance * translucent_distance) {
+  constexpr std::uint32_t close_fade_exempt = 0x20000000U;
+  if ((pose_flags & close_fade_exempt) != 0U) {
+    return PlayerCameraVisibility::opaque;
+  }
+  if (score < 37U) {
+    return PlayerCameraVisibility::hidden;
+  }
+  if (score < 70U) {
     return PlayerCameraVisibility::translucent;
   }
   return PlayerCameraVisibility::opaque;

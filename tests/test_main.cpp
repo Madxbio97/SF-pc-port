@@ -4610,42 +4610,38 @@ void testWorldPresentationEnvelope() {
 }
 
 void testPlayerCameraFade() {
-  using sf::game::CameraState;
   using sf::platform::PlayerCameraVisibility;
   using sf::platform::playerCameraVisibility;
-  constexpr auto player_x = 100.0;
-  constexpr auto player_y = 600.0;
-  constexpr auto player_z = -80.0;
-  const auto camera = [](double x, double y, double z, double target_x,
-                         double target_y, double target_z) {
-    return CameraState{x, y, z, target_x, target_y, target_z};
-  };
-  require(playerCameraVisibility(
-              camera(player_x, player_y - 300.0, player_z + 672.0, player_x,
-                     player_y - 185.0, player_z),
-              player_x, player_y, player_z) == PlayerCameraVisibility::opaque,
-          "Ordinary chase camera faded Gabe");
-  require(playerCameraVisibility(camera(player_x + 140.0, player_y - 220.0,
-                                        player_z, player_x, player_y - 185.0,
-                                        player_z),
-                                 player_x, player_y, player_z) ==
-              PlayerCameraVisibility::translucent,
-          "Close chase camera did not fade Gabe");
-  require(playerCameraVisibility(
-              camera(player_x + 20.0, player_y - 220.0, player_z, player_x,
-                     player_y - 185.0, player_z),
-              player_x, player_y, player_z) == PlayerCameraVisibility::hidden,
-          "Camera inside Gabe did not hide the intersecting model");
-  require(playerCameraVisibility(
-              camera(player_x, player_y - 350.0, player_z + 20.0, player_x,
-                     player_y - 185.0, player_z),
-              player_x, player_y, player_z) == PlayerCameraVisibility::hidden,
-          "Chase camera intersecting Gabe's head still drew his face");
-  require(playerCameraVisibility(camera(player_x + 20.0, player_y - 220.0,
-                                        player_z, 5000.0, 0.0, 5000.0),
-                                 player_x, player_y,
-                                 player_z) == PlayerCameraVisibility::opaque,
-          "Unrelated scripted camera made Gabe disappear");
+  require(playerCameraVisibility(672) == PlayerCameraVisibility::opaque &&
+              playerCameraVisibility(300) == PlayerCameraVisibility::opaque &&
+              playerCameraVisibility(94) == PlayerCameraVisibility::opaque,
+          "Camera outside the retail fade range altered Gabe");
+  require(playerCameraVisibility(93) == PlayerCameraVisibility::translucent &&
+              playerCameraVisibility(80) ==
+                  PlayerCameraVisibility::translucent &&
+              playerCameraVisibility(50) == PlayerCameraVisibility::translucent,
+          "Retail camera-close range did not make Gabe translucent");
+  require(playerCameraVisibility(49) == PlayerCameraVisibility::hidden &&
+              playerCameraVisibility(2) == PlayerCameraVisibility::hidden &&
+              playerCameraVisibility(1) == PlayerCameraVisibility::hidden &&
+              playerCameraVisibility(0) == PlayerCameraVisibility::hidden &&
+              playerCameraVisibility(-100) == PlayerCameraVisibility::hidden,
+          "Camera intersecting Gabe retained his model");
+  constexpr std::uint32_t exempt = 0x20000000U;
+  require(
+      playerCameraVisibility(49, exempt) == PlayerCameraVisibility::opaque &&
+          playerCameraVisibility(80, exempt) ==
+              PlayerCameraVisibility::opaque &&
+          playerCameraVisibility(1, exempt) == PlayerCameraVisibility::hidden,
+      "Retail scripted-pose fade exemption was ignored");
+  // The renderer's previous-pass fade/render bits must not latch visibility
+  // after the camera has moved. Only the exact exemption flag overrides it.
+  require(playerCameraVisibility(94, 0x2040U) ==
+                  PlayerCameraVisibility::opaque &&
+              playerCameraVisibility(49, 0x2040U) ==
+                  PlayerCameraVisibility::hidden &&
+              playerCameraVisibility(65'536) == PlayerCameraVisibility::opaque,
+          "Stale display flags or GTE depth saturation altered camera fade");
 }
 
 void testPresentationFrameMeter() {
