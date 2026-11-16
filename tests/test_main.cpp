@@ -4644,6 +4644,33 @@ void testPlayerCameraFade() {
           "Stale display flags or GTE depth saturation altered camera fade");
 }
 
+void testPlayerCameraFadeUsesRenderedRootCoordinates() {
+  using sf::platform::PlayerCameraVisibility;
+  using sf::platform::playerCameraVisibility;
+  // Captured from the reported close-camera Georgia Street frame. The raw
+  // root translation yields depth 752 and keeps Gabe opaque; his rendered
+  // root at Y=-2237 is at depth 59 and must enter the original fade range.
+  auto root = sf::assets::MissionTransform{.x = 5150, .y = 2237, .z = 3476};
+  auto view_row = std::array<std::int16_t, 3U>{3987, 634, -695};
+  constexpr auto translation = -4017;
+  require(playerCameraVisibility(root, view_row, translation, 0x4002a040U) ==
+              PlayerCameraVisibility::translucent,
+          "Live close-camera frame used object Y instead of rendered root Y");
+  require(playerCameraVisibility(root, view_row, translation - 20) ==
+                  PlayerCameraVisibility::hidden &&
+              playerCameraVisibility(root, view_row, translation + 40) ==
+                  PlayerCameraVisibility::opaque,
+          "Camera approach/retreat did not cross the retail hide/fade bounds");
+  require(playerCameraVisibility(root, view_row, translation, 0x6002a040U) ==
+              PlayerCameraVisibility::opaque,
+          "Rendered-root conversion bypassed the retail fade exemption");
+  root.y = -root.y;
+  view_row[1] = static_cast<std::int16_t>(-view_row[1]);
+  require(playerCameraVisibility(root, view_row, translation) ==
+              PlayerCameraVisibility::translucent,
+          "Camera fade depended on the sign of the mission's world height");
+}
+
 void testPresentationFrameMeter() {
   sf::platform::PresentationFrameMeter sixty_hz;
   for (auto frame = 0; frame < 30; ++frame) {
@@ -4854,6 +4881,7 @@ int main() {
     testRetailTerrainDepthCuePolicy();
     testWorldPresentationEnvelope();
     testPlayerCameraFade();
+    testPlayerCameraFadeUsesRenderedRootCoordinates();
     testPresentationFrameMeter();
     std::cout << "All tests passed\n";
     return 0;

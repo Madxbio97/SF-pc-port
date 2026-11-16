@@ -1,6 +1,9 @@
 #pragma once
 
+#include "sf/assets/mission_objects.hpp"
+
 #include <algorithm>
+#include <array>
 #include <cstdint>
 
 namespace sf::platform {
@@ -32,6 +35,25 @@ playerCameraVisibility(std::int32_t root_camera_depth,
     return PlayerCameraVisibility::translucent;
   }
   return PlayerCameraVisibility::opaque;
+}
+
+// MissionTransform stores its root Y in the opposite convention from world
+// vertices and the view matrix. Convert it exactly as transformPoint(0,0,0)
+// does, before the GTE depth calculation. Passing the raw translation to
+// cameraDepth makes a close actor appear distant in maps below Y=0.
+[[nodiscard]] constexpr PlayerCameraVisibility
+playerCameraVisibility(const assets::MissionTransform &root,
+                       const std::array<std::int16_t, 3U> &view_depth_row,
+                       std::int32_t view_depth_translation,
+                       std::uint32_t pose_flags = 0U) noexcept {
+  const auto rotated =
+      (static_cast<std::int64_t>(view_depth_row[0]) * root.x -
+       static_cast<std::int64_t>(view_depth_row[1]) * root.y +
+       static_cast<std::int64_t>(view_depth_row[2]) * root.z) >>
+      12U;
+  const auto depth = static_cast<std::int32_t>(
+      std::clamp<std::int64_t>(rotated + view_depth_translation, 0, 65'535));
+  return playerCameraVisibility(depth, pose_flags);
 }
 
 } // namespace sf::platform
