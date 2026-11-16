@@ -27,6 +27,22 @@ bool validGuestRamRange(std::uint32_t address, std::uint32_t size) noexcept {
          address <= agent_guest_ram_end - size;
 }
 
+std::optional<LegacyNativePoint>
+guestMotionPosition(const LegacyHostCallContext &context,
+                    std::uint32_t instance) noexcept {
+  std::uint32_t motion{}, x{}, y{}, z{};
+  if (!validGuestRamRange(instance, 0x10U) ||
+      !context.read32(instance + 0x0cU, motion) ||
+      !validGuestRamRange(motion, 12U) || !context.read32(motion, x) ||
+      !context.read32(motion + 4U, y) || !context.read32(motion + 8U, z) ||
+      y == 0x80000000U) {
+    return std::nullopt;
+  }
+  return LegacyNativePoint{std::bit_cast<std::int32_t>(x),
+                           -std::bit_cast<std::int32_t>(y),
+                           std::bit_cast<std::int32_t>(z)};
+}
+
 bool guestFrameReached(std::uint32_t frame, std::uint32_t target) noexcept {
   return std::bit_cast<std::int32_t>(frame - target) >= 0;
 }
@@ -1917,22 +1933,8 @@ void LegacyGameplayVm::bindAgentDifficultyDamageHook(
            (context.read16(weapon_damage_types + source->weapon * weapon_stride,
                            direct_damage_type) &&
             damage_type == std::bit_cast<std::int16_t>(direct_damage_type)))) {
-        const auto motion_position =
-            [&](std::uint32_t instance) -> std::optional<LegacyNativePoint> {
-          std::uint32_t motion{}, x{}, y{}, z{};
-          if (!validGuestRamRange(instance, 0x10U) ||
-              !context.read32(instance + 0x0cU, motion) ||
-              !validGuestRamRange(motion, 12U) || !context.read32(motion, x) ||
-              !context.read32(motion + 4U, y) ||
-              !context.read32(motion + 8U, z) || y == 0x80000000U) {
-            return std::nullopt;
-          }
-          return LegacyNativePoint{std::bit_cast<std::int32_t>(x),
-                                   -std::bit_cast<std::int32_t>(y),
-                                   std::bit_cast<std::int32_t>(z)};
-        };
-        const auto from = motion_position(source->instance);
-        const auto to = motion_position(player);
+        const auto from = guestMotionPosition(context, source->instance);
+        const auto to = guestMotionPosition(context, player);
         if (from && to && !hostile_ballistic_visibility_(*from, *to)) {
           context.setReturnValue(0U);
           return;
@@ -2068,6 +2070,54 @@ void LegacyGameplayVm::bindAgentDifficultyDamageHook(
         static_cast<std::int32_t>(std::numeric_limits<std::int16_t>::max()));
     context.setRegister(a3_register,
                         guestArgument(static_cast<std::int16_t>(saturated)));
+  });
+
+  // FUN_8003d100 folds each of the six tracked actors into the HUD's safe-Q12
+  // product. s3 is its list index and s0 is the resolved threat, after the
+  // original AI-state floor. Remove only a proven wall-blocked bullet source
+  // before that multiply, preserving the original bar's five-pixel decay.
+  constexpr std::uint32_t danger_boundary = 0x8003d6f0U;
+  bindHostCall(danger_boundary, [this,
+                                 profile](LegacyHostCallContext &context) {
+    context.continueGuestInstruction();
+    if (!hostile_ballistic_visibility_ || context.registerValue(16U) == 0U ||
+        context.registerValue(16U) > 0x1000U) {
+      return;
+    }
+    std::uint32_t instruction{}, records{}, count{}, player{};
+    std::uint16_t slot_bits{};
+    const auto index = context.registerValue(19U);
+    if (index >= 6U || !context.read32(context.pc(), instruction) ||
+        instruction != 0x8f840a24U ||
+        !context.read16(0x8011ba00U + index * 2U, slot_bits) ||
+        !context.read32(profile.object_records_pointer, records) ||
+        !context.read32(profile.object_count, count) ||
+        count > profile.maximum_objects || slot_bits >= count ||
+        !context.read32(profile.player_pointer, player)) {
+      return;
+    }
+    const auto record64 =
+        static_cast<std::uint64_t>(records) + slot_bits * 0x4cULL;
+    if (record64 > std::numeric_limits<std::uint32_t>::max()) {
+      return;
+    }
+    const auto record = static_cast<std::uint32_t>(record64);
+    std::uint32_t instance{};
+    std::uint16_t identity{};
+    std::uint8_t weapon{};
+    if (!validGuestRamRange(record, 0x4cU) ||
+        !context.read8(record + 0x24U, weapon) ||
+        !legacyWeaponUsesBallisticLineOfSight(weapon) ||
+        !context.read32(record + 0x34U, instance) ||
+        !validGuestRamRange(instance, 4U) || instance == player ||
+        !context.read16(instance + 2U, identity) || identity != slot_bits) {
+      return;
+    }
+    const auto from = guestMotionPosition(context, instance);
+    const auto to = guestMotionPosition(context, player);
+    if (from && to && !hostile_ballistic_visibility_(*from, *to)) {
+      context.setRegister(16U, 0U);
+    }
   });
 }
 
@@ -5433,7 +5483,8 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
                           (packet.word_count == 4U &&
                            (base_opcode == 0x20U || base_opcode == 0x50U)) ||
                           (packet.word_count == 5U && base_opcode == 0x28U) ||
-                          (packet.word_count == 6U && base_opcode == 0x30U);
+                          (packet.word_count == 6U && base_opcode == 0x30U) ||
+                          legacyGuestRawPacketIsTexturedTriangle(packet);
     // Match retail: unsupported raw nodes remain linked but are not sorted.
     if (!accepted || packet.opcode == 0U || (packet.opcode & 0x80U) != 0U) {
       return true;

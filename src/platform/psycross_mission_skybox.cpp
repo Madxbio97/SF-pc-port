@@ -124,18 +124,6 @@ bool MissionSkybox::replacesRetailScrim() const noexcept {
   return ready() && profile_ != nullptr && profile_->replace_retail_scrim;
 }
 
-void MissionSkybox::applyBoundaryAtmosphere(
-    game::LegacyEnvironmentBridgeState &environment) const noexcept {
-  // Retain the authored depth envelope, but make its fully faded colour agree
-  // with the replacement dome. Missing assets keep the retail atmosphere.
-  if (!ready() || profile_ == nullptr || !profile_->override_boundary_fog) {
-    return;
-  }
-  const auto &color = profile_->boundary_fog_color;
-  environment.clear_color = {color[0], color[1], color[2]};
-  environment.fog_color = environment.clear_color;
-}
-
 void MissionSkybox::draw(const game::CameraState &camera,
                          std::uint8_t horizon_red, std::uint8_t horizon_green,
                          std::uint8_t horizon_blue) const noexcept {

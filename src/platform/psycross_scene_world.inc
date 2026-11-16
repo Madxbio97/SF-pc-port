@@ -2442,7 +2442,8 @@ void renderGuestCameraLists(
             preciseCameraDepth(view, packet.effect_position.x,
                                -static_cast<double>(packet.effect_position.y),
                                packet.effect_position.z);
-        target_table = &ordering_table;
+        target_table = (packet.opcode & 0x02U) != 0U ? &particle_ordering_table
+                                                     : &ordering_table;
       }
     }
     const auto raw_x = [raw_offset_x](std::uint32_t word) {
@@ -2570,6 +2571,30 @@ void renderGuestCameraLists(
       primitive.y1 = second_y;
       emit_raw_pgxp(primitive.x0, primitive.y0, first_depth);
       emit_raw_pgxp(primitive.x1, primitive.y1, second_depth);
+      add_raw(primitive, raw_depth, packet.opcode, *target_table);
+    } else if (game::legacyGuestRawPacketIsTexturedTriangle(packet)) {
+      auto &primitive = primitives.guest_raw_textured_triangles.emplace_back();
+      setPolyFT3(&primitive);
+      setPacketColor(packet.words[0], primitive.r0, primitive.g0, primitive.b0);
+      primitive.code = packet.opcode;
+      setXY3(&primitive, raw_x(packet.words[1]), raw_y(packet.words[1]),
+             raw_x(packet.words[3]), raw_y(packet.words[3]),
+             raw_x(packet.words[5]), raw_y(packet.words[5]));
+      setUV3(&primitive, static_cast<std::uint8_t>(packet.words[2]),
+             static_cast<std::uint8_t>(packet.words[2] >> 8U),
+             static_cast<std::uint8_t>(packet.words[4]),
+             static_cast<std::uint8_t>(packet.words[4] >> 8U),
+             static_cast<std::uint8_t>(packet.words[6]),
+             static_cast<std::uint8_t>(packet.words[6] >> 8U));
+      const auto page = static_cast<std::uint16_t>(packet.words[4] >> 16U);
+      const auto clut = static_cast<std::uint16_t>(packet.words[2] >> 16U);
+      const auto bank =
+          gameplay.textureBankAt(authored_camera.x, authored_camera.z);
+      primitive.tpage = relocateTexturePage(page, bank, page & 0x1fU);
+      primitive.clut = relocateClut(clut, page, bank, page & 0x1fU);
+      emit_raw_pgxp(primitive.x0, primitive.y0, raw_view_depth);
+      emit_raw_pgxp(primitive.x1, primitive.y1, raw_view_depth);
+      emit_raw_pgxp(primitive.x2, primitive.y2, raw_view_depth);
       add_raw(primitive, raw_depth, packet.opcode, *target_table);
     } else if (packet.word_count == 5U && base_opcode == 0x28U) {
       auto &primitive = primitives.guest_raw_flat_quads.emplace_back();
@@ -3867,6 +3892,7 @@ RenderStats renderWorld(
     primitives.guest_raw_flat_lines.reserve(guest_raw_packet_budget);
     primitives.guest_raw_flat_triangles.reserve(guest_raw_packet_budget);
     primitives.guest_raw_flat_quads.reserve(guest_raw_packet_budget);
+    primitives.guest_raw_textured_triangles.reserve(guest_raw_packet_budget);
     primitives.guest_raw_gouraud_lines.reserve(guest_raw_packet_budget);
     primitives.guest_raw_gouraud_triangles.reserve(guest_raw_packet_budget);
     primitives.guest_raw_modes.reserve(guest_raw_packet_budget);

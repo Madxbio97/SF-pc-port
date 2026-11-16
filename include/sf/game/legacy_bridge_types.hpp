@@ -472,11 +472,11 @@ struct LegacyGuestLineBridgeState {
   LegacyRgbBridgeState second_color;
 };
 
-inline constexpr std::size_t legacy_guest_raw_packet_words = 6U;
+inline constexpr std::size_t legacy_guest_raw_packet_words = 7U;
 
 [[nodiscard]] constexpr bool
 legacyGuestRawPacketNeedsDrawMode(std::uint8_t opcode) noexcept {
-  return (opcode & 0x02U) != 0U;
+  return (opcode & 0x06U) == 0x02U;
 }
 
 static_assert(legacyGuestRawPacketNeedsDrawMode(0x22U));
@@ -515,6 +515,13 @@ struct LegacyRadarPolygon {
   std::uint8_t vertices{};
   bool translucent{};
 };
+
+// FUN_800549dc emits both F3 and FT3 glass fragments. FT3 carries its own
+// texture page and blend mode in word 4 and its palette in word 2.
+[[nodiscard]] constexpr bool legacyGuestRawPacketIsTexturedTriangle(
+    const LegacyGuestRawPacketBridgeState &packet) noexcept {
+  return packet.word_count == 7U && (packet.opcode & 0xfdU) == 0x24U;
+}
 
 struct LegacyGuestRawPacketAddressRange {
   std::uint32_t begin{};

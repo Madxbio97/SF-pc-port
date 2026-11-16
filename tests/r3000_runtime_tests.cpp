@@ -4302,6 +4302,30 @@ void testLegacyGameplayVmBoundary() {
           bridge->park2_flamethrower_ribbons.empty(),
       "Legacy typed gameplay bridge mismatch");
 
+  const auto before_textured_glass = vm.captureSnapshot();
+  require(vm.runtime().write32(effect_controllers + 0x34U + 0x2cU, 3U) &&
+              vm.runtime().write32(effect_controllers + 0x34U + 0x30U, 1U) &&
+              vm.runtime().write32(guest_raw + 0x08U, 0x07000000U) &&
+              vm.runtime().write32(guest_raw + 0x0cU, 0x263f3f3fU) &&
+              vm.runtime().write32(guest_raw + 0x14U, 0x5ac01020U) &&
+              vm.runtime().write32(guest_raw + 0x1cU, 0x00b02130U) &&
+              vm.runtime().write32(guest_raw + 0x24U, 0x00003240U),
+          "Could not prepare a retail update3/render1 textured glass fragment");
+  const auto glass_bridge = vm.readBridgeState(bridge_profile);
+  require(
+      glass_bridge && glass_bridge->guest_raw_packets.size() == 1U &&
+          sf::game::legacyGuestRawPacketIsTexturedTriangle(
+              glass_bridge->guest_raw_packets[0]) &&
+          glass_bridge->guest_raw_packets[0].words[2] == 0x5ac01020U &&
+          glass_bridge->guest_raw_packets[0].words[4] == 0x00b02130U &&
+          glass_bridge->guest_raw_packets[0].words[6] == 0x00003240U &&
+          glass_bridge->guest_raw_packets[0].effect_world_position_valid &&
+          glass_bridge->guest_raw_packets[0].effect_controller == 1 &&
+          !sf::game::legacyGuestRawPacketNeedsDrawMode(0x26U),
+      "The bridge lost a textured glass fragment's UV, CLUT, blend or depth");
+  require(vm.restoreSnapshot(before_textured_glass),
+          "Could not restore the bridge after the textured glass sample");
+
   require(vm.runtime().write8(bridge_profile.aim_miss, 1U),
           "Could not mark the retail aim ray as missed");
   const auto missed_aim = vm.readBridgeState(bridge_profile);
@@ -7545,6 +7569,42 @@ void testLegacyGameplayVmAgentDamageHook() {
           "The wall guard suppressed an exposed ranged-falloff shot");
   require(vm.runtime().write32(shooter_motion, 100U),
           "Could not restore the covered shooter after ranged falloff");
+
+  constexpr std::uint32_t danger_boundary = 0x8003d6f0U;
+  constexpr std::array danger_words{
+      std::uint32_t{0x8f840a24U},
+      encodeR(16U, 0U, 2U, 0U, 0x21U),
+      encodeR(31U, 0U, 0U, 0U, 0x08U),
+      std::uint32_t{0U},
+  };
+  require(vm.loadOverlay(danger_boundary, instructionBytes(danger_words)) &&
+              vm.runtime().write16(0x8011ba00U, shooter_slot),
+          "Could not prepare the retail danger aggregation boundary");
+  const auto danger_contribution = [&vm, danger_boundary](std::uint32_t index) {
+    auto cpu = vm.runtime().state();
+    cpu.gpr[16U] = 0x1000U; // resolved retail threat
+    cpu.gpr[19U] = index;   // tracked-target list index
+    vm.runtime().restoreCpuState(cpu);
+    return vm.invoke(danger_boundary, {});
+  };
+  const auto covered_danger = danger_contribution(0U);
+  require(covered_danger.completed() && covered_danger.return_value == 0U,
+          "An occluded bullet source still increased the retail danger bar");
+  require(vm.runtime().write32(shooter_motion, 200U),
+          "Could not expose the danger source");
+  const auto visible_danger = danger_contribution(0U);
+  require(visible_danger.completed() && visible_danger.return_value == 0x1000U,
+          "The danger guard removed a visible bullet threat");
+  require(vm.runtime().write32(shooter_motion, 100U) &&
+              vm.runtime().write8(shooter_record + 0x24U, 15U),
+          "Could not prepare a non-ballistic danger source");
+  const auto fire_danger = danger_contribution(0U);
+  const auto invalid_danger = danger_contribution(6U);
+  require(fire_danger.completed() && fire_danger.return_value == 0x1000U &&
+              invalid_danger.completed() &&
+              invalid_danger.return_value == 0x1000U &&
+              vm.runtime().write8(shooter_record + 0x24U, 1U),
+          "The ballistic danger guard changed an unrelated threat");
 
   require(vm.runtime().write32(shooter_motion, 200U),
           "Could not move the shooter into the clear");

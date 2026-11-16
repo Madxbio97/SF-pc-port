@@ -24,8 +24,6 @@ struct MissionSkyboxProfile {
   float horizon_band{0.16F};
   float horizon_strength{0.78F};
   bool replace_retail_scrim{};
-  bool override_boundary_fog{};
-  std::array<std::uint8_t, 3U> boundary_fog_color{};
 };
 
 // Mission indices are zero-based. Connected missions deliberately share one
@@ -84,9 +82,7 @@ inline constexpr std::array<MissionSkyboxProfile, 10U> mission_skybox_profiles{{
      0.80F,
      0.28F,
      1.00F,
-     true,
-     true,
-     {16U, 6U, 7U}},
+     true},
     {12U,
      MissionSkyboxTexture::stronghold_dawn,
      "stronghold_dawn.bmp",
@@ -95,9 +91,7 @@ inline constexpr std::array<MissionSkyboxProfile, 10U> mission_skybox_profiles{{
      0.92F,
      0.26F,
      1.00F,
-     true,
-     true,
-     {20U, 7U, 8U}},
+     true},
     {14U,
      MissionSkyboxTexture::almaty_industrial,
      "almaty_industrial.bmp",

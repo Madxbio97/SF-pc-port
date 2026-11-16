@@ -709,7 +709,9 @@ public:
   void ensure(const game::GameplaySession &gameplay,
               std::span<const game::LegacyGuestSpritePresentationState>
                   retained_sprites = {},
-              std::span<const GlassShardPresentationState> glass_shards = {}) {
+              std::span<const GlassShardPresentationState> glass_shards = {},
+              std::span<const game::LegacyGuestRawPacketPresentationState>
+                  retained_raw_packets = {}) {
     const auto &models = gameplay.models();
     const auto vlf = mission_.archive().file("VLF.RFF");
     const auto object_bank =
@@ -717,9 +719,9 @@ public:
     const auto camera = gameplay.camera();
     const auto guest_sprite_bank =
         static_cast<int>(gameplay.textureBankAt(camera.x, camera.z));
-    const auto requirements_rebuilt =
-        requirementsChanged(gameplay, object_bank, guest_sprite_bank,
-                            retained_sprites, glass_shards);
+    const auto requirements_rebuilt = requirementsChanged(
+        gameplay, object_bank, guest_sprite_bank, retained_sprites,
+        glass_shards, retained_raw_packets);
     if (requirements_rebuilt) {
       admitted_world_lookahead_count_ = 0U;
       required_pages_.fill(unused_bank);
@@ -1064,6 +1066,16 @@ public:
           require_object_geometry(fire->geometry, object_bank);
         }
       }
+      const auto require_raw_packet = [&](const auto &packet, int bank) {
+        if (!game::legacyGuestRawPacketIsTexturedTriangle(packet)) {
+          return;
+        }
+        const auto page = static_cast<std::uint16_t>(packet.words[4] >> 16U);
+        const auto clut = static_cast<std::uint16_t>(packet.words[2] >> 16U);
+        requirement_context = "retail-glass-fragment";
+        require_page(page & 0x1fU, bank);
+        require_clut(clut, page, bank);
+      };
       if (const auto frame = gameplay.legacyPresentationFrame();
           frame && frame->renderer) {
         const auto &scrim_state = frame->renderer->state.scrim;
@@ -1155,6 +1167,9 @@ public:
         for (const auto &entry : retained_sprites) {
           require_guest_sprite(entry.sprite);
         }
+        for (const auto &packet : frame->renderer->state.guest_raw_packets) {
+          require_raw_packet(packet, guest_sprite_bank);
+        }
         for (const auto &shard : glass_shards) {
           const auto source_page =
               static_cast<unsigned int>(shard.texture_page & 0x1fU);
@@ -1162,6 +1177,11 @@ public:
           require_page(source_page, shard.texture_bank);
           require_clut(shard.clut, shard.texture_page, shard.texture_bank);
         }
+      }
+      for (const auto &entry : retained_raw_packets) {
+        require_raw_packet(
+            entry.packet,
+            gameplay.textureBankAt(entry.camera.eye.x, entry.camera.eye.z));
       }
       if (requires_environment_atlas) {
         requirement_context = "retail-weather";
@@ -1926,6 +1946,7 @@ private:
     guest_sprite_effect,
     guest_sprite_state,
     glass_shard_material,
+    guest_raw_material,
     retail_scrim,
     retail_scrim_model,
     retail_scrim_bank,
@@ -2227,7 +2248,9 @@ private:
       int guest_sprite_bank,
       std::span<const game::LegacyGuestSpritePresentationState>
           retained_sprites,
-      std::span<const GlassShardPresentationState> glass_shards) {
+      std::span<const GlassShardPresentationState> glass_shards,
+      std::span<const game::LegacyGuestRawPacketPresentationState>
+          retained_raw_packets) {
     scratch_transient_requirement_inputs_.clear();
     const auto append_transient = [this](RequirementInputKind kind,
                                          std::uintptr_t value) {
@@ -2281,6 +2304,22 @@ private:
     };
     for (const auto &entry : retained_sprites) {
       append_transient_sprite(entry.sprite);
+    }
+    const auto append_raw_material = [&](const auto &packet, int bank,
+                                         const auto &append_key) {
+      if (game::legacyGuestRawPacketIsTexturedTriangle(packet)) {
+        append_key(
+            RequirementInputKind::guest_raw_material,
+            static_cast<std::uintptr_t>(packet.words[4] >> 16U) |
+                (static_cast<std::uintptr_t>(packet.words[2] >> 16U) << 16U) |
+                (static_cast<std::uintptr_t>(bank) << 32U));
+      }
+    };
+    for (const auto &entry : retained_raw_packets) {
+      append_raw_material(
+          entry.packet,
+          gameplay.textureBankAt(entry.camera.eye.x, entry.camera.eye.z),
+          append_transient);
     }
     const auto presentation_sequence = gameplay.legacyPresentationSequence();
     // A legacy presentation sequence is the atomic 20 Hz publication of all
@@ -2360,6 +2399,12 @@ private:
            static_cast<std::uintptr_t>(gameplay.hud().inventory().current()));
     append(RequirementInputKind::dynamic_fire,
            needsDynamicFire(gameplay) ? 1U : 0U);
+    for (const auto &entry : retained_raw_packets) {
+      append_raw_material(
+          entry.packet,
+          gameplay.textureBankAt(entry.camera.eye.x, entry.camera.eye.z),
+          append);
+    }
     if (const auto frame = gameplay.legacyPresentationFrame();
         frame && frame->renderer) {
       const auto &scrim = frame->renderer->state.scrim;
@@ -2406,6 +2451,9 @@ private:
       };
       for (const auto &sprite : frame->renderer->state.guest_sprites) {
         append_guest_sprite(sprite);
+      }
+      for (const auto &packet : frame->renderer->state.guest_raw_packets) {
+        append_raw_material(packet, guest_sprite_bank, append);
       }
       for (const auto &entry : retained_sprites) {
         append_guest_sprite(entry.sprite);

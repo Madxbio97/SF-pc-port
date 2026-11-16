@@ -50,21 +50,6 @@ void testRetailScrimIsReplaced() {
   }
 }
 
-void testStrongholdBoundaryFogMatchesReplacementDome() {
-  for (const auto &profile : sf::platform::mission_skybox_profiles) {
-    const bool stronghold =
-        profile.mission_index == 11U || profile.mission_index == 12U;
-    require(profile.override_boundary_fog == stronghold,
-            "Boundary fog override escaped the stronghold skybox");
-    if (stronghold) {
-      require(profile.boundary_fog_color[0] > profile.boundary_fog_color[1] &&
-                  profile.boundary_fog_color[1] <=
-                      profile.boundary_fog_color[2],
-              "Stronghold boundary fog lost its dark red sky grading");
-    }
-  }
-}
-
 } // namespace
 
 int main() {
@@ -72,7 +57,6 @@ int main() {
     testExactMissionSelection();
     testProfilesAreSafeAndPackaged();
     testRetailScrimIsReplaced();
-    testStrongholdBoundaryFogMatchesReplacementDome();
   } catch (const std::exception &error) {
     std::cerr << "mission skybox policy tests failed: " << error.what() << '\n';
     return 1;

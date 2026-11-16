@@ -114,6 +114,8 @@ struct PrimitiveBuffer {
   StableFrameVector<POLY_F3> guest_raw_flat_triangles{
       "Retail raw flat triangles"};
   StableFrameVector<POLY_F4> guest_raw_flat_quads{"Retail raw flat quads"};
+  StableFrameVector<POLY_FT3> guest_raw_textured_triangles{
+      "Retail textured glass fragments"};
   StableFrameVector<LINE_G2> guest_raw_gouraud_lines{
       "Retail raw Gouraud lines"};
   StableFrameVector<POLY_G3> guest_raw_gouraud_triangles{
@@ -179,6 +181,7 @@ struct PrimitiveBuffer {
     guest_raw_flat_lines.reset();
     guest_raw_flat_triangles.reset();
     guest_raw_flat_quads.reset();
+    guest_raw_textured_triangles.reset();
     guest_raw_gouraud_lines.reset();
     guest_raw_gouraud_triangles.reset();
     guest_raw_modes.reset();
@@ -210,6 +213,7 @@ struct PrimitiveBuffer {
     guest_raw_flat_lines.lockStorage();
     guest_raw_flat_triangles.lockStorage();
     guest_raw_flat_quads.lockStorage();
+    guest_raw_textured_triangles.lockStorage();
     guest_raw_gouraud_lines.lockStorage();
     guest_raw_gouraud_triangles.lockStorage();
     guest_raw_modes.lockStorage();
@@ -233,6 +237,7 @@ struct PrimitiveBuffer {
            guest_raw_flat_lines.storageStable() &&
            guest_raw_flat_triangles.storageStable() &&
            guest_raw_flat_quads.storageStable() &&
+           guest_raw_textured_triangles.storageStable() &&
            guest_raw_gouraud_lines.storageStable() &&
            guest_raw_gouraud_triangles.storageStable() &&
            guest_raw_modes.storageStable();

@@ -444,7 +444,8 @@ SceneViewerResult PsyCrossSceneViewer::run(
     // an empty transient set here and adding retained effects in draw() made
     // optional lookahead admission change between restore and presentation.
     textures.ensure(gameplay, weapon_presentation_edges.sprites(),
-                    glass_shatter.shards());
+                    glass_shatter.shards(),
+                    weapon_presentation_edges.rawPackets());
     effect_textures.restore();
     hud_textures.invalidate();
     police_lightbar_animation.invalidate();
@@ -460,7 +461,8 @@ SceneViewerResult PsyCrossSceneViewer::run(
     // retains a compact exact-key fast path for host-owned sprites and glass,
     // which may still change between two guest publications.
     textures.ensure(gameplay, weapon_presentation_edges.sprites(),
-                    glass_shatter.shards());
+                    glass_shatter.shards(),
+                    weapon_presentation_edges.rawPackets());
     static_cast<void>(police_lightbar_animation.synchronize(
         gameplay, actor_tick, textures, weapon_presentation_edges.sprites()));
     const auto interpolation_amount = std::clamp(
@@ -516,7 +518,6 @@ SceneViewerResult PsyCrossSceneViewer::run(
                                  ? first_person_near_clip_depth
                                  : near_clip_depth;
     const auto &camera = presentation.camera;
-    mission_skybox.applyBoundaryAtmosphere(presentation.environment);
     applyRetailEnvironment(presentation.environment, camera.projection,
                            presentation.retail_environment_active);
     SetGeomScreen(camera.projection);

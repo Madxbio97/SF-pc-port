@@ -1,7 +1,6 @@
 #pragma once
 
 #include "sf/game/chase_camera.hpp"
-#include "sf/game/legacy_bridge_types.hpp"
 
 #include <cstdint>
 
@@ -14,7 +13,7 @@ namespace sf::platform::detail {
 class MissionSkybox final {
 public:
   explicit MissionSkybox(std::uint32_t mission_index,
-                         bool enabled = true) noexcept;
+                         bool enabled = false) noexcept;
   ~MissionSkybox();
 
   MissionSkybox(const MissionSkybox &) = delete;
@@ -22,8 +21,6 @@ public:
 
   [[nodiscard]] bool ready() const noexcept { return texture_ != 0U; }
   [[nodiscard]] bool replacesRetailScrim() const noexcept;
-  void applyBoundaryAtmosphere(
-      game::LegacyEnvironmentBridgeState &environment) const noexcept;
   void draw(const game::CameraState &camera, std::uint8_t horizon_red,
             std::uint8_t horizon_green,
             std::uint8_t horizon_blue) const noexcept;
