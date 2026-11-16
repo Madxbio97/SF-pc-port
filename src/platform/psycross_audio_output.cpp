@@ -595,7 +595,25 @@ void PsyCrossAudioOutput::applyGainStep() {
   requireAl("Cannot update gameplay audio gain");
 }
 
+void PsyCrossAudioOutput::setPaused(bool paused) {
+  if (paused == paused_) {
+    return;
+  }
+  paused_ = paused;
+  ALint state{};
+  alGetSourcei(source_, AL_SOURCE_STATE, &state);
+  if (paused && state == AL_PLAYING) {
+    alSourcePause(source_);
+  } else if (!paused && state == AL_PAUSED) {
+    alSourcePlay(source_);
+  }
+  requireAl("Cannot change gameplay audio pause state");
+}
+
 void PsyCrossAudioOutput::startIfNeeded() {
+  if (paused_) {
+    return;
+  }
   ALint queued{};
   ALint processed{};
   ALint state{AL_STOPPED};

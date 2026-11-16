@@ -878,6 +878,39 @@ struct LegacyHostDamageEvent {
   std::int16_t damage_type{};
 };
 
+using LegacyBallisticVisibility =
+    std::function<bool(const LegacyNativePoint &, const LegacyNativePoint &)>;
+
+[[nodiscard]] constexpr bool
+legacyWeaponUsesBallisticLineOfSight(std::uint8_t weapon) noexcept {
+  switch (weapon) {
+  case 1U:
+  case 2U:
+  case 4U:
+  case 5U:
+  case 6U:
+  case 7U:
+  case 8U:
+  case 9U:
+  case 10U:
+  case 11U:
+  case 12U:
+  case 13U:
+  case 17U:
+  case 22U:
+    return true;
+  default:
+    return false;
+  }
+}
+
+[[nodiscard]] constexpr bool
+legacyBallisticDamageType(std::int16_t damage_type) noexcept {
+  // 0x892 is the weapon collision/hitscan event. 0x0f is the retail direct
+  // ballistic event used by linked sniper targets.
+  return damage_type == 0x0892 || damage_type == 0x000f;
+}
+
 struct LegacyNativeMissionBridgeProfile {
   std::uint32_t player_pointer{0x80116b9cU};
   std::uint32_t object_records_pointer{0x80115cccU};
@@ -1235,6 +1268,10 @@ public:
   void setPark2FlameLineOfSight(std::optional<bool> clear) noexcept {
     park2_flame_line_of_sight_clear_ = clear;
   }
+  void setHostileBallisticLineOfSight(
+      LegacyBallisticVisibility visibility) noexcept {
+    hostile_ballistic_visibility_ = std::move(visibility);
+  }
   [[nodiscard]] std::uint64_t hostAimRayPatchCount() const noexcept {
     return host_aim_ray_patch_count_;
   }
@@ -1247,6 +1284,9 @@ public:
       const LegacyInventoryBridgeState &state,
       const LegacyNativeMissionBridgeProfile &profile =
           syphonFilterUsaV11NativeMissionBridgeProfile()) noexcept;
+  [[nodiscard]] bool
+  startRetailDemo(std::span<const std::byte> recording) noexcept;
+  [[nodiscard]] bool retailDemoActive() const noexcept;
   [[nodiscard]] bool setRetailHardMode(bool enabled) noexcept;
   [[nodiscard]] bool setAgentDifficulty(bool enabled) noexcept;
   [[nodiscard]] bool applyAgentMissionNpcOverrides(
@@ -1450,6 +1490,7 @@ private:
       interrupt_callbacks_{};
   std::optional<LegacyHostAimRay> host_aim_ray_;
   std::optional<bool> park2_flame_line_of_sight_clear_;
+  LegacyBallisticVisibility hostile_ballistic_visibility_;
   std::vector<LegacyWeaponEventBridgeState> weapon_events_;
   LegacyPadMotorState pad_motor_state_;
   std::uint32_t pad_motor_buffer_address_{};

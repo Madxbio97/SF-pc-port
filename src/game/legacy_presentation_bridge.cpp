@@ -40,7 +40,7 @@ legacyRetailDangerPercent(std::span<const LegacyUiThreatCommand> threats,
 
   const auto endpoint =
       retail_bar_maximum - ((safe_q12 * retail_bar_maximum) >> 12U);
-  return static_cast<std::uint8_t>(endpoint * 2U);
+  return endpoint < 3U ? 0U : static_cast<std::uint8_t>(endpoint * 2U);
 }
 
 void LegacyDroppedItemPresentationCache::reconcile(

@@ -299,6 +299,9 @@ public:
   [[nodiscard]] bool applyHostFirstPersonAim(bool active) noexcept;
   [[nodiscard]] bool activateRetailAllWeaponsCheat() noexcept;
   [[nodiscard]] bool setRetailAllWeaponsCheat(bool enabled) noexcept;
+  [[nodiscard]] bool
+  startRetailDemo(std::span<const std::byte> recording) noexcept;
+  [[nodiscard]] bool retailDemoActive() const noexcept;
   [[nodiscard]] bool setRetailHardMode(bool enabled) noexcept;
   [[nodiscard]] bool setAgentDifficulty(bool enabled) noexcept;
   [[nodiscard]] bool agentHeadshotThreatActive() const noexcept;
@@ -318,7 +321,7 @@ public:
   [[nodiscard]] bool captureCheckpoint() noexcept;
   [[nodiscard]] bool restoreCheckpoint() noexcept;
   void reset() noexcept;
-  void advanceHostUpdate() noexcept;
+  void advanceHostUpdate(LegacyBallisticVisibility visibility = {}) noexcept;
   [[nodiscard]] bool
   setRetailAudioVolumes(const LegacyRetailAudioVolumes &volumes) noexcept;
   [[nodiscard]] std::optional<LegacyRetailAudioVolumes>
@@ -346,6 +349,7 @@ private:
 
   struct RuntimeCheckpoint {
     LegacyGameplayVmSnapshot vm;
+    std::shared_ptr<const LegacyPresentationFrame> presentation;
     LegacyHostPadState host_pad;
     std::uint16_t latched_pad_buttons{};
     std::uint64_t guest_frame{};
@@ -389,6 +393,7 @@ private:
   std::shared_ptr<LegacyVirtualCd> virtual_cd_;
   std::unique_ptr<LegacyGameplayVm> vm_;
   std::optional<LegacyGameplayVmSnapshot> initial_snapshot_;
+  std::shared_ptr<const LegacyPresentationFrame> initial_presentation_;
   std::optional<RuntimeCheckpoint> checkpoint_;
   std::shared_ptr<const LegacyPresentationFrame> presentation_frame_;
   LegacyHostPadState host_pad_state_;

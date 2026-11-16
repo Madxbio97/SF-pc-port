@@ -54,6 +54,7 @@ public:
   void flush();
   void update();
   void setGainPercent(std::uint8_t percent);
+  void setPaused(bool paused);
   void logDiagnostics(std::string_view context) const noexcept;
   void reset(std::string_view reason = "explicit") noexcept;
 
@@ -88,6 +89,7 @@ private:
   std::string diagnostic_name_;
   PsyCrossAudioStreamKind stream_kind_{PsyCrossAudioStreamKind::continuous};
   ALuint source_{};
+  bool paused_{};
   ALuint callback_buffer_{};
   LPALBUFFERCALLBACKSOFT buffer_callback_{};
   AudioFrameRing<psx::SpuPcmFrame> stream_frames_{maximum_stream_frames};

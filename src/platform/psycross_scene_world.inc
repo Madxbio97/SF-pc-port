@@ -1141,7 +1141,6 @@ void renderDroppedItemSprites(const HudTextureAtlas &textures,
   const auto projection = static_cast<double>(std::max(camera.projection, 1));
   constexpr auto center_x = static_cast<double>(screen_width) * 0.5;
   constexpr auto center_y = static_cast<double>(screen_height) * 0.5;
-  constexpr double maximum_screen_extent = 34.0;
   constexpr double pickup_center_clearance = 72.0;
   constexpr double fallback_visual_lift = 96.0;
   constexpr std::uint64_t pickup_pulse_half_ticks = 12U;
@@ -1189,11 +1188,6 @@ void renderDroppedItemSprites(const HudTextureAtlas &textures,
         center_x + component(basis[0]) * projection / depth + screen_offset_x;
     const auto projected_y =
         center_y + component(basis[1]) * projection / depth + screen_offset_y;
-    if (projected_x < -64.0 || projected_x > screen_width + 64.0 ||
-        projected_y < -64.0 || projected_y > screen_height + 64.0) {
-      return;
-    }
-
     std::array<int, game::maximum_weapon_icon_layers> widths{};
     std::array<int, game::maximum_weapon_icon_layers> heights{};
     for (std::size_t layer = 0U; layer < layers.size(); ++layer) {
@@ -1231,8 +1225,15 @@ void renderDroppedItemSprites(const HudTextureAtlas &textures,
       authored_world_extent = std::max({width, height, depth_extent, 1.0});
     }
     const auto scale =
-        std::min({projection * authored_world_extent / (depth * source_extent),
-                  maximum_screen_extent / source_extent, 1.0});
+        projection * authored_world_extent / (depth * source_extent);
+    const auto half_width = group_width * scale * 0.5;
+    const auto half_height = maximum_height * scale * 0.5;
+    if (projected_x + half_width < 0.0 ||
+        projected_x - half_width > screen_width ||
+        projected_y + half_height < 0.0 ||
+        projected_y - half_height > screen_height) {
+      return;
+    }
     const auto sort_depth =
         std::clamp(static_cast<int>(std::lround(depth * 0.25)), 1,
                    ordering_table_size - 1);

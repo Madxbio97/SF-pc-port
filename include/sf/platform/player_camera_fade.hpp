@@ -2,6 +2,7 @@
 
 #include "sf/game/chase_camera.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 namespace sf::platform {
@@ -42,7 +43,9 @@ playerCameraVisibility(const game::CameraState &camera, double player_x,
       camera.x, camera.y, camera.z, player_x, torso_y, player_z);
   constexpr auto hidden_distance = 56.0;
   constexpr auto translucent_distance = 300.0;
-  if (camera_distance_squared <= hidden_distance * hidden_distance) {
+  const auto body_y = std::clamp(camera.y, player_y - 350.0, player_y - 80.0);
+  if (squared_distance(camera.x, camera.y, camera.z, player_x, body_y,
+                       player_z) <= hidden_distance * hidden_distance) {
     return PlayerCameraVisibility::hidden;
   }
   if (camera_distance_squared <= translucent_distance * translucent_distance) {

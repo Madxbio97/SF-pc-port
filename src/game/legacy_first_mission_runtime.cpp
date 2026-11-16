@@ -226,6 +226,7 @@ LegacyFirstMissionRuntime::LegacyFirstMissionRuntime(
     }
 
     initial_snapshot_.emplace(std::move(snapshot));
+    initial_presentation_ = presentation_frame_;
     ready_ = true;
     faulted_ = false;
     fault_reason_ = LegacyRuntimeFaultReason::none;
@@ -440,6 +441,16 @@ bool LegacyFirstMissionRuntime::updateAgentPark2BombDetonation() noexcept {
   return vm_->invokeRetailPark2BombFailure().completed();
 }
 
+bool LegacyFirstMissionRuntime::startRetailDemo(
+    std::span<const std::byte> recording) noexcept {
+  return ready_ && !finished_ && !faulted_ && vm_ &&
+         vm_->startRetailDemo(recording);
+}
+
+bool LegacyFirstMissionRuntime::retailDemoActive() const noexcept {
+  return ready_ && !finished_ && !faulted_ && vm_ && vm_->retailDemoActive();
+}
+
 bool LegacyFirstMissionRuntime::setRetailHardMode(bool enabled) noexcept {
   if (!ready_ || finished_ || faulted_ || !vm_) {
     return false;
@@ -597,6 +608,7 @@ bool LegacyFirstMissionRuntime::applyCampaignCarryState(
       // Mission restart must return to the carried chapter state, not to the
       // package's standalone defaults captured before this transaction.
       initial_snapshot_ = std::move(committed);
+      initial_presentation_ = presentation_frame_;
       return true;
     } catch (...) {
       if (!rollback()) {
@@ -704,6 +716,7 @@ bool LegacyFirstMissionRuntime::captureCheckpoint() noexcept {
     }
     checkpoint_.emplace(RuntimeCheckpoint{
         std::move(snapshot),
+        presentation_frame_,
         host_pad_state_,
         latched_pad_buttons_,
         guest_frame_,
@@ -739,6 +752,7 @@ bool LegacyFirstMissionRuntime::restoreCheckpoint() noexcept {
     vm_->setHostAimRay(std::nullopt);
     pending_park2_flame_line_of_sight_clear_.reset();
     vm_->setPark2FlameLineOfSight(std::nullopt);
+    vm_->setHostileBallisticLineOfSight({});
     host_pad_state_ = checkpoint_->host_pad;
     latched_pad_buttons_ = checkpoint_->latched_pad_buttons;
     guest_frame_ = checkpoint_->guest_frame;
@@ -757,6 +771,9 @@ bool LegacyFirstMissionRuntime::restoreCheckpoint() noexcept {
       markFault();
       return false;
     }
+    // A transient renderer read may replay the last coherent presentation.
+    // It must come from the restored timeline, including its intact glass.
+    presentation_frame_ = checkpoint_->presentation;
     // The VM snapshot is authoritative after a failure restart. Re-reading
     // its object graph is essential: replaying the cached checkpoint bridge
     // can carry stale destroyed/dormant presentation bits into the restored
@@ -792,6 +809,7 @@ void LegacyFirstMissionRuntime::reset() noexcept {
     vm_->setHostAimRay(std::nullopt);
     pending_park2_flame_line_of_sight_clear_.reset();
     vm_->setPark2FlameLineOfSight(std::nullopt);
+    vm_->setHostileBallisticLineOfSight({});
     checkpoint_.reset();
     host_pad_state_ = {};
     latched_pad_buttons_ = 0U;
@@ -811,6 +829,7 @@ void LegacyFirstMissionRuntime::reset() noexcept {
       markFault();
       return;
     }
+    presentation_frame_ = initial_presentation_;
     // Rebuild the renderer/UI bridge from the restored VM. Re-publishing the
     // cached startup frame leaves object-lifetime fields detached from the
     // freshly restored object graph; after a later mission restart that can
@@ -831,7 +850,8 @@ void LegacyFirstMissionRuntime::reset() noexcept {
   }
 }
 
-void LegacyFirstMissionRuntime::advanceHostUpdate() noexcept {
+void LegacyFirstMissionRuntime::advanceHostUpdate(
+    LegacyBallisticVisibility visibility) noexcept {
   if (!ready_ || finished_ || !vm_) {
     return;
   }
@@ -898,8 +918,10 @@ void LegacyFirstMissionRuntime::advanceHostUpdate() noexcept {
     // input processing, gameplay, player, animation and mission state.
     vm_->setPark2FlameLineOfSight(
         std::exchange(pending_park2_flame_line_of_sight_clear_, std::nullopt));
+    vm_->setHostileBallisticLineOfSight(std::move(visibility));
     auto frame = vm_->tickRetailOuterFrame();
     vm_->setPark2FlameLineOfSight(std::nullopt);
+    vm_->setHostileBallisticLineOfSight({});
     if (!frame.completed()) {
       recordExecutionFault(frame);
       markFault();
@@ -1014,6 +1036,7 @@ void LegacyFirstMissionRuntime::advanceHostUpdate() noexcept {
     opening_finished_ = opening_finished_ || openingRailFinished(*bridge());
   } catch (...) {
     vm_->setPark2FlameLineOfSight(std::nullopt);
+    vm_->setHostileBallisticLineOfSight({});
     markFault();
   }
 }

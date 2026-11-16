@@ -20,6 +20,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
         mission, difficulty_ == game::CampaignDifficulty::agent);
   }
   auto &gameplay = *preloaded_gameplay;
+  const bool demo = gameplay.retailDemoActive();
   // The retail terminal transition can retire the live mission/inventory
   // tables on the same 20 Hz tick that requests EOL. Retain the newest valid
   // carry snapshot while those tables are still coherent so campaign flow
@@ -149,6 +150,9 @@ SceneViewerResult PsyCrossSceneViewer::run(
   int pause_analog_x = 0;
   int pause_analog_y = 0;
   double dpad_down_held_seconds = 0.0;
+  double sound_hold_seconds = 0.0;
+  double sound_next_repeat = 0.0;
+  int sound_hold_direction = 0;
   double simulation_accumulator_seconds = 0.0;
   double audio_accumulator_seconds = 0.0;
   double presentation_delta_seconds = 0.0;
@@ -353,6 +357,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
   game::PauseMenu pause_menu;
   std::optional<game::RetailCheat> latched_pause_cheat;
   std::uint64_t pause_animation_tick = 0U;
+  std::uint64_t pause_text_started_ms{};
   const auto set_retail_cheat = [&](game::RetailCheat cheat, bool enabled) {
     auto accepted = false;
     switch (cheat) {
@@ -1136,9 +1141,11 @@ SceneViewerResult PsyCrossSceneViewer::run(
         std::clamp(raw_elapsed_seconds, 0.0, maximum_frame_time_seconds);
     presentation_delta_seconds = elapsed_seconds;
     volumetric_effect_time_seconds += elapsed_seconds;
-    audio_accumulator_seconds =
-        std::min(audio_accumulator_seconds + elapsed_seconds,
-                 retail_audio_step_seconds * maximum_audio_backlog_updates);
+    if (!paused) {
+      audio_accumulator_seconds =
+          std::min(audio_accumulator_seconds + elapsed_seconds,
+                   retail_audio_step_seconds * maximum_audio_backlog_updates);
+    }
     if (periodic_audio_diagnostics && performance_frequency != 0U &&
         current_frame_counter >= next_audio_diagnostic_counter) {
       log_audio_diagnostics("periodic");
@@ -1263,6 +1270,10 @@ SceneViewerResult PsyCrossSceneViewer::run(
                                     ~previous_mouse_buttons) != 0U;
     const auto controller_input_activity =
         controller_pressed != 0U || controller_analog_activity;
+    if (demo &&
+        (held != 0U || controller_input_activity || pc_input_activity)) {
+      return SceneViewerResult{buttons, SceneExitReason::return_to_title};
+    }
     if (controller_snapshot.connected == 0U) {
       active_prompt_bindings = keyboardMouseInputPromptBindings(input_);
     } else if (pc_input_activity) {
@@ -1276,10 +1287,19 @@ SceneViewerResult PsyCrossSceneViewer::run(
     // PADRAW merges PsyCross keyboard mappings with the physical controller.
     // Menus intentionally use that raw state, while gameplay keeps the PC and
     // controller paths disjoint so one key cannot trigger both mappings.
+    const auto action_button =
+        [&pause_settings](game::ControllerAction action) {
+          return static_cast<std::uint16_t>(
+              game::controllerButtonForAction(pause_settings, action));
+        };
+    const auto aim_button = action_button(game::ControllerAction::aim);
+    const auto pad_aiming = (controller_held & aim_button) != 0U;
     const auto digital_forward = (controller_held & up_button) != 0U;
     const auto physical_dpad_down = (controller_held & down_button) != 0U;
     auto quick_turn_pulse = false;
-    if (physical_dpad_down) {
+    if (pad_aiming) {
+      dpad_down_held_seconds = 0.0;
+    } else if (physical_dpad_down) {
       dpad_down_held_seconds =
           std::min(dpad_down_held_seconds + elapsed_seconds,
                    quick_turn_tap_seconds + maximum_frame_time_seconds);
@@ -1301,12 +1321,14 @@ SceneViewerResult PsyCrossSceneViewer::run(
         static_cast<int>(controller_sticks.camera_horizontal) - 128, 0);
     raw_player_input.controller.right_y = -normalizedAnalogAxis(
         static_cast<int>(controller_sticks.camera_vertical) - 128, 0);
-    const auto action_button =
-        [&pause_settings](game::ControllerAction action) {
-          return static_cast<std::uint16_t>(
-              game::controllerButtonForAction(pause_settings, action));
-        };
-    const auto aim_button = action_button(game::ControllerAction::aim);
+    if (pad_aiming) {
+      if (digital_left != digital_right) {
+        raw_player_input.controller.right_x = digital_right ? 1.0 : -1.0;
+      }
+      if (digital_forward != physical_dpad_down) {
+        raw_player_input.controller.right_y = digital_forward ? 1.0 : -1.0;
+      }
+    }
     const auto fire_button = action_button(game::ControllerAction::shoot);
     const auto roll_button =
         action_button(game::ControllerAction::roll_zoom_out);
@@ -1397,17 +1419,16 @@ SceneViewerResult PsyCrossSceneViewer::run(
           controllerButtonLabels(controller_snapshot));
       stop_controller_rumble();
       paused = true;
-      // Preserve the guest SPU/XA clock and queued PCM, but fade every host
-      // output to silence while the ACD is open. Restoring the gain on exit
-      // resumes music and ambient sound at the exact sample position.
-      gameplay_audio->setGainPercent(0U);
+      gameplay_audio->setPaused(true);
       ui_audio.setVolumePercent(pause_settings.sound_effects_volume);
       binding_capture = false;
       pause_analog_x = current_pause_x;
       pause_analog_y = current_pause_y;
       pause_animation_tick = 0U;
+      pause_text_started_ms = SDL_GetTicks64();
+      sound_hold_direction = 0;
       static_cast<void>(drawPauseMenu(pause_menu, pause_textures, hud_textures,
-                                      pause_animation_tick++,
+                                      pause_animation_tick++, 1U,
                                       active_prompt_bindings));
       end_presented_frame();
       continue;
@@ -1417,13 +1438,6 @@ SceneViewerResult PsyCrossSceneViewer::run(
       if (controller_snapshot.connected != 0U) {
         pause_menu.setControllerButtonLabels(
             controllerButtonLabels(controller_snapshot));
-      }
-      // Mission simulation stops in the ACD, while the 120 Hz SPU/CD stream
-      // continues uninterrupted at its original sample rate.
-      if (!service_realtime_audio()) {
-        PsyX_Log_Error("Paused retail audio clock failed\n");
-        return SceneViewerResult{previous_buttons,
-                                 SceneExitReason::return_to_title};
       }
       player_input.synchronize(raw_player_input);
       auto analog_left_edge = false;
@@ -1466,6 +1480,32 @@ SceneViewerResult PsyCrossSceneViewer::run(
               controller_pause_pressed ||
               (pause_pressed && pause_menu.screen() == game::PauseScreen::root),
       };
+
+      // MENU.OVL starts repeating a sound slider every second 20 Hz tick,
+      // then every tick after five repeats. Wall time keeps it
+      // refresh-independent.
+      const auto sound_left = (held & left_button) != 0 || current_pause_x < 0;
+      const auto sound_right =
+          (held & right_button) != 0 || current_pause_x > 0;
+      const auto sound_direction =
+          acd_navigation_ready &&
+                  pause_menu.screen() == game::PauseScreen::sound
+              ? static_cast<int>(sound_right) - static_cast<int>(sound_left)
+              : 0;
+      if (sound_direction != sound_hold_direction || sound_direction == 0 ||
+          pause_input.next || pause_input.previous) {
+        sound_hold_seconds = 0.0;
+        sound_next_repeat = 2.0 * retail_simulation_step_seconds;
+        sound_hold_direction = sound_direction;
+      } else {
+        sound_hold_seconds += elapsed_seconds;
+        if (sound_hold_seconds >= sound_next_repeat) {
+          pause_input.left = sound_direction < 0;
+          pause_input.right = sound_direction > 0;
+          sound_next_repeat += (sound_hold_seconds < 0.5 ? 2.0 : 1.0) *
+                               retail_simulation_step_seconds;
+        }
+      }
 
       const auto cheat_context = [&] {
         if (pause_menu.screen() == game::PauseScreen::root) {
@@ -1586,7 +1626,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
         pause_settings = pause_menu.settings();
         ui_audio.reset();
         paused = false;
-        gameplay_audio->setGainPercent(100U);
+        gameplay_audio->setPaused(false);
         if (!apply_pause_settings(pause_settings)) {
           return SceneViewerResult{previous_buttons,
                                    SceneExitReason::return_to_title};
@@ -1594,8 +1634,6 @@ SceneViewerResult PsyCrossSceneViewer::run(
         commit_controller_settings();
         player_input.synchronize(raw_player_input);
         clear_latched_gameplay_input();
-        movement_armed = false;
-        neutral_movement_seconds = 0.0;
         restore_gameplay_textures();
         continue;
       case game::PauseCommandType::equip_weapon:
@@ -1685,7 +1723,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
         ui_audio.reset();
         stop_controller_rumble();
         paused = false;
-        gameplay_audio->setGainPercent(100U);
+        gameplay_audio->setPaused(false);
         if (!apply_pause_settings(pause_settings)) {
           return SceneViewerResult{previous_buttons,
                                    SceneExitReason::return_to_title};
@@ -1715,7 +1753,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
         ui_audio.reset();
         stop_controller_rumble();
         paused = false;
-        gameplay_audio->setGainPercent(100U);
+        gameplay_audio->setPaused(false);
         if (!apply_pause_settings(pause_settings)) {
           return SceneViewerResult{previous_buttons,
                                    SceneExitReason::return_to_title};
@@ -1750,8 +1788,16 @@ SceneViewerResult PsyCrossSceneViewer::run(
                                  SceneExitReason::return_to_title};
       }
 
+      if (pause_menu.screen() != previous_pause_screen ||
+          pause_menu.page() != previous_pause_page ||
+          pause_menu.expanded() != previous_pause_expanded ||
+          pause_menu.selection() != previous_pause_selection) {
+        pause_text_started_ms = SDL_GetTicks64();
+      }
+      const auto visible_glyphs = static_cast<std::size_t>(
+          1U + (SDL_GetTicks64() - pause_text_started_ms) / 16U);
       static_cast<void>(drawPauseMenu(pause_menu, pause_textures, hud_textures,
-                                      pause_animation_tick++,
+                                      pause_animation_tick++, visible_glyphs,
                                       active_prompt_bindings));
       end_presented_frame();
       continue;
@@ -1864,7 +1910,11 @@ SceneViewerResult PsyCrossSceneViewer::run(
       display_player_look.reset();
       std::swap(previous_render_presentation, current_render_presentation);
       previous_weapon_switch_countdown = current_weapon_switch_countdown;
-      gameplay.update(simulation_input);
+      gameplay.update(demo ? game::GameplayInput{} : simulation_input);
+      if (demo && (!gameplay.retailDemoActive() ||
+                   gameplay.failureRestartRequested())) {
+        return SceneViewerResult{buttons, SceneExitReason::return_to_title};
+      }
       synchronize_controller_rumble();
       current_weapon_switch_countdown = gameplay.hud().weaponSwitchFrames();
       if (auto carry = gameplay.campaignCarryState()) {
@@ -2067,7 +2117,9 @@ SceneViewerResult PsyCrossSceneViewer::run(
       GR_EnableDepth(0);
       GR_SetDepthState(0, 0);
       const auto scripted_movies = mission.scriptedMovies();
-      if (*scripted_movie_index >= scripted_movies.size()) {
+      const auto movie_index =
+          scripted_movies.size() == 1U ? 0U : *scripted_movie_index;
+      if (movie_index >= scripted_movies.size()) {
         PsyX_Log_Error(
             "Retail state-9 movie handoff has no matching mission STR\n");
         return SceneViewerResult{previous_buttons,
@@ -2075,7 +2127,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
       }
       stop_controller_rumble();
       previous_buttons = movie_player.playStandalone(
-          scripted_movies[*scripted_movie_index], pad, previous_buttons);
+          scripted_movies[movie_index], pad, previous_buttons);
       previous_frame_counter = SDL_GetPerformanceCounter();
       presentation_frame_meter.reset();
       GR_EnableDepth(1);

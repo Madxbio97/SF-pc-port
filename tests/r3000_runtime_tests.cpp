@@ -1685,6 +1685,24 @@ void testLegacyGameplayVmBoundary() {
   std::ranges::copy(initial_code, executable_bytes.begin() + 2048);
 
   const auto executable = sf::psx::Executable::parse(executable_bytes);
+  {
+    sf::game::LegacyGameplayVm demo{executable};
+    std::array<std::byte, 12> recording{};
+    require(!demo.startRetailDemo(recording) && !demo.retailDemoActive(),
+            "Demo reader accepted a recording without a terminator");
+    recording[2] = std::byte{0x7f};
+    recording[5] = std::byte{0x10};
+    recording[10] = recording[11] = std::byte{0xff};
+    std::uint32_t buffer{}, cursor{};
+    std::array<std::byte, 12> loaded{};
+    require(demo.startRetailDemo(recording) && demo.retailDemoActive() &&
+                demo.runtime().read32(0x801169c4U, buffer) &&
+                demo.runtime().read32(0x80115eb4U, cursor) &&
+                cursor == 0xffffffffU &&
+                demo.runtime().copyBytes(buffer, loaded) && loaded == recording,
+            "Retail demo reader lost signed axes, button bytes or its initial "
+            "cursor");
+  }
   sf::game::LegacyGameplayVm vm{executable};
   constexpr std::uint32_t overlay_address = 0x80020000U;
   constexpr std::array overlay_words{
@@ -4038,6 +4056,43 @@ void testLegacyGameplayVmBoundary() {
           vm.runtime().write32(player_wound_records + 0x10U,
                                wound_hmd_payload + 0xa0U),
       "Could not seed exact retail HMD wound tables");
+  // FUN_8003d100 links one F4 per visible contact. The opcode determines
+  // whether the danger bar flashes even while its endpoints are still moving.
+  constexpr std::uint32_t contact = 0x8011b904U;
+  const auto xy = [](int x, int y) {
+    return (static_cast<std::uint32_t>(static_cast<std::uint16_t>(y)) << 16U) |
+           static_cast<std::uint16_t>(x);
+  };
+  require(vm.runtime().write32(bridge_profile.interface_renderer_pointer,
+                               camera_object) &&
+              vm.runtime().write32(contact, 1U) &&
+              vm.runtime().write32(contact + 8U, 0x05000000U) &&
+              vm.runtime().write32(contact + 12U, 0x28ff3020U) &&
+              vm.runtime().write32(contact + 16U, xy(-154, 79)) &&
+              vm.runtime().write32(contact + 20U, xy(-152, 79)) &&
+              vm.runtime().write32(contact + 24U, xy(-154, 81)) &&
+              vm.runtime().write32(contact + 28U, xy(-152, 81)) &&
+              vm.runtime().write32(0x8011b518U, 0x28000080U) &&
+              vm.runtime().write16(0x8011b51cU, 10U) &&
+              vm.runtime().write16(0x8011b520U, 30U),
+          "Could not seed retail radar contact and danger bar");
+  const auto radar = vm.readBridgeState(bridge_profile);
+  require(radar && radar->radar_polygons.size() == 1U &&
+              radar->radar_polygons.front().vertices == 4U &&
+              radar->radar_polygons.front().colors[0] ==
+                  sf::game::LegacyRgbBridgeState{32U, 48U, 255U} &&
+              radar->radar_danger_percent == 40U &&
+              radar->radar_danger_critical,
+          "Retail radar lost the contact colour or the growing critical bar");
+  require(vm.runtime().write32(contact, 0U) &&
+              vm.runtime().write32(0x8011b518U, 0x2a000080U),
+          "Could not unlink radar contact");
+  const auto cleared_radar = vm.readBridgeState(bridge_profile);
+  require(cleared_radar && cleared_radar->radar_polygons.empty() &&
+              !cleared_radar->radar_danger_critical,
+          "Unlinked radar contact or critical flash survived the next frame");
+  require(vm.runtime().write32(bridge_profile.interface_renderer_pointer, 0U),
+          "Could not release radar fixture");
   const auto bridge = vm.readBridgeState(bridge_profile);
   require(
       bridge && bridge->camera.eye.x == 100 && bridge->camera.eye.y == -200 &&
@@ -6117,12 +6172,9 @@ void testLegacyGameplayVmBoundary() {
   constexpr std::uint32_t retail_pad_motor_enabled = 0x8011688cU;
   std::uint8_t vibration_enabled{};
   require(vm.setRetailVibrationEnabled(true) &&
-              vm.runtime().read8(retail_pad_motor_enabled,
-                                 vibration_enabled) &&
-              vibration_enabled == 1U &&
-              vm.setRetailVibrationEnabled(false) &&
-              vm.runtime().read8(retail_pad_motor_enabled,
-                                 vibration_enabled) &&
+              vm.runtime().read8(retail_pad_motor_enabled, vibration_enabled) &&
+              vibration_enabled == 1U && vm.setRetailVibrationEnabled(false) &&
+              vm.runtime().read8(retail_pad_motor_enabled, vibration_enabled) &&
               vibration_enabled == 0U &&
               vm.padMotorState() == sf::game::LegacyPadMotorState{},
           "Host vibration setting did not synchronize the retail enable flag");
@@ -6157,8 +6209,7 @@ void testLegacyGameplayVmBoundary() {
   const auto sampled_pad_motors = vm.invoke(vsync_entry, vsync_arguments);
   require(
       sampled_pad_motors.completed() && sampled_pad_motors.host_calls == 1U &&
-          vm.padMotorState() ==
-              sf::game::LegacyPadMotorState{0x00U, 0x40U, 2U},
+          vm.padMotorState() == sf::game::LegacyPadMotorState{0x00U, 0x40U, 2U},
       "VSync did not resample changed motors from the registered PadSetAct "
       "table");
   const auto unchanged_pad_motors = vm.invoke(vsync_entry, vsync_arguments);
@@ -6204,8 +6255,7 @@ void testLegacyGameplayVmBoundary() {
   constexpr std::uint32_t retail_pad_motor_table = 0x80116888U;
   constexpr std::array bootstrap_pad_motors{std::byte{0x01}, std::byte{0x80}};
   vm.bindSyphonFilterUsaV11BootstrapPlatformCalls();
-  require(vm.runtime().loadBytes(retail_pad_motor_table,
-                                 bootstrap_pad_motors),
+  require(vm.runtime().loadBytes(retail_pad_motor_table, bootstrap_pad_motors),
           "Could not seed the bootstrap actuator table");
   const auto bootstrap_pad_sample = vm.invoke(vsync_entry, vsync_arguments);
   require(bootstrap_pad_sample.completed() &&
@@ -7270,6 +7320,71 @@ void testLegacyGameplayVmAgentDamageHook() {
   require(disabled.completed() && disabled.return_value == 5U &&
               disabled.host_calls == 1U,
           "Disabled Agent hook did not pass through retail damage");
+
+  constexpr std::int16_t ballistic_los_damage_type = 0x0892;
+  constexpr std::uint32_t shooter_motion = 0x801fd800U;
+  constexpr std::uint32_t player_motion = 0x801fd900U;
+  require(vm.runtime().write32(shooter_instance + 0x0cU, shooter_motion) &&
+              vm.runtime().write32(player + 0x0cU, player_motion) &&
+              vm.runtime().write32(shooter_motion, 100U) &&
+              vm.runtime().write32(player_motion + 4U, 400U),
+          "Could not prepare live ballistic positions");
+  vm.setHostileBallisticLineOfSight([](const auto &from, const auto &to) {
+    return from.x != 100 || to.y != -400;
+  });
+  const auto blocked_hit = damage(player_slot, 5, shooter_slot, shooter_slot,
+                                  ballistic_los_damage_type);
+  require(blocked_hit.completed() && blocked_hit.return_value == 0U &&
+              blocked_hit.host_calls == 1U,
+          "A wall-blocked retail ballistic hit reached Gabe on normal "
+          "difficulty");
+  const auto blocked_linked_hit = damage(
+      player_slot, 5, source_slot, shooter_slot, ballistic_los_damage_type);
+  require(blocked_linked_hit.completed() &&
+              blocked_linked_hit.return_value == 0U,
+          "A linked projectile bypassed its shooter's blocked line of sight");
+
+  require(vm.runtime().write32(shooter_motion, 200U),
+          "Could not move the shooter into the clear");
+  const auto clear_hit = damage(player_slot, 5, shooter_slot, shooter_slot,
+                                ballistic_los_damage_type);
+  require(clear_hit.completed() && clear_hit.return_value == 5U,
+          "A clear retail ballistic hit was suppressed");
+
+  require(
+      vm.runtime().write32(shooter_record + 0x34U, recycled_shooter_instance),
+      "Could not recycle the shooter slot");
+  const auto recycled_hit = damage(player_slot, 5, shooter_slot, shooter_slot,
+                                   ballistic_los_damage_type);
+  require(recycled_hit.completed() && recycled_hit.return_value == 5U,
+          "A recycled guest slot inherited the previous actor's blocked "
+          "line of sight");
+
+  require(vm.runtime().write32(shooter_record + 0x34U, shooter_instance) &&
+              vm.runtime().write32(shooter_motion, 100U),
+          "Could not restore the obstructed shooter");
+  const auto scripted_damage = damage(player_slot, 5, -1, shooter_slot, 0xf);
+  require(
+      scripted_damage.completed() && scripted_damage.return_value == 5U,
+      "A scripted damage event inherited the owner's ballistic obstruction");
+  const auto non_ballistic_event =
+      damage(player_slot, 5, shooter_slot, shooter_slot, 3);
+  require(non_ballistic_event.completed() &&
+              non_ballistic_event.return_value == 5U,
+          "The ballistic LOS guard suppressed an unrelated damage event");
+  const auto enemy_target =
+      damage(6, 5, shooter_slot, shooter_slot, ballistic_los_damage_type);
+  require(enemy_target.completed() && enemy_target.return_value == 5U,
+          "The player-only LOS guard changed NPC damage");
+  require(vm.runtime().write8(shooter_record + 0x24U, 15U),
+          "Could not prepare the non-ballistic weapon fixture");
+  const auto fire_event = damage(player_slot, 5, shooter_slot, shooter_slot,
+                                 ballistic_los_damage_type);
+  require(fire_event.completed() && fire_event.return_value == 5U &&
+              vm.runtime().write8(shooter_record + 0x24U, 1U),
+          "The ballistic LOS guard suppressed a non-ballistic weapon event");
+  vm.setHostileBallisticLineOfSight({});
+
   require(vm.setAgentDifficulty(true),
           "Could not enable Agent difficulty in the VM");
 

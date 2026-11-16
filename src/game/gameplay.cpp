@@ -755,8 +755,7 @@ rayBoundsIntersection(const ActorAimRay &ray,
       return std::nullopt;
     }
   }
-  return entry > 0.0 && entry <= maximum_distance ? std::optional<double>{entry}
-                                                  : std::nullopt;
+  return entry;
 }
 
 std::optional<std::int32_t>
@@ -1516,6 +1515,16 @@ bool GameplaySession::setRetailAllWeaponsCheat(bool enabled) noexcept {
   }
   return legacy_first_mission_ &&
          legacy_first_mission_->setRetailAllWeaponsCheat(false);
+}
+
+bool GameplaySession::startRetailDemo(
+    std::span<const std::byte> recording) noexcept {
+  return legacy_first_mission_ &&
+         legacy_first_mission_->startRetailDemo(recording);
+}
+
+bool GameplaySession::retailDemoActive() const noexcept {
+  return legacy_first_mission_ && legacy_first_mission_->retailDemoActive();
 }
 
 bool GameplaySession::setRetailHardMode(bool enabled) noexcept {
@@ -2552,13 +2561,19 @@ void GameplaySession::advanceAnimationClock() noexcept {
   }
 }
 
-double GameplaySession::traceWorldSegment(double from_x, double from_y,
-                                          double from_z, double to_x,
-                                          double to_y,
-                                          double to_z) const noexcept {
+double
+GameplaySession::traceWorldSegment(double from_x, double from_y, double from_z,
+                                   double to_x, double to_y, double to_z,
+                                   bool include_solid_objects) const noexcept {
   const Point3 from{from_x, from_y, from_z};
   const Point3 to{to_x, to_y, to_z};
   auto nearest = 1.0;
+  const auto consider = [&](const Point3 &a, const Point3 &b, const Point3 &c) {
+    const auto hit = segmentTriangleIntersection(from, to, a, b, c);
+    if (hit && *hit < nearest) {
+      nearest = *hit;
+    }
+  };
   for (const auto model_index : active_models_) {
     const auto &model = models_[model_index];
     if (!segmentOverlapsBounds(from, to, model.bounds)) {
@@ -2572,18 +2587,43 @@ double GameplaySession::traceWorldSegment(double from_x, double from_y,
         const auto first = point(section.vertices[polygon.vertex_indices[0]]);
         const auto second = point(section.vertices[polygon.vertex_indices[1]]);
         const auto third = point(section.vertices[polygon.vertex_indices[2]]);
-        const auto consider = [&](const Point3 &a, const Point3 &b,
-                                  const Point3 &c) {
-          const auto hit = segmentTriangleIntersection(from, to, a, b, c);
-          if (hit && *hit < nearest) {
-            nearest = *hit;
-          }
-        };
         consider(first, second, third);
         if (polygon.quad) {
           const auto fourth =
               point(section.vertices[polygon.vertex_indices[3]]);
           consider(second, fourth, third);
+        }
+      }
+    }
+  }
+  if (include_solid_objects) {
+    const ActorAimRay ray{from.x,        from.y,        from.z,
+                          to.x - from.x, to.y - from.y, to.z - from.z};
+    const auto length =
+        std::hypot(ray.direction_x, ray.direction_y, ray.direction_z);
+    for (const auto index : active_objects_) {
+      if (index >= objects_.size() || object_script_hidden_[index]) {
+        continue;
+      }
+      const auto &object = objects_[index];
+      if (!solidMissionObject(object.class_id) ||
+          (objectDestroyed(index) && object.class_id != 0x2cU)) {
+        continue;
+      }
+      const auto *model = displayedObjectModel(index);
+      if (!model || !model->bounds ||
+          !rayBoundsIntersection(ray, *model->bounds, object.transform,
+                                 nearest * length)) {
+        continue;
+      }
+      if (const auto *mesh = std::get_if<assets::GmdModel>(&model->geometry)) {
+        const auto vertex = [&](std::uint8_t i) {
+          const auto &v = mesh->vertices()[i];
+          return transformObjectPoint(v.x, v.y, v.z, object.transform);
+        };
+        for (const auto &triangle : mesh->triangles()) {
+          const auto &indices = triangle.vertex_indices;
+          consider(vertex(indices[0]), vertex(indices[1]), vertex(indices[2]));
         }
       }
     }
@@ -2671,11 +2711,42 @@ GameplaySession::park2GirdeuxFlameLineOfSight() const noexcept {
     std::array<bool, legacy_park2_flame_visibility_sample_count> visible{};
     std::ranges::transform(targets, visible.begin(), [&](const Point3 &sample) {
       return traceWorldSegment(origin_x, origin_y, origin_z, sample.x, sample.y,
-                               sample.z) >= target_visibility_limit;
+                               sample.z, true) >= 1.0;
     });
     return legacyPark2FlameDamageVisible(visible);
   }
   return std::nullopt;
+}
+
+bool GameplaySession::hostileBallisticLineOfSight(
+    const LegacyNativePoint &shooter,
+    const LegacyNativePoint &target) const noexcept {
+  const Point3 origin{static_cast<double>(shooter.x), shooter.y - 225.0,
+                      static_cast<double>(shooter.z)};
+  const auto dx = static_cast<double>(target.x) - shooter.x;
+  const auto dz = static_cast<double>(target.z) - shooter.z;
+  const auto length = std::hypot(dx, dz);
+  const auto side_x =
+      length > 0.0 ? -dz * player_radius / length : player_radius;
+  const auto side_z = length > 0.0 ? dx * player_radius / length : 0.0;
+  const auto x = static_cast<double>(target.x);
+  const auto z = static_cast<double>(target.z);
+  const auto crouched =
+      player_controller_.stance() == PlayerStanceState::kneeling;
+  const auto height = crouched ? actor_target_height : actor_head_height;
+  const std::array points{
+      Point3{x, target.y - height, z}, Point3{x, target.y - height * 0.75, z},
+      Point3{x, target.y - height * 0.5, z},
+      Point3{x + side_x, target.y - height * 0.75, z + side_z},
+      Point3{x - side_x, target.y - height * 0.75, z - side_z}};
+  return std::ranges::any_of(points, [&](const Point3 &to) {
+    if (traceWorldSegment(origin.x, origin.y, origin.z, to.x, to.y, to.z,
+                          true) < 1.0) {
+      return false;
+    }
+    return (to.x == x && to.z == z) ||
+           traceWorldSegment(x, to.y, z, to.x, to.y, to.z, true) >= 1.0;
+  });
 }
 
 std::optional<double>
@@ -3599,7 +3670,15 @@ void GameplaySession::updateNpcs(bool player_fired,
       }
     }
 
-    if (decision.fire && visible && has_target) {
+    // updateNpcBrain may move the shooter before its fire edge. The old
+    // pre-decision visibility sample therefore cannot authorize damage from
+    // the new position (for example after stepping behind a wall).
+    const auto fire_visible =
+        decision.fire && has_target &&
+        traceWorldSegment(state.x, state.y - actor_target_height, state.z,
+                          target_x, target_y - actor_target_height,
+                          target_z) >= target_visibility_limit;
+    if (fire_visible) {
       const auto &weapon = weaponCombatDefinition(state.weapon);
       const auto muzzle_forward = headingDirection(state.yaw);
       if (weapon.fire_mode != WeaponFireMode::thrown &&
@@ -5958,8 +6037,12 @@ void GameplaySession::syncLegacyUiProjection(
   // not gate it through the native scene/NPC mirrors: streaming and scripted
   // actors make those mirrors intentionally incomplete on several missions.
   const auto danger =
-      legacyRetailDangerPercent(ui.threats, mission.player_slot);
-  hud_.setDanger(danger, danger == 100U);
+      bridge.radar_danger_percent
+          ? *bridge.radar_danger_percent
+          : legacyRetailDangerPercent(ui.threats, mission.player_slot);
+  hud_.setDanger(danger, bridge.radar_danger_percent
+                             ? bridge.radar_danger_critical
+                             : danger == 100U);
 }
 
 bool GameplaySession::queueLegacyDamage(std::uint16_t scene_object,
@@ -6363,7 +6446,11 @@ void GameplaySession::update(const GameplayInput &input) {
   if (legacy_first_mission_->ready() && !legacy_first_mission_->finished()) {
     legacy_first_mission_->setPark2FlameLineOfSight(
         park2GirdeuxFlameLineOfSight());
-    legacy_first_mission_->advanceHostUpdate();
+    legacy_first_mission_->advanceHostUpdate(
+        [this](const LegacyNativePoint &shooter,
+               const LegacyNativePoint &target) {
+          return hostileBallisticLineOfSight(shooter, target);
+        });
     syncLegacyGameplayBridge();
     refreshLegacyTargetFollowCameraState();
     refreshLegacyRadioConversationState();
@@ -6794,7 +6881,7 @@ CameraState GameplaySession::camera() const noexcept {
       if (eye_distance > 0.0001) {
         const auto hit =
             traceWorldSegment(eye_anchor.x, eye_anchor.y, eye_anchor.z,
-                              native.x, native.y, native.z);
+                              native.x, native.y, native.z, true);
         if (hit < 1.0) {
           const auto distance = std::clamp(
               hit * eye_distance - camera_wall_clearance, 0.0, eye_distance);
@@ -6826,7 +6913,7 @@ CameraState GameplaySession::camera() const noexcept {
         const auto guard_z =
             native.z + direction_z * first_person_camera_near_clearance;
         const auto hit = traceWorldSegment(native.x, native.y, native.z,
-                                           guard_x, guard_y, guard_z);
+                                           guard_x, guard_y, guard_z, true);
         if (hit < 1.0) {
           const auto retreat =
               first_person_camera_near_clearance * (1.0 - hit) + 2.0;

@@ -194,9 +194,8 @@ legacyWeaponCratePresentation(std::uint32_t class_id,
 // their definition template's source index.
 [[nodiscard]] constexpr bool legacyAuthoredObjectPresentationHidden(
     std::uint32_t mission_index, std::int32_t guest_slot,
-    std::uint16_t source_index,
-    std::optional<std::uint32_t> definition_index, std::uint32_t class_id,
-    std::string_view model_name) noexcept {
+    std::uint16_t source_index, std::optional<std::uint32_t> definition_index,
+    std::uint32_t class_id, std::string_view model_name) noexcept {
   return mission_index == 1U && guest_slot == 279 && source_index == 279U &&
          definition_index == 20U && class_id == 0x57U &&
          (model_name == "TNTCRATE.GMD" || model_name == "TNTCRATX.GMD");
@@ -643,13 +642,15 @@ legacySmokeVolumeModel(std::string_view resource_name) noexcept {
   return resource_name == "SMOKE.GMD";
 }
 
-[[nodiscard]] constexpr bool legacyFireVolumeModel(
-    std::uint32_t class_id, std::string_view model_stem) noexcept {
+[[nodiscard]] constexpr bool
+legacyFireVolumeModel(std::uint32_t class_id,
+                      std::string_view model_stem) noexcept {
   return class_id == 0x5aU && model_stem == "FIRE";
 }
 
-[[nodiscard]] constexpr bool legacyFogVolumeModel(
-    std::uint32_t class_id, std::string_view model_stem) noexcept {
+[[nodiscard]] constexpr bool
+legacyFogVolumeModel(std::uint32_t class_id,
+                     std::string_view model_stem) noexcept {
   return class_id == 0x53U && model_stem == "VAPOR";
 }
 
@@ -1004,6 +1005,9 @@ public:
   [[nodiscard]] bool restartCheckpoint();
   [[nodiscard]] bool activateRetailAllWeaponsCheat() noexcept;
   [[nodiscard]] bool setRetailAllWeaponsCheat(bool enabled) noexcept;
+  [[nodiscard]] bool
+  startRetailDemo(std::span<const std::byte> recording) noexcept;
+  [[nodiscard]] bool retailDemoActive() const noexcept;
   [[nodiscard]] bool setRetailHardMode(bool enabled) noexcept;
   [[nodiscard]] bool setAgentDifficulty(bool enabled) noexcept;
   [[nodiscard]] bool setRetailOneShotKills(bool enabled) noexcept;
@@ -1354,12 +1358,15 @@ private:
   [[nodiscard]] bool collidesWithWall(double x, double y, double z) const;
   [[nodiscard]] bool tryMove(PlayerState &player, double x, double z) override;
   [[nodiscard]] ActorAimRay manualAimRay() const noexcept;
-  [[nodiscard]] double traceWorldSegment(double from_x, double from_y,
-                                         double from_z, double to_x,
-                                         double to_y,
-                                         double to_z) const noexcept;
+  [[nodiscard]] double
+  traceWorldSegment(double from_x, double from_y, double from_z, double to_x,
+                    double to_y, double to_z,
+                    bool include_solid_objects = false) const noexcept;
   [[nodiscard]] std::optional<bool>
   park2GirdeuxFlameLineOfSight() const noexcept;
+  [[nodiscard]] bool
+  hostileBallisticLineOfSight(const LegacyNativePoint &shooter,
+                              const LegacyNativePoint &target) const noexcept;
   void spawnCombatEffect(GameplayEffectType type, double x, double y, double z,
                          double direction_x, double direction_y,
                          double direction_z, double scale = 1.0) noexcept;

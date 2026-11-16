@@ -308,8 +308,8 @@ std::optional<PersistentFireEmitterSource> persistentFireEmitterSource(
     return std::nullopt;
   }
   const auto guest_slots = gameplay.legacyGuestSlotsBySceneObject();
-  const auto objects = gameplay.objects();
-  const auto models = gameplay.objectModels();
+  const auto &objects = gameplay.objects();
+  const auto &models = gameplay.objectModels();
   for (auto index = std::size_t{}; index < objects.size(); ++index) {
     const auto guest_slot =
         index < guest_slots.size() ? guest_slots[index] : std::int32_t{-1};
@@ -362,8 +362,8 @@ std::optional<PersistentFireEmitterSource> persistentFireEmitterSource(
     controller_group.push_back({particle.x, particle.y, particle.z});
   }
 
-  const auto objects = gameplay.objects();
-  const auto models = gameplay.objectModels();
+  const auto &objects = gameplay.objects();
+  const auto &models = gameplay.objectModels();
   auto candidates =
       std::vector<sf::platform::PersistentFireEmitterCandidate>{};
   for (auto index = std::size_t{}; index < objects.size(); ++index) {

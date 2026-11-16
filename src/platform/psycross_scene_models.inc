@@ -38,6 +38,9 @@ public:
         continue;
       }
       if (destroyed && !destroyed_[object] &&
+          !game::legacyGuestEffectsAuthoritative(
+              presentation.guest_camera_lists_captured,
+              gameplay.legacyEffectParticlesAuthoritative()) &&
           scene_object.damage_response == game::ObjectDamageResponse::shatter) {
         spawn(gameplay, presentation, static_cast<std::uint16_t>(object));
       }

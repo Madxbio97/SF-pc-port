@@ -929,7 +929,9 @@ std::uint16_t PsyCrossMoviePlayer::play(
     }
     const auto& background = movies.backgroundMovie();
     std::cout << "Playing looping menu background " << background.path << '\n';
-    while (playBackgroundPass(background, pad, previous_buttons, overlay)) {
+    while (playBackgroundPass(background, pad, previous_buttons, overlay) &&
+           (!overlay.continue_after_background ||
+            overlay.continue_after_background())) {
     }
     if (overlay.transition_movie) {
         if (auto* transition = overlay.transition_movie(); transition != nullptr) {

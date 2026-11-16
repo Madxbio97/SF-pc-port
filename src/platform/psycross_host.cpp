@@ -665,12 +665,15 @@ public:
     auto previous_title_controller_instance = -1;
     detail::PsyCrossCampaignSaveRenderer title_load_renderer{initial_mission_,
                                                              input_};
+    bool title_input_during_pass{};
+    bool start_demo{};
+    std::size_t next_demo{};
     const detail::MovieOverlayCallbacks overlay{
         [this, &pad, &ui_audio, &title_keyboard_initialized,
-         &title_interact_was_down, &title_pause_was_down,
-         &title_load_renderer, &active_title_prompt_bindings,
-         &previous_title_controller_instance](
-            std::uint16_t pressed, std::uint32_t movie_frame) {
+         &title_interact_was_down, &title_pause_was_down, &title_load_renderer,
+         &active_title_prompt_bindings, &previous_title_controller_instance,
+         &title_input_during_pass](std::uint16_t pressed,
+                                   std::uint32_t movie_frame) {
           ui_audio.update();
           const auto actions = sampleHostKeyboardMouseActions(input_);
           const auto interact_down = actions[KeyboardMouseAction::interact];
@@ -688,6 +691,12 @@ public:
               active_title_prompt_bindings,
               previous_title_controller_instance);
           const auto analog = title_menu_navigation_.update(menu_sample);
+          title_input_during_pass |=
+              pressed != 0U || readHostButtons(pad) != 0xffffU ||
+              analog.previous || analog.next ||
+              std::ranges::find(actions.held, true) != actions.held.end() ||
+              (menu_.phase() != game::TitlePhase::menu &&
+               menu_.phase() != game::TitlePhase::searching);
           const game::TitleInput input{
               .previous = (pressed & (0x80U | 0x10U)) != 0 || analog.previous,
               .next = (pressed & (0x20U | 0x40U)) != 0 || analog.next,
@@ -761,6 +770,12 @@ public:
           }
           return nullptr;
         },
+        [&] {
+          start_demo = !title_input_during_pass &&
+                       menu_.phase() == game::TitlePhase::menu;
+          title_input_during_pass = false;
+          return !start_demo;
+        },
     };
     auto play_startup_movies = true;
     for (;;) {
@@ -768,6 +783,8 @@ public:
       // Baseline the first live title frame. A stick held through startup,
       // training video, or a return from gameplay must be released before it
       // can move the selection.
+      title_input_during_pass = false;
+      start_demo = false;
       title_menu_navigation_.reset();
       previous_buttons = movie_player.play(movies_, pad, previous_buttons,
                                            overlay, play_startup_movies);
@@ -777,6 +794,39 @@ public:
         continue;
       }
       play_startup_movies = false;
+
+      if (start_demo) {
+        // TITLE.OVL advances the two entries at 80115e34 when TITLE.STR ends.
+        constexpr std::array<std::uint32_t, 2> missions{3U, 18U};
+        const auto index = missions[next_demo];
+        next_demo = (next_demo + 1U) % missions.size();
+        auto disc = game::GameDisc::open(cue_path_);
+        auto mission = game::MissionPackage::load(disc, index);
+        const auto recording = disc.image().readFile(
+            "COMMON/" + std::string{mission.definition().resource_name} +
+            ".DEM");
+        auto demo = std::make_unique<game::GameplaySession>(mission);
+        if (demo->startRetailDemo(recording)) {
+          game::RetailCheatState demo_cheats{};
+          detail::PsyCrossSceneViewer viewer{input_,
+                                             demo_cheats,
+                                             game::CampaignDifficulty::original,
+                                             graphics_.controller_bindings,
+                                             false,
+                                             {},
+                                             graphics_.mission_skyboxes};
+          const auto result = viewer.run(mission, pad, previous_buttons,
+                                         cue_path_, 0U, std::move(demo));
+          previous_buttons = result.previous_buttons;
+          if (result.reason == detail::SceneExitReason::exit_application) {
+            break;
+          }
+        }
+        uploadTitleAssets(assets_);
+        configureTitleNotice();
+        menu_.completeSearch();
+        continue;
+      }
 
       if (selected_command_ != game::TitleCommand::new_game &&
           selected_command_ != game::TitleCommand::load_game) {

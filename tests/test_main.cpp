@@ -3758,6 +3758,9 @@ void testGameplayHud() {
               hud.healthBar() == 30U &&
               hud.healthBarColor() == sf::game::HudRgb{255U, 100U, 100U},
           "Armor HUD scaling mismatch");
+  hud.setDanger(40U, true);
+  require(hud.dangerCritical(),
+          "Retail alert flash was delayed until the bar finished growing");
   hud.setDanger(100U);
   hud.setTargetHealth(static_cast<std::uint8_t>(75U));
   require(hud.dangerBar() == 50U && hud.targetBar() == 37U,
@@ -4633,6 +4636,11 @@ void testPlayerCameraFade() {
                      player_y - 185.0, player_z),
               player_x, player_y, player_z) == PlayerCameraVisibility::hidden,
           "Camera inside Gabe did not hide the intersecting model");
+  require(playerCameraVisibility(
+              camera(player_x, player_y - 350.0, player_z + 20.0, player_x,
+                     player_y - 185.0, player_z),
+              player_x, player_y, player_z) == PlayerCameraVisibility::hidden,
+          "Chase camera intersecting Gabe's head still drew his face");
   require(playerCameraVisibility(camera(player_x + 20.0, player_y - 220.0,
                                         player_z, 5000.0, 0.0, 5000.0),
                                  player_x, player_y,

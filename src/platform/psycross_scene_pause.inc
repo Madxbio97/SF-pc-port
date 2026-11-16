@@ -213,7 +213,8 @@ void drawMenuText(std::string_view source, const game::PauseRect &bounds,
                   int scale, PauseRgb color, game::PauseTextAlignment alignment,
                   int line_height, const HudTextureAtlas &interface_textures,
                   const InputPromptBindings &bindings,
-                  InputPromptTokenActions tokens = {}) {
+                  InputPromptTokenActions tokens = {},
+                  std::size_t visible_glyphs = std::string_view::npos) {
   const auto localized = game::localizeTextCopy(source);
   const auto text = inputHintText(localized, bindings, tokens);
   const auto retail_line_height = std::max(line_height, 1);
@@ -243,9 +244,9 @@ void drawMenuText(std::string_view source, const game::PauseRect &bounds,
       x += static_cast<int>(bounds.width) - line_width;
     }
     x = std::max(x, static_cast<int>(bounds.x));
-    drawMenuLine(line_text, x, bounds.y, scale,
-                 static_cast<int>(bounds.x + bounds.width), color,
-                 interface_textures, horizontal_scale);
+    drawMenuLine(std::string_view{line_text}.substr(0, visible_glyphs), x,
+                 bounds.y, scale, static_cast<int>(bounds.x + bounds.width),
+                 color, interface_textures, horizontal_scale);
     return;
   }
   const auto wrap = [&](float horizontal_scale) {
@@ -327,7 +328,9 @@ void drawMenuText(std::string_view source, const game::PauseRect &bounds,
       x += static_cast<int>(bounds.width) - line_width;
     }
     x = std::max(x, static_cast<int>(bounds.x));
-    drawMenuLine(line_text, x,
+    const auto count = std::min(visible_glyphs, line_text.size());
+    visible_glyphs -= count;
+    drawMenuLine(line_text.substr(0, count), x,
                  static_cast<int>(bounds.y) +
                      static_cast<int>(line) * fitted_line_height,
                  scale, static_cast<int>(bounds.x + bounds.width), color,
@@ -783,7 +786,7 @@ void drawPauseDim(const game::PauseRect &bounds) {
 bool drawPauseMenu(const game::PauseMenu &menu,
                    const PauseTextureAtlas &textures,
                    const HudTextureAtlas &interface_textures,
-                   std::uint64_t animation_tick,
+                   std::uint64_t animation_tick, std::size_t visible_glyphs,
                    const InputPromptBindings &bindings) {
   GR_SetBlendMode(BM_NONE);
   GR_EnableDepth(0);
@@ -891,8 +894,9 @@ bool drawPauseMenu(const game::PauseMenu &menu,
     case game::PauseRenderKind::text:
       // The selected objective/location and its map light share the same
       // low-contrast, fixed-rate pulse calculated above.
-      draw_text(command.text, command_bounds, 1, color, command.alignment,
-                command.line_height);
+      drawMenuText(command.text, command_bounds, 1, color, command.alignment,
+                   command.line_height, interface_textures, bindings,
+                   prompt_tokens, visible_glyphs);
       break;
     case game::PauseRenderKind::menu_item:
       if (command.panel == game::PausePanelRole::right_sections) {
@@ -1023,10 +1027,12 @@ bool drawPauseMenu(const game::PauseMenu &menu,
             static_cast<int>(std::lround(std::cos(angle - 2.45) *
                                          static_cast<double>(radius)));
         drawAcdTriangle(point_x, point_y, left_x, left_y, right_x, right_y,
-                        color);
+                        pauseMapHighlightColor(color));
       } else if (marker_kind == game::MapMarkerKind::objective) {
         const auto center_x = marker.x + marker.width / 2;
         const auto center_y = marker.y + marker.height / 2;
+        const auto glow =
+            command.selected ? color : pauseMapHighlightColor(color);
         constexpr auto glow_radius = std::int16_t{3};
         drawAcdOutline(
             game::PauseRect{
@@ -1035,9 +1041,9 @@ bool drawPauseMenu(const game::PauseMenu &menu,
                 static_cast<std::int16_t>(glow_radius * 2 + 1),
                 static_cast<std::int16_t>(glow_radius * 2 + 1),
             },
-            color);
-        drawSolidRect(center_x - 1, center_y - 1, 3, 3, color.red, color.green,
-                      color.blue);
+            glow);
+        drawSolidRect(center_x - 1, center_y - 1, 3, 3, glow.red, glow.green,
+                      glow.blue);
         drawSolidRect(center_x, center_y - 5, 1, 3, 255U, 210U, 96U);
       } else {
         drawBorderedRect(marker, color, PauseRgb{255U, 255U, 255U});
@@ -1045,8 +1051,9 @@ bool drawPauseMenu(const game::PauseMenu &menu,
       break;
     }
     case game::PauseRenderKind::button_hint:
-      draw_text(command.text, command_bounds, 1, color, command.alignment,
-                command.line_height);
+      drawMenuText(command.text, command_bounds, 1, color, command.alignment,
+                   command.line_height, interface_textures, bindings,
+                   prompt_tokens, visible_glyphs);
       break;
     case game::PauseRenderKind::dialog:
       drawBorderedRect(command_bounds, PauseRgb{0U, 0U, 0U},
@@ -1082,6 +1089,7 @@ bool drawPauseMenu(const game::PauseMenu &menu,
   // inherit gameplay depth state and intermittently disappear.
   DrawSync(0);
   GR_SetBlendMode(BM_NONE);
+  drawGameBrightness(menu.settings().brightness);
   GR_EnableDepth(1);
   return texture_uploaded;
 }

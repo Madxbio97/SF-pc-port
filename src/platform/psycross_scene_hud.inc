@@ -1439,84 +1439,33 @@ void drawOriginalRadar(const game::GameplaySession &gameplay,
     }
   }
 
-  // The original radar is primitive-only. Project the mission's HMD actors
-  // into the same player-relative square instead of inventing a texture.
-  constexpr double radar_range = 1920.0;
-  const auto horizontal_radius = static_cast<double>(geometry.outer_half_width);
-  const auto vertical_radius = static_cast<double>(geometry.outer_half_height);
-  const auto basis = game::headingBasis(heading);
-  const auto target = gameplay.aimTarget();
-  const auto &objects = gameplay.objects();
-  const auto &models = gameplay.objectModels();
-  auto marker_count = std::size_t{};
-  for (const auto object_index : gameplay.activeObjects()) {
-    if (!gameplay.objectAlive(object_index)) {
-      continue;
-    }
-    const auto &object = objects[object_index];
-    if (!std::holds_alternative<assets::HmdModel>(
-            models[object.model].geometry)) {
-      continue;
-    }
-    const auto delta_x =
-        static_cast<double>(object.transform.x) - gameplay.player().x;
-    const auto delta_z =
-        static_cast<double>(object.transform.z) - gameplay.player().z;
-    const auto distance = std::hypot(delta_x, delta_z);
-    if (distance <= 1.0) {
-      continue;
-    }
-    const auto local_x = delta_x * basis.right.x + delta_z * basis.right.z;
-    const auto local_z = delta_x * basis.forward.x + delta_z * basis.forward.z;
-    const auto marker_x =
-        center_x +
-        static_cast<int>(std::lround(
-            std::clamp(local_x / radar_range, -1.0, 1.0) * horizontal_radius));
-    const auto marker_y =
-        center_y -
-        static_cast<int>(std::lround(
-            std::clamp(local_z / radar_range, -1.0, 1.0) * vertical_radius));
-    const auto selected = target && *target == object_index;
-    // FUN_8003be84: green -> yellow below 0x553, yellow -> red below
-    // 0xaa7, then solid red. Distant actors remain clamped to the rim.
-    constexpr auto green_to_yellow = 0x553U;
-    constexpr auto yellow_to_red = 0xaa7U;
-    const auto distance_units = static_cast<unsigned int>(std::min<double>(
-        distance,
-        static_cast<double>(std::numeric_limits<unsigned int>::max())));
-    auto red = std::uint8_t{255U};
-    auto green = std::uint8_t{};
-    if (distance_units < green_to_yellow) {
-      red = static_cast<std::uint8_t>(
-          std::min(255U, distance_units * 0x300U / 0x1000U));
-      green = 255U;
-    } else if (distance_units < yellow_to_red) {
-      const auto falloff =
-          (distance_units - green_to_yellow) * 0x300U / 0x1000U;
-      green = static_cast<std::uint8_t>(255U - std::min(255U, falloff));
-    }
-    const auto marker_size = selected ? 4 : 2;
-    drawSolidRect(marker_x - marker_size / 2 + offset_x,
-                  marker_y - marker_size / 2 + offset_y, marker_size,
-                  marker_size, red, green, 0U);
-    if (++marker_count == 6U) {
-      break;
+  const auto frame = gameplay.legacyPresentationFrame();
+  if (!frame || !frame->renderer) {
+    return;
+  }
+  for (const auto &polygon : frame->renderer->state.radar_polygons) {
+    const auto triangle = [&](unsigned int a, unsigned int b, unsigned int c) {
+      POLY_G3 primitive{};
+      setPolyG3(&primitive);
+      setSemiTrans(&primitive, polygon.translucent);
+      const auto &p = polygon.corners;
+      const auto &rgb = polygon.colors;
+      setRGB0(&primitive, rgb[a].red, rgb[a].green, rgb[a].blue);
+      setRGB1(&primitive, rgb[b].red, rgb[b].green, rgb[b].blue);
+      setRGB2(&primitive, rgb[c].red, rgb[c].green, rgb[c].blue);
+      const auto x = 192 + offset_x;
+      const auto y = 120 + offset_y;
+      setXY3(&primitive, static_cast<float>(p[a].x + x),
+             static_cast<float>(p[a].y + y), static_cast<float>(p[b].x + x),
+             static_cast<float>(p[b].y + y), static_cast<float>(p[c].x + x),
+             static_cast<float>(p[c].y + y));
+      DrawPrim(&primitive);
+    };
+    triangle(0U, 1U, 2U);
+    if (polygon.vertices == 4U) {
+      triangle(1U, 3U, 2U);
     }
   }
-
-  // Player pointer uses the retail G3 colors and its native 8x4 footprint.
-  POLY_G3 pointer{};
-  setPolyG3(&pointer);
-  setRGB0(&pointer, 196U, 196U, 254U);
-  setRGB1(&pointer, 62U, 88U, 117U);
-  setRGB2(&pointer, 62U, 88U, 117U);
-  setXY3(&pointer, static_cast<float>(center_x + offset_x),
-         static_cast<float>(center_y - 2 + offset_y),
-         static_cast<float>(center_x - 4 + offset_x),
-         static_cast<float>(center_y + 2 + offset_y),
-         static_cast<float>(center_x + 4 + offset_x),
-         static_cast<float>(center_y + 2 + offset_y));
-  DrawPrim(&pointer);
 }
 
 void drawOriginalAimReticle(int center_x, int center_y, bool head_target,

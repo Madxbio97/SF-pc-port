@@ -99,6 +99,10 @@ void testRetailDangerAggregation() {
   require(sf::game::legacyRetailDangerPercent(threats, 0) == 50U,
           "A half-alert retail threat did not fill half the danger bar");
 
+  threats[0].danger_q12 = 1U;
+  require(sf::game::legacyRetailDangerPercent(threats, 0) == 0U,
+          "A sub-threshold threat revealed the retail danger bar");
+
   // State 9 has the original 0xab8 alert floor even when its raw meter is
   // lower. This is the fast reaction visible when an enemy commits to Gabe.
   threats[0].ai_state = 9U;

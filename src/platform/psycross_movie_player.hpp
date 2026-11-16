@@ -21,6 +21,7 @@ struct MovieOverlayCallbacks {
     std::function<bool(std::uint16_t, std::uint32_t)> update;
     std::function<void()> draw;
     std::function<const game::DiscMovie*()> transition_movie;
+    std::function<bool()> continue_after_background;
 };
 
 class PsyCrossMoviePlayer final {

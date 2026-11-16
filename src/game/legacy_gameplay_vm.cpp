@@ -1748,19 +1748,19 @@ void LegacyGameplayVm::bindAgentDifficultyDamageHook(
     const LegacyNativeMissionBridgeProfile &profile) {
   bindHostCall(profile.damage_entry, [this,
                                       profile](LegacyHostCallContext &context) {
-    // This is an instruction-boundary patch, not an HLE replacement: the
-    // retail damage routine must still execute for guest and host hits.
-    context.continueGuestInstruction();
-    if (!agent_difficulty_) {
+    if (!agent_difficulty_ && !hostile_ballistic_visibility_) {
+      context.continueGuestInstruction();
       return;
     }
-
+    // Normally this is an instruction-boundary patch. A positively identified
+    // wall-blocked bullet is the sole HLE-return path and skips hit reaction.
     constexpr std::size_t a3_register = 7U;
     std::uint32_t player{};
     std::uint16_t player_slot_bits{};
     if (!context.read32(profile.player_pointer, player) ||
         !validGuestRamRange(player, 4U) ||
         !context.read16(player + 2U, player_slot_bits)) {
+      context.continueGuestInstruction();
       return;
     }
 
@@ -1773,6 +1773,123 @@ void LegacyGameplayVm::bindAgentDifficultyDamageHook(
         static_cast<std::uint16_t>(context.argument(2U)));
     const auto damage = std::bit_cast<std::int16_t>(
         static_cast<std::uint16_t>(context.argument(3U)));
+    const auto damage_type = std::bit_cast<std::int16_t>(
+        static_cast<std::uint16_t>(context.argument(4U)));
+
+    // FUN_80069cb0 resolves the actual shooter via the attacker's instance
+    // slot.
+    struct BallisticSource {
+      std::int16_t slot{-1};
+      std::uint32_t instance{};
+      std::uint32_t ai_controller{};
+      std::uint8_t weapon{};
+    };
+    const auto ballistic_source =
+        [&](std::int16_t source_slot) -> std::optional<BallisticSource> {
+      constexpr std::uint32_t object_record_stride = 0x4cU;
+      constexpr std::uint32_t object_weapon_offset = 0x24U;
+      constexpr std::uint32_t object_instance_offset = 0x34U;
+      constexpr std::uint32_t instance_slot_offset = 2U;
+      constexpr std::uint32_t instance_ai_offset = 0x1cU;
+      if (source_slot < 0) {
+        return std::nullopt;
+      }
+      std::uint32_t records{};
+      std::uint32_t count{};
+      if (!context.read32(profile.object_records_pointer, records) ||
+          !context.read32(profile.object_count, count) ||
+          count > profile.maximum_objects ||
+          !validGuestRamRange(records, object_record_stride) ||
+          static_cast<std::uint32_t>(source_slot) >= count) {
+        return std::nullopt;
+      }
+      const auto source_record64 =
+          static_cast<std::uint64_t>(records) +
+          static_cast<std::uint64_t>(static_cast<std::uint16_t>(source_slot)) *
+              object_record_stride;
+      if (source_record64 > std::numeric_limits<std::uint32_t>::max()) {
+        return std::nullopt;
+      }
+      const auto source_record = static_cast<std::uint32_t>(source_record64);
+      std::uint32_t source_instance{};
+      std::uint16_t shooter_slot_bits{};
+      if (!validGuestRamRange(source_record, object_record_stride) ||
+          !context.read32(source_record + object_instance_offset,
+                          source_instance) ||
+          !validGuestRamRange(source_instance, instance_slot_offset + 2U) ||
+          !context.read16(source_instance + instance_slot_offset,
+                          shooter_slot_bits)) {
+        return std::nullopt;
+      }
+      const auto shooter_slot = std::bit_cast<std::int16_t>(shooter_slot_bits);
+      if (shooter_slot < 0 || shooter_slot == player_slot ||
+          static_cast<std::uint32_t>(shooter_slot) >= count) {
+        return std::nullopt;
+      }
+      const auto shooter_record64 =
+          static_cast<std::uint64_t>(records) +
+          static_cast<std::uint64_t>(static_cast<std::uint16_t>(shooter_slot)) *
+              object_record_stride;
+      if (shooter_record64 > std::numeric_limits<std::uint32_t>::max()) {
+        return std::nullopt;
+      }
+      const auto shooter_record = static_cast<std::uint32_t>(shooter_record64);
+      std::uint8_t weapon{};
+      std::uint32_t shooter_instance{};
+      std::uint32_t shooter_ai{};
+      std::uint16_t identity_slot_bits{};
+      if (!validGuestRamRange(shooter_record, object_record_stride) ||
+          !context.read8(shooter_record + object_weapon_offset, weapon) ||
+          !context.read32(shooter_record + object_instance_offset,
+                          shooter_instance) ||
+          !validGuestRamRange(shooter_instance, instance_ai_offset + 4U) ||
+          !context.read16(shooter_instance + instance_slot_offset,
+                          identity_slot_bits) ||
+          std::bit_cast<std::int16_t>(identity_slot_bits) != shooter_slot ||
+          !context.read32(shooter_instance + instance_ai_offset, shooter_ai) ||
+          shooter_ai == 0U) {
+        return std::nullopt;
+      }
+      return BallisticSource{shooter_slot, shooter_instance, shooter_ai,
+                             weapon};
+    };
+    if (hostile_ballistic_visibility_ && player_slot >= 0 &&
+        target_slot == player_slot && attacker_slot >= 0 &&
+        attacker_slot != player_slot && owner_slot != player_slot &&
+        damage > 0 && legacyBallisticDamageType(damage_type)) {
+      const auto source = ballistic_source(attacker_slot);
+      // Retail also posts type 0x0f for scripted damage. Only the two sniper
+      // weapons use it as a direct ballistic event.
+      if (source && legacyWeaponUsesBallisticLineOfSight(source->weapon) &&
+          (damage_type == 0x892 || source->weapon == 12U ||
+           source->weapon == 13U)) {
+        const auto motion_position =
+            [&](std::uint32_t instance) -> std::optional<LegacyNativePoint> {
+          std::uint32_t motion{}, x{}, y{}, z{};
+          if (!validGuestRamRange(instance, 0x10U) ||
+              !context.read32(instance + 0x0cU, motion) ||
+              !validGuestRamRange(motion, 12U) || !context.read32(motion, x) ||
+              !context.read32(motion + 4U, y) ||
+              !context.read32(motion + 8U, z) || y == 0x80000000U) {
+            return std::nullopt;
+          }
+          return LegacyNativePoint{std::bit_cast<std::int32_t>(x),
+                                   -std::bit_cast<std::int32_t>(y),
+                                   std::bit_cast<std::int32_t>(z)};
+        };
+        const auto from = motion_position(source->instance);
+        const auto to = motion_position(player);
+        if (from && to && !hostile_ballistic_visibility_(*from, *to)) {
+          context.setReturnValue(0U);
+          return;
+        }
+      }
+    }
+
+    context.continueGuestInstruction();
+    if (!agent_difficulty_) {
+      return;
+    }
 
     // CBDC personnel keep retail damage and reactions. Agent only records an
     // exact player-owned friendly-fire edge here; timer mutation is deferred
@@ -1847,100 +1964,22 @@ void LegacyGameplayVm::bindAgentDifficultyDamageHook(
       return;
     }
 
-    constexpr std::uint32_t object_record_stride = 0x4cU;
-    std::uint32_t records{};
-    std::uint32_t count{};
-    const auto tables_valid =
-        context.read32(profile.object_records_pointer, records) &&
-        context.read32(profile.object_count, count) &&
-        count <= profile.maximum_objects &&
-        validGuestRamRange(records, object_record_stride);
-    struct SniperSource {
-      std::int16_t slot{-1};
-      std::uint32_t instance{};
-      std::uint32_t ai_controller{};
-      std::uint8_t weapon{};
-    };
-    const auto sniper_source =
-        [&](std::int16_t source_slot) -> std::optional<SniperSource> {
-      constexpr std::uint32_t object_weapon_offset = 0x24U;
-      constexpr std::uint32_t object_instance_offset = 0x34U;
-      constexpr std::uint32_t instance_slot_offset = 2U;
-      constexpr std::uint32_t instance_ai_offset = 0x1cU;
-      constexpr std::uint8_t svd_weapon = 12U;
-      constexpr std::uint8_t sniper_weapon = 13U;
-      if (!tables_valid || source_slot < 0 ||
-          static_cast<std::uint32_t>(source_slot) >= count) {
-        return std::nullopt;
-      }
-      const auto source_record64 =
-          static_cast<std::uint64_t>(records) +
-          static_cast<std::uint64_t>(static_cast<std::uint16_t>(source_slot)) *
-              object_record_stride;
-      if (source_record64 > std::numeric_limits<std::uint32_t>::max()) {
-        return std::nullopt;
-      }
-      const auto source_record = static_cast<std::uint32_t>(source_record64);
-      std::uint32_t source_instance{};
-      std::uint16_t shooter_slot_bits{};
-      if (!validGuestRamRange(source_record, object_record_stride) ||
-          !context.read32(source_record + object_instance_offset,
-                          source_instance) ||
-          !validGuestRamRange(source_instance, instance_slot_offset + 2U) ||
-          !context.read16(source_instance + instance_slot_offset,
-                          shooter_slot_bits)) {
-        return std::nullopt;
-      }
-      const auto shooter_slot = std::bit_cast<std::int16_t>(shooter_slot_bits);
-      if (shooter_slot < 0 || shooter_slot == player_slot ||
-          static_cast<std::uint32_t>(shooter_slot) >= count) {
-        return std::nullopt;
-      }
-      const auto shooter_record64 =
-          static_cast<std::uint64_t>(records) +
-          static_cast<std::uint64_t>(static_cast<std::uint16_t>(shooter_slot)) *
-              object_record_stride;
-      if (shooter_record64 > std::numeric_limits<std::uint32_t>::max()) {
-        return std::nullopt;
-      }
-      const auto shooter_record = static_cast<std::uint32_t>(shooter_record64);
-      std::uint8_t weapon{};
-      std::uint32_t shooter_instance{};
-      std::uint32_t shooter_ai{};
-      std::uint16_t identity_slot_bits{};
-      if (!validGuestRamRange(shooter_record, object_record_stride) ||
-          !context.read8(shooter_record + object_weapon_offset, weapon) ||
-          (weapon != svd_weapon && weapon != sniper_weapon) ||
-          !context.read32(shooter_record + object_instance_offset,
-                          shooter_instance) ||
-          !validGuestRamRange(shooter_instance, instance_ai_offset + 4U) ||
-          !context.read16(shooter_instance + instance_slot_offset,
-                          identity_slot_bits) ||
-          std::bit_cast<std::int16_t>(identity_slot_bits) != shooter_slot ||
-          !context.read32(shooter_instance + instance_ai_offset, shooter_ai) ||
-          shooter_ai == 0U) {
-        return std::nullopt;
-      }
-      return SniperSource{shooter_slot, shooter_instance, shooter_ai, weapon};
-    };
-    const auto matches_active = [&](const SniperSource &candidate) {
+    const auto matches_active = [&](const BallisticSource &candidate) {
       return candidate.slot == agent_headshot_shooter_slot_ &&
              candidate.instance == agent_headshot_shooter_instance_ &&
              candidate.ai_controller == agent_headshot_shooter_ai_controller_ &&
              candidate.weapon == agent_headshot_weapon_;
     };
 
-    auto shooter = sniper_source(attacker_slot);
+    auto shooter = ballistic_source(attacker_slot);
     std::uint32_t gameplay_frame{};
-    const auto damage_type = std::bit_cast<std::int16_t>(
-        static_cast<std::uint16_t>(context.argument(4U)));
     constexpr std::int16_t direct_sniper_damage_type = 0x000f;
     constexpr std::int16_t weapon_collision_damage_type = 0x0892;
     const auto ballistic_sniper_hit =
         damage_type == direct_sniper_damage_type ||
         damage_type == weapon_collision_damage_type;
     if (ballistic_sniper_hit && (!shooter || !matches_active(*shooter))) {
-      if (const auto owner = sniper_source(owner_slot);
+      if (const auto owner = ballistic_source(owner_slot);
           owner && matches_active(*owner)) {
         shooter = owner;
       }
@@ -3582,9 +3621,8 @@ bool LegacyGameplayVm::setRetailVibrationEnabled(bool enabled) noexcept {
                        static_cast<std::uint8_t>(enabled ? 1U : 0U))) {
     return false;
   }
-  if (!enabled &&
-      (!runtime_.write8(retail_pad_motor_table, 0U) ||
-       !runtime_.write8(retail_pad_motor_table + 1U, 0U))) {
+  if (!enabled && (!runtime_.write8(retail_pad_motor_table, 0U) ||
+                   !runtime_.write8(retail_pad_motor_table + 1U, 0U))) {
     return false;
   }
   // Case 4 clears both authored actuator bytes. Publish that stop edge now;
@@ -5080,6 +5118,75 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
     }
   }
 
+  if (interface_renderer != 0U) {
+    // FUN_8003d100 owns six contacts, their fading colours, target highlight,
+    // alert wedges and both player pointers. The bomb uses the scanner's dot
+    // storage outside optic mode. Read only linked, on-radar primitives.
+    const auto read_radar_polygon = [&](std::uint32_t node) {
+      std::uint32_t link{}, command{}, tag{};
+      if (!runtime_.read32(node, link) || link == 0U ||
+          !runtime_.read32(node + 8U, tag) ||
+          !runtime_.read32(node + 12U, command)) {
+        return;
+      }
+      const auto opcode = (command >> 24U) & 0xfdU;
+      const auto flat = opcode == 0x28U;
+      const auto count = opcode == 0x30U ? 3U : 4U;
+      if ((!flat && opcode != 0x30U && opcode != 0x38U) ||
+          (tag >> 24U) != (flat ? 5U : count * 2U)) {
+        return;
+      }
+      LegacyRadarPolygon polygon;
+      polygon.vertices = static_cast<std::uint8_t>(count);
+      polygon.translucent = (command & 0x02000000U) != 0U;
+      for (unsigned int i = 0; i < count; ++i) {
+        const auto xy_offset = 16U + i * (flat ? 4U : 8U);
+        std::uint32_t xy{}, rgb = command;
+        if (!runtime_.read32(node + xy_offset, xy) ||
+            (!flat && !runtime_.read32(node + xy_offset - 4U, rgb))) {
+          return;
+        }
+        const auto x =
+            std::bit_cast<std::int16_t>(static_cast<std::uint16_t>(xy));
+        const auto y =
+            std::bit_cast<std::int16_t>(static_cast<std::uint16_t>(xy >> 16U));
+        if (x < -185 || x > -121 || y < 52 || y > 108) {
+          return; // Includes the retail off-screen sentinel (1024,1024).
+        }
+        polygon.corners[i] = {x, y};
+        polygon.colors[i] = {static_cast<std::uint8_t>(rgb),
+                             static_cast<std::uint8_t>(rgb >> 8U),
+                             static_cast<std::uint8_t>(rgb >> 16U)};
+      }
+      state.radar_polygons.push_back(polygon);
+    };
+    for (std::uint32_t slot = 0; slot < legacy_tracked_target_count; ++slot) {
+      read_radar_polygon(0x8011ba0cU + slot * 0x30U);
+    }
+    read_radar_polygon(0x8011b9dcU);
+    for (std::uint32_t slot = 0; slot < legacy_tracked_target_count; ++slot) {
+      read_radar_polygon(0x8011b904U + slot * 0x24U);
+    }
+    if (aim_mode != 4U) {
+      read_radar_polygon(0x80135df8U);
+    }
+    read_radar_polygon(0x8011b318U);
+    read_radar_polygon(0x8011b33cU);
+
+    // FUN_8003db64 writes the final 0..50 endpoint after its dead band
+    // and five-pixel approach. Its opaque command selects the critical flash.
+    std::uint32_t color{};
+    std::int16_t left{}, right{};
+    if (runtime_.read32(0x8011b518U, color) &&
+        ((color >> 24U) & 0xfdU) == 0x28U && read_signed16(0x8011b51cU, left) &&
+        read_signed16(0x8011b520U, right) && right >= left &&
+        right - left <= 50) {
+      state.radar_danger_percent =
+          static_cast<std::uint8_t>((right - left) * 2);
+      state.radar_danger_critical = (color >> 24U) == 0x28U;
+    }
+  }
+
   state.guest_sprites.reserve(profile.maximum_guest_sprites +
                               legacy_retail_scope_vertical_sprite_count +
                               legacy_retail_scope_horizontal_sprite_count);
@@ -6353,6 +6460,41 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
     return static_cast<std::int32_t>(probe_y);
   };
 
+  // Index the captured camera items once. More than one renderer may reference
+  // the same particle, so publish its position to every matching item below.
+  struct ParticlePresentation {
+    bool referenced{};
+    bool valid{};
+    bool lamp_halo{};
+    std::uint8_t family{};
+    std::uint8_t frame{};
+    LegacyNativePoint position;
+    const LegacyGuestRawPacketBridgeState *rain{};
+  };
+  std::vector<ParticlePresentation> particle_presentation(
+      profile.effect_particle_capacity);
+  const auto presentation_for =
+      [&](std::int16_t index) -> ParticlePresentation * {
+    if (index < 0 ||
+        static_cast<std::size_t>(index) >= particle_presentation.size()) {
+      return nullptr;
+    }
+    return &particle_presentation[static_cast<std::size_t>(index)];
+  };
+  for (const auto &sprite : state.guest_sprites) {
+    if (auto *entry = presentation_for(sprite.effect_particle)) {
+      entry->referenced = true;
+    }
+  }
+  for (const auto &packet : state.guest_raw_packets) {
+    if (auto *entry = presentation_for(packet.effect_particle)) {
+      entry->referenced = true;
+      if (!entry->rain && packet.word_count == 4U && packet.opcode == 0x52U) {
+        entry->rain = &packet;
+      }
+    }
+  }
+
   state.expl_particles.reserve(profile.effect_particle_capacity);
   state.line_particles.reserve(profile.effect_particle_capacity);
   state.combat_particles.reserve(profile.effect_particle_capacity);
@@ -6400,66 +6542,27 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
     // Capture their exact moving centre before any family-specific branch can
     // continue, otherwise native camera reprojection incorrectly anchors them
     // at the zero-initialized world origin.
-    const auto has_particle_sprite =
-        std::ranges::any_of(state.guest_sprites, [&](const auto &sprite) {
-          return sprite.effect_particle ==
-                 static_cast<std::int16_t>(particle_index);
-        });
-    const auto has_particle_packet =
-        std::ranges::any_of(state.guest_raw_packets, [&](const auto &packet) {
-          return packet.effect_particle ==
-                 static_cast<std::int16_t>(particle_index);
-        });
-    if (has_particle_sprite || has_particle_packet) {
-      LegacyNativePoint particle_position;
-      if (!read_signed32(*x_address, particle_position.x) ||
-          !read_signed32(*y_address, particle_position.y) ||
-          !read_signed32(*z_address, particle_position.z) ||
-          particle_position.y == std::numeric_limits<std::int32_t>::min()) {
+    auto &entry = particle_presentation[particle_index];
+    if (entry.referenced) {
+      if (!read_signed32(*x_address, entry.position.x) ||
+          !read_signed32(*y_address, entry.position.y) ||
+          !read_signed32(*z_address, entry.position.z) ||
+          entry.position.y == std::numeric_limits<std::int32_t>::min()) {
         return std::nullopt;
       }
-      for (auto &sprite : state.guest_sprites) {
-        if (sprite.effect_particle ==
-            static_cast<std::int16_t>(particle_index)) {
-          sprite.effect_position = particle_position;
-          sprite.force_fullbright = lamp_halo;
-        }
-      }
-      for (auto &packet : state.guest_raw_packets) {
-        if (packet.effect_particle ==
-            static_cast<std::int16_t>(particle_index)) {
-          packet.effect_controller =
-              static_cast<std::int16_t>(controller_index);
-          packet.effect_position = particle_position;
-          packet.effect_world_position_valid = true;
-          const auto base_opcode =
-              static_cast<std::uint8_t>(packet.opcode & 0xfdU);
-          if (controller.update_mode == taser_conductor_update_mode &&
-              controller.render_mode == line_render_mode &&
-              packet.word_count == 4U && base_opcode == 0x50U) {
-            packet.taser_segment_index =
-                static_cast<std::int16_t>(particle_chain_index[particle_index]);
-            packet.taser_segment_count =
-                controller_chain_count[controller_index];
-          }
-        }
-      }
+      entry.valid = true;
+      entry.lamp_halo = lamp_halo;
     }
 
     // PARK.OVL's update1/render5 controller owns 80 rain particles. Its
     // camera-list packet is already projected at 20 Hz, but native terrain is
     // rendered through the interpolated camera. Recover the exact world line
     // now so presentation can reproject it and depth-test it against walls.
-    const auto rain_packet =
-        std::ranges::find_if(state.guest_raw_packets, [&](const auto &packet) {
-          return packet.effect_particle ==
-                     static_cast<std::int16_t>(particle_index) &&
-                 packet.word_count == 4U && packet.opcode == 0x52U;
-        });
+    const auto *rain_packet = entry.rain;
     const auto park_rain_particle =
         controller.update_mode == park_rain_update_mode &&
         controller.render_mode == park_rain_render_mode &&
-        rain_packet != state.guest_raw_packets.end();
+        rain_packet != nullptr;
     if (park_rain_particle) {
       constexpr std::uint32_t offscreen_endpoint = 0x04000400U;
       if (rain_packet->words[1] == offscreen_endpoint &&
@@ -6863,14 +6966,38 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
     particle.attached_explosion_sequence =
         family == explosion_family &&
         maximum_frame == attached_explosion_maximum_frame;
-    for (auto &sprite : state.guest_sprites) {
-      if (sprite.effect_particle == static_cast<std::int16_t>(particle_index)) {
-        sprite.effect_family = particle.family;
-        sprite.effect_frame = particle.frame;
-        sprite.effect_position = particle.position;
-      }
-    }
+    entry.family = particle.family;
+    entry.frame = particle.frame;
     state.expl_particles.push_back(particle);
+  }
+
+  for (auto &sprite : state.guest_sprites) {
+    if (const auto *entry = presentation_for(sprite.effect_particle);
+        entry && entry->valid) {
+      sprite.effect_position = entry->position;
+      sprite.force_fullbright = entry->lamp_halo;
+      sprite.effect_family = entry->family;
+      sprite.effect_frame = entry->frame;
+    }
+  }
+  for (auto &packet : state.guest_raw_packets) {
+    const auto *entry = presentation_for(packet.effect_particle);
+    if (!entry || !entry->valid) {
+      continue;
+    }
+    const auto index = static_cast<std::size_t>(packet.effect_particle);
+    const auto owner = particle_controller[index];
+    const auto &controller = controller_descriptors[owner];
+    packet.effect_controller = static_cast<std::int16_t>(owner);
+    packet.effect_position = entry->position;
+    packet.effect_world_position_valid = true;
+    if (controller.update_mode == taser_conductor_update_mode &&
+        controller.render_mode == line_render_mode && packet.word_count == 4U &&
+        (packet.opcode & 0xfdU) == 0x50U) {
+      packet.taser_segment_index =
+          static_cast<std::int16_t>(particle_chain_index[index]);
+      packet.taser_segment_count = controller_chain_count[owner];
+    }
   }
 
   if (std::ranges::any_of(state.guest_raw_packets, [](const auto &packet) {
@@ -7504,6 +7631,28 @@ bool LegacyGameplayVm::writeHostInventoryState(
     }
   }
   return true;
+}
+
+bool LegacyGameplayVm::startRetailDemo(
+    std::span<const std::byte> recording) noexcept {
+  // SCUS state 8 loads COMMON/<mission>.DEM here. The input routine at
+  // 80034ccc consumes six bytes per update until the buttons word is -1.
+  constexpr std::uint32_t buffer = 0x80145630U;
+  if (recording.size() < 6U || recording.size() > 0x1000U ||
+      recording.size() % 6U != 0U ||
+      recording[recording.size() - 2U] != std::byte{0xff} ||
+      recording.back() != std::byte{0xff}) {
+    return false;
+  }
+  return runtime_.loadBytes(buffer, recording) &&
+         runtime_.write32(0x801169c4U, buffer) &&
+         runtime_.write32(0x80115eb4U, 0xffffffffU) &&
+         runtime_.write8(0x80116af0U, 1U);
+}
+
+bool LegacyGameplayVm::retailDemoActive() const noexcept {
+  std::uint8_t active{};
+  return runtime_.read8(0x80116af0U, active) && active != 0;
 }
 
 bool LegacyGameplayVm::setRetailHardMode(bool enabled) noexcept {

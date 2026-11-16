@@ -881,7 +881,7 @@ void GameplayHud::setVitals(PlayerVitals vitals) noexcept {
 
 void GameplayHud::setDanger(std::uint8_t danger, bool critical) noexcept {
   danger_ = std::min(danger, static_cast<std::uint8_t>(100U));
-  danger_critical_ = critical && danger_ == 100U;
+  danger_critical_ = critical;
   // danger_q12 is already the retail actor-controller interpolation. Running
   // it through the generic native status-bar easing a second time delayed
   // both acquisition and decay by up to ten more guest ticks.

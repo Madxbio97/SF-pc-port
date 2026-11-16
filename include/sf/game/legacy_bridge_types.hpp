@@ -507,6 +507,15 @@ struct LegacyGuestRawPacketBridgeState {
   LegacyNativePoint effect_position;
 };
 
+// Fixed INTERFACE radar nodes carry final screen coordinates and per-vertex
+// RGB.
+struct LegacyRadarPolygon {
+  std::array<LegacyProjectedPointBridgeState, 4> corners{};
+  std::array<LegacyRgbBridgeState, 4> colors{};
+  std::uint8_t vertices{};
+  bool translucent{};
+};
+
 struct LegacyGuestRawPacketAddressRange {
   std::uint32_t begin{};
   std::uint32_t stride{};
@@ -1010,6 +1019,9 @@ struct LegacyGameplayBridgeState {
   std::uint32_t target_hit_result{};
   std::int16_t aimed_target_slot{-1};
   std::int16_t proximity_target_slot{-1};
+  std::vector<LegacyRadarPolygon> radar_polygons;
+  std::optional<std::uint8_t> radar_danger_percent;
+  bool radar_danger_critical{};
   // Actual contents of DAT_8011ba00. Each signed value is a guest object
   // record slot; -1 is the vacant-entry sentinel.
   std::array<std::int16_t, legacy_tracked_target_count> tracked_slots{};
