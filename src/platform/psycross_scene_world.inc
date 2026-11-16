@@ -2919,7 +2919,10 @@ void updateDynamicLightFrame(
       active_retail_vertex_lights.push_back(*light);
     }
   }
-  active_retail_light_projection = std::max(presentation.camera.projection, 1);
+  // Original FUN_800d40a4 projects into each light with guest H (38 in the
+  // examined missions). Reusing the native display camera H (261) shrinks
+  // the illuminated footprint until almost every surface vertex misses it.
+  active_retail_light_projection = presentation.retail_light_projection;
 
   auto &persistent = scratch.persistent;
   auto &transient = scratch.transient;

@@ -1005,13 +1005,13 @@ void testRetailVertexLightUsesExactGteProjection() {
   // H >= 2*SZ takes the GTE divide-overflow quotient (0x1ffff), rather than
   // an ideal coordinate*H/SZ division.
   require(sf::game::applyRetailVertexLightingPacked(
-              0x00010203U, lights, {41.0, 20.0, 33.0}, 17) == 0x00616263U,
+              0x00010203U, lights, {41.0, 20.0, 33.0}, 17) == 0x00606262U,
           "Retail light lost the GTE divide-overflow projection");
 
   // The non-overflow path uses the PS1 UNR reciprocal approximation. At
   // H=1/SZ=7 it projects guest Y=7 to zero, while ideal division yields one.
   require(sf::game::applyRetailVertexLightingPacked(
-              0x00010203U, lights, {10.0, 27.0, 37.0}, 1) == 0x009d9e9fU,
+              0x00010203U, lights, {10.0, 27.0, 37.0}, 1) == 0x009c9e9eU,
           "Retail light replaced the GTE UNR quotient with ideal division");
 
   // RTPT clamps IR before multiplying by the quotient.
@@ -1021,7 +1021,7 @@ void testRetailVertexLightUsesExactGteProjection() {
   source.matrix.translation = {0, 0, 0};
   lights[0] = source;
   require(sf::game::applyRetailVertexLightingPacked(
-              0x00010203U, lights, {0.0, 20000.0, 20000.0}, 1) == 0x00090a0bU,
+              0x00010203U, lights, {0.0, 20000.0, 20000.0}, 1) == 0x00080a0aU,
           "Retail light did not apply RTPT IR saturation");
 }
 
@@ -1035,7 +1035,7 @@ void testRetailVertexLightPreservesGsSetViewRounding() {
   // transformed vertex. Combining both operations into R^T*(v-t) changes
   // this boundary vertex from projected Y=1 to Y=0.
   require(sf::game::applyRetailVertexLightingPacked(
-              0x00010203U, lights, {0.0, 2.0, 7.0}, 17) == 0x009b9c9dU,
+              0x00010203U, lights, {0.0, 2.0, 7.0}, 17) == 0x009a9c9cU,
           "Retail light collapsed the two GsSetView2/RTPT rounding stages");
 
   // ApplyMatrixLV itself is a high/remainder pair of GTE passes. Both passes
@@ -1045,7 +1045,7 @@ void testRetailVertexLightPreservesGsSetViewRounding() {
   lights[0] = source;
   require(sf::game::applyRetailVertexLightingPacked(0x00010203U, lights,
                                                     {30000.0, 30000.0, 32.0},
-                                                    320) == 0x009d9e9fU,
+                                                    320) == 0x009c9e9eU,
           "Retail light incorrectly clamped ApplyMatrixLV remainder MAC");
 }
 
@@ -1054,12 +1054,12 @@ void testRetailVertexLightShiftSemanticsAreExact() {
   source.screen_shift = 31U;
   std::array lights{source};
   require(sf::game::applyRetailVertexLightingPacked(
-              0x00010203U, lights, {10.0, 20.0, 157.0}, 320) == 0x00a1a2a3U,
+              0x00010203U, lights, {10.0, 20.0, 157.0}, 320) == 0x00a0a2a2U,
           "Retail near-depth shift did not wrap through the MIPS low bits");
 
   lights[0].screen_shift = 0U;
   require(sf::game::applyRetailVertexLightingPacked(
-              0x00010203U, lights, {10.0, 20.0, 286.0}, 320) == 0x00616263U,
+              0x00010203U, lights, {10.0, 20.0, 286.0}, 320) == 0x00606262U,
           "Retail zero screen shift was incorrectly rejected");
 }
 
@@ -1091,7 +1091,7 @@ void testRetailVertexLightDirectionAndMalformedRecordsFailClosed() {
   std::array lights{source};
   const auto reversed = sf::game::DynamicLightPoint{10.0, 20.0, -226.0};
   require(sf::game::applyRetailVertexLightingPacked(
-              0x00010203U, lights, reversed, 320) == 0x00616263U,
+              0x00010203U, lights, reversed, 320) == 0x00606262U,
           "Attached retail flashlight did not reverse its X/Z basis");
 
   lights[0].screen_shift = 32U;
@@ -1191,6 +1191,88 @@ void testMissionFlashlightRecordLightsItsRetailForwardAxis() {
           "Mission flashlight illuminated geometry behind its retail axis");
 }
 
+void testMissionLightsMatchExecutedPsxColours() {
+  struct Fixture {
+    std::array<std::int16_t, 9> rotation;
+    std::array<std::int32_t, 3> translation;
+    sf::game::DynamicLightPoint point;
+    int extent;
+    unsigned screen_shift, depth_shift, mask, base, expected;
+  };
+  // Captured FUN_800d3b8c inputs and completed FUN_800d3cb4 results from
+  // SCUS-94240: BASEEXT flashlight + white searchlight, BASEEXT2 flashlight
+  // + red projector, and CAVE2 flashlight. H=38 belongs to light-space RTPT,
+  // independently of the reconstructed native camera H=261.
+  const std::array fixtures{
+      Fixture{{-3627, 465, -1852, 639, 3320, -425, 1753, -795, -3618},
+              {339, 454, 2071},
+              {-224, 0, 678},
+              120,
+              13,
+              6,
+              0xffffffU,
+              0x09282828U,
+              0x092e2e2eU},
+      Fixture{{2564, 0, -3208, -1457, 2868, -1165, 2682, 2232, 2145},
+              {-798, 235, 940},
+              {225, -585, -1007},
+              150,
+              12,
+              6,
+              0xffffffU,
+              0x1d8e8e8eU,
+              0x1ddadadaU},
+      Fixture{{561, 465, 4027, -715, 3320, -283, -3959, -795, 639},
+              {5012, 933, 7653},
+              {5656, -576, -6333},
+              120,
+              13,
+              6,
+              0xffffffU,
+              0x15303030U,
+              0x155e5e5eU},
+      Fixture{{4096, 0, 0, 0, 3413, 0, 0, 0, 4096},
+              {-5562, 345, 6113},
+              {5656, -516, -5655},
+              120,
+              14,
+              4,
+              0xffU,
+              0x02b6b6b6U,
+              0x02b6b6ffU},
+      Fixture{{-1875, 466, -3614, 766, 3320, 24, 3529, -795, -1929},
+              {-558, 2018, 512},
+              {-853, -2441, -510},
+              90,
+              15,
+              6,
+              0xffffffU,
+              0x00282030U,
+              0x00a69eaeU}};
+  for (const auto &fixture : fixtures) {
+    auto light = sf::game::RetailVertexLightState{};
+    light.guest_view = sf::game::RetailVertexLightMatrix{fixture.rotation,
+                                                         fixture.translation};
+    light.extent = fixture.extent;
+    light.screen_shift = fixture.screen_shift;
+    light.depth_shift = fixture.depth_shift;
+    light.channel_mask = fixture.mask;
+    const std::array lights{light};
+    require(sf::game::applyRetailVertexLightingPacked(
+                fixture.base, lights, fixture.point, 38) == fixture.expected,
+            "Mission light colour differs from executed PSX instructions");
+    require(sf::game::applyRetailVertexLightingPacked(
+                fixture.base, lights, fixture.point, 261) != fixture.expected,
+            "Projection fixture no longer detects the camera/light H mix-up");
+  }
+  auto light = retailLight();
+  // Select a point whose authored falloff reaches exactly zero.
+  const std::array lights{light};
+  require(sf::game::applyRetailVertexLightingPacked(
+              0x00010203U, lights, {10, 20, 670}, 320) == 0x00000202U,
+          "Retail zero-intensity channel rounding was lost");
+}
+
 void testCaveFlashlightUsesRetailWorldYAxis() {
   auto source = sf::game::RetailVertexLightState{};
   source.matrix.rotation = {
@@ -1260,6 +1342,7 @@ int main() {
     testPreparedRetailVertexLightMatchesExactPath();
     testRetailVertexLightRayUsesGuestMatrixAndAttachedAxis();
     testMissionFlashlightRecordLightsItsRetailForwardAxis();
+    testMissionLightsMatchExecutedPsxColours();
     testCaveFlashlightUsesRetailWorldYAxis();
     std::cout << "Dynamic lighting tests passed\n";
     return 0;

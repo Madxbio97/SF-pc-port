@@ -3,6 +3,14 @@
 All notable public-test changes are documented here. The project currently uses
 pre-release tags rather than a stable semantic-versioning promise.
 
+## Unreleased
+
+- Restored flashlight and moving searchlight illumination using the original
+  light-space projection, independently of PC camera FOV and aspect ratio.
+- Matched original PSX colour rounding and saturation when multiple projected
+  lights affect a surface. Added reference colours from executed BASEEXT,
+  BASEEXT2 and CAVE2 instructions.
+
 ## 0.1.0-public-test.29 - 2026-08-13
 
 ### Rendering and level presentation

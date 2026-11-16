@@ -622,8 +622,11 @@ applyRetailProjectedLight(std::uint32_t packed_color,
       (intensity | (intensity << 8U) | (intensity << 16U)) & light.channel_mask;
   auto result = packed_color & 0xff000000U;
   for (unsigned shift_bits = 0U; shift_bits < 24U; shift_bits += 8U) {
-    const auto base = (packed_color >> shift_bits) & 0xffU;
-    const auto add = (addition >> shift_bits) & 0xffU;
+    // FUN_800d3cb4 masks both operands with HI=0x00fefefe before its
+    // packed carry/saturation operation. This also rounds odd base channels
+    // down at the zero-intensity boundary; it is not a plain RGB add.
+    const auto base = (packed_color >> shift_bits) & 0xfeU;
+    const auto add = (addition >> shift_bits) & 0xfeU;
     result |= std::min(base + add, 255U) << shift_bits;
   }
   return result;

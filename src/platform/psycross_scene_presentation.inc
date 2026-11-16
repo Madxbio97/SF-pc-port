@@ -73,6 +73,9 @@ struct RenderPresentationSnapshot {
   bool retail_virus_scanner_overlay{};
   std::optional<game::LegacyGrenadeTrajectoryBridgeState> grenade_trajectory;
   bool flashlight_enabled{};
+  // Light-space RTPT uses the guest H register, independently of the
+  // reconstructed native camera projection and output aspect ratio.
+  std::int32_t retail_light_projection{1};
   std::vector<game::LegacyVertexLightBridgeState> vertex_lights;
   std::span<const game::LegacyWorldSectionColorsBridgeState>
       world_vertex_colors;
@@ -138,6 +141,7 @@ void captureRenderPresentation(const game::GameplaySession &gameplay,
   result.retail_virus_scanner_overlay = false;
   result.grenade_trajectory.reset();
   result.flashlight_enabled = false;
+  result.retail_light_projection = 1;
   result.vertex_lights.clear();
   result.world_vertex_colors = gameplay.legacyWorldVertexColors();
   result.world_decals.clear();
@@ -180,6 +184,7 @@ void captureRenderPresentation(const game::GameplaySession &gameplay,
     result.environment = frame->renderer->state.environment;
     result.scrim = frame->renderer->state.scrim;
     result.flashlight_enabled = frame->renderer->state.flashlight_enabled;
+    result.retail_light_projection = std::max(guest_camera.projection, 1);
     result.vertex_lights = frame->renderer->state.vertex_lights;
     result.world_decals = frame->renderer->state.world_decals;
     result.dropped_item_floor_owner_mask =
@@ -555,6 +560,7 @@ void interpolateRenderPresentation(const RenderPresentationSnapshot &previous,
   result.retail_virus_scanner_overlay = current.retail_virus_scanner_overlay;
   result.grenade_trajectory = current.grenade_trajectory;
   result.flashlight_enabled = current.flashlight_enabled;
+  result.retail_light_projection = current.retail_light_projection;
   if (object_source_changed) {
     result.objects.assign(current.objects.begin(), current.objects.end());
     result.legacy_player = current.legacy_player;

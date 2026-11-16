@@ -1057,6 +1057,12 @@ int runProbe(const std::filesystem::path &cue_path,
       return 2;
     }
     if (enable_flashlight) {
+      // The toggle links the source immediately; its completed light-space
+      // GsSetView2 matrix is published by the following original renderer.
+      runtime.advanceHostUpdate();
+      if (runtime.faulted()) {
+        return 2;
+      }
       const auto *lighting = runtime.bridge();
       if (lighting == nullptr) {
         return 2;
@@ -1085,6 +1091,13 @@ int runProbe(const std::filesystem::path &cue_path,
         retail.matrix.translation = {light.matrix.translation.x,
                                      light.matrix.translation.y,
                                      light.matrix.translation.z};
+        if (std::ranges::any_of(light.view.rotation,
+                                [](auto value) { return value != 0; })) {
+          retail.guest_view = sf::game::RetailVertexLightMatrix{
+              light.view.rotation,
+              {light.view.translation.x, light.view.translation.y,
+               light.view.translation.z}};
+        }
         retail.flags = light.flags;
         retail.extent = light.shape;
         retail.screen_shift = light.screen_shift;
@@ -1107,7 +1120,7 @@ int runProbe(const std::filesystem::path &cue_path,
                   base, sources,
                   {static_cast<double>(vertex.x), static_cast<double>(vertex.y),
                    static_cast<double>(vertex.z)},
-                  320);
+                  lighting->camera.projection);
               ++tested_vertices;
               illuminated_vertices += lit != base ? 1U : 0U;
               if (lit != base && !first_illuminated) {
@@ -1120,7 +1133,8 @@ int runProbe(const std::filesystem::path &cue_path,
           }
         }
       }
-      std::cout << "flashlight-vertex-coverage=" << illuminated_vertices << '/'
+      std::cout << "flashlight-projection=" << lighting->camera.projection
+                << " flashlight-vertex-coverage=" << illuminated_vertices << '/'
                 << tested_vertices;
       if (first_illuminated) {
         std::cout << " first=" << (*first_illuminated)[0] << ','
