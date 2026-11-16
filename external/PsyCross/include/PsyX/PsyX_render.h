@@ -377,6 +377,10 @@ extern void			GR_BeginShadowMask(void);
 extern void			GR_EndShadowMask(void);
 extern void			GR_EnableDepth(int enable);
 extern void			GR_SetDepthState(int testEnable, int writeEnable);
+/* Preserve world depth while fading only the nearest actor surface. */
+extern int GR_BeginActorSelfDepth(void);
+extern void GR_BlendActorSelfDepth(void);
+extern void GR_EndActorSelfDepth(void);
 extern int			GR_UsesWorldDepth(const GrVertex* triangle, int depthRequested);
 extern void			GR_SetScissorState(int enable);
 extern void			GR_SetOffscreenState(const RECT16* offscreenRect, int enable);

@@ -77,6 +77,9 @@ struct PrimitiveBuffer {
   StableFrameVector<POLY_GT3> triangles{"Terrain triangles"};
   StableFrameVector<POLY_GT4> quads{"Terrain quads"};
   StableFrameVector<POLY_GT3> objects{"Object triangles"};
+  std::vector<OT_TAG> translucent_player_ot =
+      std::vector<OT_TAG>(ordering_table_size);
+  bool has_translucent_player{};
   StableFrameVector<POLY_GT4> object_quads{"Object quads"};
   StableFrameVector<POLY_F3> actor_shadows{"Dynamic actor shadows"};
   StableFrameVector<POLY_F3> player{"Fallback player triangles"};
@@ -156,6 +159,7 @@ struct PrimitiveBuffer {
     triangles.reset();
     quads.reset();
     objects.reset();
+    has_translucent_player = false;
     object_quads.reset();
     actor_shadows.reset();
     player.reset();

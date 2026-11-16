@@ -676,6 +676,18 @@ SceneViewerResult PsyCrossSceneViewer::run(
           static_cast<int>(primitives.object_shadow_casters.size()),
           presentation.camera.projection, screen_width, screen_height);
     }
+    if (primitives.has_translucent_player) {
+      auto *actor_ot =
+          reinterpret_cast<u_long *>(&primitives.translucent_player_ot.back());
+      const auto self_depth = GR_BeginActorSelfDepth();
+      if (self_depth) {
+        DrawOTag(actor_ot);
+        GR_BlendActorSelfDepth();
+      }
+      DrawOTag(actor_ot);
+      if (self_depth)
+        GR_EndActorSelfDepth();
+    }
     // Opaque geometry owns PGXP-Z. Fire blends additively against that
     // depth without writing it, so walls occlude particles and lightbars.
     GR_SetBlendMode(BM_ADD);

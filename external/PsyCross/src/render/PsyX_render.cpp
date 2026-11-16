@@ -459,6 +459,7 @@ void PsyX_DestroySkybox();
 void PsyX_DestroySMAA();
 void PsyX_DestroyVolumetrics();
 void PsyX_DestroyObjectShadows();
+void PsyX_DestroyActorDepth();
 }
 
 #if defined(RENDERER_OGL)
@@ -484,6 +485,8 @@ static void PsyX_AllocateNativeDepthTexture(GLenum internalFormat, int width,
 }
 
 #endif
+
+#include "PsyX_actor_depth.inc"
 
 static GLuint PsyX_GetNativeDrawFramebuffer() {
   if (g_nativeFramePostprocessed)
@@ -818,6 +821,7 @@ void GR_Shutdown() {
   PsyX_DestroySMAA();
   PsyX_DestroyVolumetrics();
   PsyX_DestroyObjectShadows();
+  PsyX_DestroyActorDepth();
   glDeleteVertexArrays(MAX_NUM_VERTEX_BUFFERS, g_glVertexArray);
   glDeleteBuffers(MAX_NUM_VERTEX_BUFFERS, g_glVertexBuffer);
 
@@ -1361,11 +1365,25 @@ GLint u_textureBlendModeLoc;
 
 #endif
 
-// PS1 texture modulation uses the authored 5-bit texel and an 8-bit shade,
-// then truncates the result to RGB555. Expanding the texel to full-range RGB
-// before modulation retains extra light in dark surfaces on every mission.
+// Texture modulation retains the authored RGB555 input. World surfaces use
+// a mild shadow curve and a fixed PSX ordered pattern plus monochrome grain
+// before the final 5-bit quantization. Screen-space UI retains exact colours.
 #define GPU_PSX_COLOR_FUNC                                                     \
   R"PSYX(
+  uniform int textureBlendMode;
+  float sceneDither(vec2 p) {
+    vec2 cell = mod(p, 4.0);
+    vec4 row;
+    if (cell.y < 1.0) row = vec4(-4.0, 0.0, -3.0, 1.0);
+    else if (cell.y < 2.0) row = vec4(2.0, -2.0, 3.0, -1.0);
+    else if (cell.y < 3.0) row = vec4(-3.0, 1.0, -4.0, 0.0);
+    else row = vec4(3.0, -1.0, 2.0, -2.0);
+    float ordered = cell.x < 1.0 ? row.x : cell.x < 2.0 ? row.y :
+                    cell.x < 3.0 ? row.z : row.w;
+    float grain = fract(52.9829189 *
+                        fract(dot(p, vec2(0.06711056, 0.00583715)))) - 0.5;
+    return ordered + grain * 1.5;
+  }
   vec4 shadePSX(vec4 texel) {
     vec3 shade8;
     if (v_texcoord.z > 1.5) {
@@ -1373,6 +1391,10 @@ GLint u_textureBlendModeLoc;
       shade8 = texel.rgb * (255.0 / 128.0) * vertex8;
     } else {
       shade8 = floor(v_color.rgb * 255.0 + 0.0001);
+    }
+    if (v_texcoord.w > 0.5 && textureBlendMode <= 1) {
+      shade8 = pow(clamp(shade8 / 255.0, 0.0, 1.0), vec3(1.12)) * 255.0;
+      shade8 += sceneDither(floor(gl_FragCoord.xy));
     }
     vec3 color5 = floor(clamp(shade8, 0.0, 255.0) / 8.0 + 0.0001);
     vec3 expanded = (color5 * 8.0 + floor(color5 / 4.0)) / 255.0;
@@ -1384,7 +1406,6 @@ GLint u_textureBlendModeLoc;
   GPU_FETCH_VRAM_FUNC                                                          \
   GPU_ARRAY_FUNC                                                               \
   GPU_SAMPLE_TEXTURE_##bit##BIT_FUNC GPU_PSX_COLOR_FUNC                        \
-      "	uniform int textureBlendMode;\n"                                       \
       "	uniform sampler2D s_rgLut;\n"                                          \
       "	const vec2 c_LUTTexel = vec2(1.0 / 256.0, 1.0 / 256.0);\n"             \
       "	vec4 lut(vec2 rg) {\n"                                                 \
@@ -1528,6 +1549,7 @@ const char *gpu_shader_32_rgba =
   "	const vec2 c_UVFudge = vec2(0.00025, 0.00025);\n"                          \
   "	void main() {\n"                                                           \
   "		v_texcoord = a_texcoord;\n"                                               \
+  "\t\tv_texcoord.w = step(0.0001, a_zw.y);\n"                                 \
   "		v_texcoord.xy = a_precise_uv;\n"                                          \
   "		v_texcoord.xy += a_extra.xy * 0.5;\n"                                     \
   "		v_texbounds = a_texbounds;\n"                                             \
@@ -2879,8 +2901,13 @@ void GR_SwapWindow() {
 }
 
 void GR_SetDepthState(int testEnable, int writeEnable) {
-  const int appliedTest = testEnable && g_cfg_pgxpZBuffer ? 1 : 0;
-  const int appliedWrite = appliedTest && writeEnable ? 1 : 0;
+  const int appliedTest =
+      (testEnable || g_actorDepthPass) && g_cfg_pgxpZBuffer ? 1 : 0;
+  const int appliedWrite =
+      appliedTest &&
+              (g_actorDepthPass == 1 || (g_actorDepthPass == 0 && writeEnable))
+          ? 1
+          : 0;
 
 #if USE_OPENGL
   // Opaque geometry owns depth and therefore remains strict. Transparent

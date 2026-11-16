@@ -1590,20 +1590,26 @@ void renderPresentedPlayer(
         player_object.transform, {view.m[2][0], view.m[2][1], view.m[2][2]},
         view.t[2], player_object.legacy_hmd_pose_flags);
     const auto translucent = visibility == PlayerCameraVisibility::translucent;
+    auto &player_ot =
+        translucent ? primitives.translucent_player_ot : ordering_table;
+    if (translucent) {
+      ClearOTagR(reinterpret_cast<u_long *>(player_ot.data()),
+                 ordering_table_size);
+      primitives.has_translucent_player = true;
+    }
     if (visibility != PlayerCameraVisibility::hidden) {
       const auto wound_vertices = legacyHmdWoundVertices(
           gameplay, presentation.player_guest_slot, *player_model);
-      renderHmdObject(*player_model, player_object, &pose,
-                      game::resident_hmd_texture_bank, pose_scratch, view,
-                      ordering_table, primitives, stats, std::nullopt,
-                      world_vertices, world_normals, translucent, true,
-                      &wound_vertices);
+      renderHmdObject(
+          *player_model, player_object, &pose, game::resident_hmd_texture_bank,
+          pose_scratch, view, player_ot, primitives, stats, std::nullopt,
+          world_vertices, world_normals, translucent, true, &wound_vertices);
     }
     if (gameplay.playerAlive() &&
         visibility != PlayerCameraVisibility::hidden && weapon_presentation) {
       renderActorWeapon(*weapon_presentation, player_object,
                         game::resident_weapon_texture_bank, presentation.camera,
-                        view, ordering_table, primitives, stats, translucent);
+                        view, player_ot, primitives, stats, translucent);
     }
   } else if (!gameplay.legacyRenderCommandsAuthoritative()) {
     renderPlayer(presentation.player, view, ordering_table, primitives, stats);

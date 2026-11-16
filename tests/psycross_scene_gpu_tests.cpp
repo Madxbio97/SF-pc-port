@@ -1,0 +1,318 @@
+#define SDL_MAIN_HANDLED
+#include <PsyX/PsyX_public.h>
+#include <PsyX/PsyX_render.h>
+#include <PsyX/common/glad.h>
+#include <SDL.h>
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstdint>
+#include <iostream>
+#include <stdexcept>
+#include <string>
+#include <vector>
+extern int g_nativeFramebufferWidth, g_nativeFramebufferHeight;
+GLuint shader(GLenum kind, const char *src) {
+  auto s = glCreateShader(kind);
+  glShaderSource(s, 1, &src, nullptr);
+  glCompileShader(s);
+  GLint ok;
+  glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
+  if (!ok) {
+    std::array<char, 4096U> log{};
+    glGetShaderInfoLog(s, static_cast<GLsizei>(log.size()), nullptr,
+                       log.data());
+    glDeleteShader(s);
+    throw std::runtime_error(std::string{"GPU shader compile failed: "} +
+                             log.data());
+  }
+  return s;
+}
+GLuint program() {
+  auto p = glCreateProgram();
+  glAttachShader(p, shader(GL_VERTEX_SHADER, R"(#version 330
+ uniform float z;
+ void main(){ vec2 p=gl_VertexID==0?vec2(-1,-1):gl_VertexID==1?vec2(3,-1):vec2(-1,3);gl_Position=vec4(p,z*2.0-1.0,1);})"));
+  glAttachShader(p, shader(GL_FRAGMENT_SHADER, R"(#version 330
+ uniform vec4 color;out vec4 fragColor;void main(){fragColor=color;})"));
+  glLinkProgram(p);
+  GLint ok;
+  glGetProgramiv(p, GL_LINK_STATUS, &ok);
+  if (!ok)
+    throw std::runtime_error("link");
+  return p;
+}
+void require(bool v, const char *m) {
+  if (!v)
+    throw std::runtime_error(m);
+}
+void testActorDepth() {
+  auto p = program();
+  glUseProgram(p);
+  GLuint vao;
+  glGenVertexArrays(1, &vao);
+  glBindVertexArray(vao);
+  g_cfg_pgxpZBuffer = 1;
+  for (int samples : {0, 4, 0}) {
+    int size = samples == 4 ? 64 : 96;
+    g_nativeFramebufferWidth = g_nativeFramebufferHeight = size;
+    GLuint fbo, rb[2], resolve, texture;
+    glGenFramebuffers(1, &fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glGenRenderbuffers(2, rb);
+    glBindRenderbuffer(GL_RENDERBUFFER, rb[0]);
+    if (samples > 0)
+      glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, GL_RGBA8, size,
+                                       size);
+    else
+      glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, size, size);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                              GL_RENDERBUFFER, rb[0]);
+    glBindRenderbuffer(GL_RENDERBUFFER, rb[1]);
+    if (samples > 0)
+      glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples,
+                                       GL_DEPTH32F_STENCIL8, size, size);
+    else
+      glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH32F_STENCIL8, size, size);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
+                              GL_RENDERBUFFER, rb[1]);
+    require(glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE,
+            "main FBO");
+    glGenFramebuffers(1, &resolve);
+    glGenTextures(1, &texture);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, size, size, 0, GL_RGBA,
+                 GL_UNSIGNED_BYTE, nullptr);
+    glBindFramebuffer(GL_FRAMEBUFFER, resolve);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+                           texture, 0);
+    require(glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE,
+            "resolve FBO");
+    auto pixel = [&] {
+      glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
+      glBindFramebuffer(GL_DRAW_FRAMEBUFFER, resolve);
+      auto sc = glIsEnabled(GL_SCISSOR_TEST);
+      glDisable(GL_SCISSOR_TEST);
+      glBlitFramebuffer(0, 0, size, size, 0, 0, size, size, GL_COLOR_BUFFER_BIT,
+                        GL_NEAREST);
+      if (sc)
+        glEnable(GL_SCISSOR_TEST);
+      glBindFramebuffer(GL_READ_FRAMEBUFFER, resolve);
+      std::array<unsigned char, 4> c{};
+      glReadPixels(size / 2, size / 2, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE,
+                   c.data());
+      glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+      return c;
+    };
+    auto draw = [&](float z, float r, float g, float b, float alpha) {
+      glUniform1f(glGetUniformLocation(p, "z"), z);
+      glUniform4f(glGetUniformLocation(p, "color"), r, g, b, alpha);
+      GR_SetDepthState(1, 0);
+      glDrawArrays(GL_TRIANGLES, 0, 3);
+    };
+    for (bool wall : {false, true}) {
+      glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+      glViewport(0, 0, size, size);
+      glDisable(GL_SCISSOR_TEST);
+      GR_SetDepthState(1, 1);
+      glClearColor(0, 0, 1, 1);
+      glClearDepth(wall ? 0.8 : 0.25);
+      glClearStencil(90);
+      glStencilMask(255);
+      glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT |
+              GL_STENCIL_BUFFER_BIT);
+      glEnable(GL_BLEND);
+      glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+      glEnable(GL_SCISSOR_TEST);
+      glScissor(0, 0, size, size);
+      require(GR_BeginActorSelfDepth() == 1, "begin self depth");
+      draw(0.5f, 1, 0, 0, 0.5f);
+      draw(0.75f, 0, 1, 0, 0.5f);
+      GR_BlendActorSelfDepth();
+      draw(0.5f, 1, 0, 0, 0.5f);
+      draw(0.75f, 0, 1, 0, 0.5f);
+      GR_EndActorSelfDepth();
+      auto color = pixel();
+      std::cout << "MSAA=" << samples << " wall=" << wall
+                << " actor RGB=" << int(color[0]) << "," << int(color[1]) << ","
+                << int(color[2]) << "\n";
+      require(color[0] <= 1,
+              "rear red actor surface leaked through green front");
+      require(wall ? color[1] == 0 && color[2] == 255
+                   : abs(int(color[1]) - 128) <= 1 &&
+                         abs(int(color[2]) - 128) <= 1,
+              "wrong actor opacity or wall occlusion");
+      // A later particle behind the actor must see the original world depth.
+      draw(0.6f, 1, 1, 1, 0.5f);
+      color = pixel();
+      require(wall ? color[0] == 0 : abs(int(color[0]) - 128) <= 1,
+              "world depth was not restored for later effects");
+      require(glIsEnabled(GL_SCISSOR_TEST), "scissor not restored");
+      require(glGetError() == GL_NO_ERROR, "GL error");
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glDeleteFramebuffers(1, &fbo);
+    glDeleteFramebuffers(1, &resolve);
+    glDeleteRenderbuffers(2, rb);
+    glDeleteTextures(1, &texture);
+  }
+}
+
+extern const char *gpu_shader_4;
+extern const char *gpu_shader_8;
+extern const char *gpu_shader_16;
+void testSceneTone() {
+  // Compile the shipping vertex and fragment sources as well as the controlled
+  // fullscreen fixture below. No game window or gameplay input is involved.
+  for (const char *src : {gpu_shader_4, gpu_shader_8, gpu_shader_16}) {
+    auto linked = GR_Shader_Compile(src, 1);
+    GLint ok{};
+    glGetProgramiv(linked, GL_LINK_STATUS, &ok);
+    require(ok == GL_TRUE, "shipping PSX shader did not link");
+    glDeleteProgram(linked);
+  }
+  const char *vs = R"(#version 330
+ out vec4 v_texcoord;out vec4 v_color;
+ flat out vec4 v_page_clut;flat out float v_alias_page;flat out vec4 v_texbounds;
+ uniform float world;uniform float shade;
+ void main(){
+  vec2 p=gl_VertexID==0?vec2(-1,-1):gl_VertexID==1?vec2(3,-1):vec2(-1,3);
+  gl_Position=vec4(p,0,1);v_texcoord=vec4(0.0,0.0,1.0,world);
+  v_color=vec4(vec3(shade/255.0),1);
+  v_page_clut=vec4(0.00025,0.00025,0,0);v_alias_page=0;v_texbounds=vec4(0);
+ })";
+  auto fs = std::string(R"(#version 330
+ #define texture2D texture
+ #define FLAT flat
+ in vec4 v_texcoord;in vec4 v_color;
+ flat in vec4 v_page_clut;flat in float v_alias_page;flat in vec4 v_texbounds;
+ out vec4 fragColor;
+ )") + gpu_shader_16;
+  auto p = glCreateProgram();
+  glAttachShader(p, shader(GL_VERTEX_SHADER, vs));
+  glAttachShader(p, shader(GL_FRAGMENT_SHADER, fs.c_str()));
+  glLinkProgram(p);
+  GLint ok{};
+  glGetProgramiv(p, GL_LINK_STATUS, &ok);
+  require(ok == GL_TRUE, "tone fixture did not link");
+  glUseProgram(p);
+  GLuint tex[3], fbo;
+  glGenTextures(3, tex);
+  std::vector<std::uint8_t> vram(1024 * 512 * 2);
+  vram[0] = vram[1] = 255;
+  std::vector<std::uint8_t> lut(256 * 256 * 4);
+  for (unsigned v = 0; v < 65536; ++v) {
+    for (unsigned ch = 0; ch < 3; ++ch) {
+      unsigned c = (v >> (ch * 5)) & 31;
+      lut[v * 4 + ch] = std::uint8_t((c << 3) | (c >> 2));
+    }
+    lut[v * 4 + 3] = (v & 0x8000) ? 128 : 0;
+  }
+  for (int i = 0; i < 3; ++i) {
+    glActiveTexture(GL_TEXTURE0 + i);
+    glBindTexture(GL_TEXTURE_2D, tex[i]);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexImage2D(GL_TEXTURE_2D, 0, i == 0 ? GL_RG8 : GL_RGBA8,
+                 i == 0   ? 1024
+                 : i == 1 ? 256
+                          : 32,
+                 i == 0   ? 512
+                 : i == 1 ? 256
+                          : 32,
+                 0, i == 0 ? GL_RG : GL_RGBA, GL_UNSIGNED_BYTE,
+                 i == 0   ? vram.data()
+                 : i == 1 ? lut.data()
+                          : nullptr);
+  }
+  glGenFramebuffers(1, &fbo);
+  glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+                         tex[2], 0);
+  require(glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE,
+          "tone FBO");
+  glUniform1i(glGetUniformLocation(p, "s_texture"), 0);
+  glUniform1i(glGetUniformLocation(p, "s_aliasTexture"), 0);
+  glUniform1i(glGetUniformLocation(p, "s_rgLut"), 1);
+  glUniform1i(glGetUniformLocation(p, "textureFilterMode"), 0);
+  glViewport(0, 0, 32, 32);
+  glDisable(GL_DEPTH_TEST);
+  glDisable(GL_SCISSOR_TEST);
+  glDisable(GL_BLEND);
+  glDisable(GL_DITHER);
+  auto render = [&](float scene, float shade, int blend) {
+    glUniform1f(glGetUniformLocation(p, "world"), scene);
+    glUniform1f(glGetUniformLocation(p, "shade"), shade);
+    glUniform1i(glGetUniformLocation(p, "textureBlendMode"), blend);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    std::vector<std::uint8_t> result(32 * 32 * 4);
+    glReadPixels(0, 0, 32, 32, GL_RGBA, GL_UNSIGNED_BYTE, result.data());
+    return result;
+  };
+  const auto ui = render(0, 96, 0), world = render(1, 96, 0),
+             repeat = render(1, 96, 0), emissive = render(1, 96, 2),
+             black = render(1, 0, 0), white = render(1, 255, 0);
+  require(world == repeat, "scene grain changed between identical frames");
+  require(ui == emissive, "world tone altered additive light colours");
+  unsigned minimum = 255, maximum = 0;
+  double total = 0;
+  for (size_t i = 0; i < world.size(); i += 4) {
+    require(ui[i] == 99 && ui[i + 1] == 99 && ui[i + 2] == 99,
+            "scene tone altered exact HUD RGB555");
+    require(world[i] == world[i + 1] && world[i] == world[i + 2],
+            "monochrome dither introduced colour noise");
+    require(world[i + 3] == ui[i + 3], "scene tone changed material alpha");
+    require(black[i] == 0 && white[i] == 255,
+            "scene grain lifted black or clipped white");
+    minimum = std::min(minimum, unsigned(world[i]));
+    maximum = std::max(maximum, unsigned(world[i]));
+    total += world[i];
+    auto c = world[i] >> 3;
+    require(world[i] == ((c << 3) | (c >> 2)),
+            "dither bypassed final RGB555 quantization");
+  }
+  require(maximum > minimum && maximum - minimum <= 9,
+          "scene dither missing or stronger than one RGB555 step");
+  require(total / 1024.0 < 94 && total / 1024.0 > 75,
+          "scene curve failed to darken midtones moderately");
+  require(glGetError() == GL_NO_ERROR, "tone GL error");
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  glDeleteFramebuffers(1, &fbo);
+  glDeleteTextures(3, tex);
+  glDeleteProgram(p);
+}
+int main() {
+  SDL_SetMainReady();
+  if (SDL_Init(SDL_INIT_VIDEO) != 0) {
+    std::cout << "No SDL video driver, skipping GPU tests\n";
+    return 77;
+  }
+  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+  SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+  auto *w = SDL_CreateWindow("Renderer subsystem tests", 0, 0, 64, 64,
+                             SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
+  auto ctx = w ? SDL_GL_CreateContext(w) : nullptr;
+  if (!ctx || !gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress)) {
+    if (ctx)
+      SDL_GL_DeleteContext(ctx);
+    if (w)
+      SDL_DestroyWindow(w);
+    SDL_Quit();
+    std::cout << "No OpenGL 3.3 context, skipping GPU tests\n";
+    return 77;
+  }
+  int result = 0;
+  try {
+    testActorDepth();
+    testSceneTone();
+    std::cout << "Actor self-depth and scene tone GPU tests passed\n";
+  } catch (const std::exception &e) {
+    std::cerr << e.what() << "\n";
+    result = 1;
+  }
+  SDL_GL_DeleteContext(ctx);
+  SDL_DestroyWindow(w);
+  SDL_Quit();
+  return result;
+}

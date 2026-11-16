@@ -88,6 +88,11 @@ if(SF_BUILD_TESTS)
             LIBRARIES psycross_static)
         sf_add_unit_test(sf_pgxp_precision_tests tests/pgxp_precision_tests.cpp
             LIBRARIES psycross_static)
+        sf_add_unit_test(sf_psycross_scene_gpu_tests
+            tests/psycross_scene_gpu_tests.cpp
+            LIBRARIES psycross_static SDL2::SDL2)
+        set_tests_properties(sf_psycross_scene_gpu_tests PROPERTIES
+            SKIP_RETURN_CODE 77 LABELS "gpu")
         sf_add_unit_test(sf_psycross_vram_tests
             tests/psycross_vram_tests.cpp LIBRARIES sf::psycross_backend)
         target_include_directories(sf_psycross_vram_tests
