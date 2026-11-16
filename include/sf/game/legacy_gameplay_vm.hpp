@@ -1285,8 +1285,13 @@ public:
       const LegacyNativeMissionBridgeProfile &profile =
           syphonFilterUsaV11NativeMissionBridgeProfile()) noexcept;
   [[nodiscard]] bool
+  restoreCarriedInventory(const LegacyInventoryBridgeState &state,
+                          const LegacyNativeMissionBridgeProfile &profile =
+                              syphonFilterUsaV11NativeMissionBridgeProfile());
+  [[nodiscard]] bool
   startRetailDemo(std::span<const std::byte> recording) noexcept;
   [[nodiscard]] bool retailDemoActive() const noexcept;
+  [[nodiscard]] bool restartCheckpointMusic();
   [[nodiscard]] bool setRetailHardMode(bool enabled) noexcept;
   [[nodiscard]] bool setAgentDifficulty(bool enabled) noexcept;
   [[nodiscard]] bool applyAgentMissionNpcOverrides(

@@ -6410,6 +6410,36 @@ void testLegacyGameplayVmBoundary() {
           "Virtual-CD sync did not preserve retail idle/active stream polling");
   vm.bindSyphonFilterUsaV11VirtualCdCalls(nullptr);
 
+  constexpr std::uint32_t music_bank = 0x801ee000U;
+  constexpr std::uint32_t music_table = 0x801ee100U;
+  std::array<std::uint32_t, 4U> music_request{};
+  unsigned music_starts{};
+  vm.bindHostCall(0x800c087cU, [&](sf::game::LegacyHostCallContext &context) {
+    ++music_starts;
+    for (std::size_t i = 0U; i < music_request.size(); ++i) {
+      music_request[i] = context.argument(i);
+    }
+    context.setReturnValue(0U);
+  });
+  require(vm.runtime().write32(0x801163c4U, 0U) &&
+              vm.restartCheckpointMusic() && music_starts == 0U &&
+              vm.runtime().write32(0x801163c4U, music_table) &&
+              vm.runtime().write32(0x801163c8U, music_bank) &&
+              vm.runtime().write32(music_bank + 4U, music_table) &&
+              vm.runtime().write8(music_bank + 0xcU, 3U) &&
+              vm.runtime().write16(0x801163ccU, 1U) &&
+              vm.runtime().write32(0x801163d0U, 1U) &&
+              vm.restartCheckpointMusic() && music_starts == 0U &&
+              vm.runtime().write32(0x801163d0U, 0U) &&
+              vm.restartCheckpointMusic() && music_starts == 1U &&
+              music_request ==
+                  std::array{music_bank, 1U, 0xfffffffeU, 0xfffffffeU} &&
+              vm.runtime().write16(0x801163ccU, 3U) &&
+              !vm.restartCheckpointMusic() && music_starts == 1U &&
+              vm.runtime().write32(0x801163c4U, 0U) &&
+              vm.unbindHostCall(0x800c087cU),
+          "Checkpoint music did not restart only the active retail cue");
+
   auto impact_profile = native_profile;
   impact_profile.event_entry = 0x80031020U;
   std::array<std::uint32_t, 8U> impact_arguments{};
@@ -6497,6 +6527,41 @@ void testLegacyGameplayVmBoundary() {
           inventory_reserve_8 == 108U && inventory_magazine_8 == 18U &&
           inventory_reserve_25 == 125U && inventory_magazine_25 == 35U,
       "Retail inventory current/owned/reserve/magazine layout mismatch");
+
+  constexpr std::array equipment_calls{0x80045e24U, 0x80045c04U, 0x80023214U,
+                                       0x800923f8U, 0x80040294U};
+  std::vector<std::uint32_t> equipment_order;
+  std::array<std::uint32_t, 3U> equip_args{};
+  std::array<std::uint32_t, 2U> pose_args{};
+  for (const auto entry : equipment_calls) {
+    vm.bindHostCall(entry,
+                    [&, entry](sf::game::LegacyHostCallContext &context) {
+                      equipment_order.push_back(entry);
+                      if (entry == equipment_calls[0]) {
+                        equip_args = {context.argument(0), context.argument(1),
+                                      context.argument(2)};
+                      } else if (entry == equipment_calls[2]) {
+                        pose_args = {context.argument(0), context.argument(1)};
+                      }
+                      context.setReturnValue(1U);
+                    });
+  }
+  require(
+      vm.runtime().write32(inventory_profile.inventory_current_weapon, 1U) &&
+          vm.runtime().write32(0x8010c390U + 8U * 0x20U, 2U << 3U) &&
+          vm.restoreCarriedInventory(inventory_state, inventory_profile) &&
+          vm.restoreCarriedInventory(inventory_state, inventory_profile) &&
+          std::ranges::equal(equipment_order, equipment_calls) &&
+          equip_args == std::array{inventory_player, 8U, 1U} &&
+          pose_args == std::array{inventory_player, 2U} &&
+          vm.runtime().read16(inventory_profile.inventory_ammo_table + 34U,
+                              inventory_magazine_8) &&
+          inventory_magazine_8 == 18U,
+      "Carried rifle did not restore its retail attachment and grip once");
+  for (const auto entry : equipment_calls) {
+    require(vm.unbindHostCall(entry),
+            "Could not remove equipment test binding");
+  }
 
   auto mission_bridge_profile = inventory_profile;
   mission_bridge_profile.mission_progress_pointer = 0x801f1000U;

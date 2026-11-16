@@ -7633,6 +7633,44 @@ bool LegacyGameplayVm::writeHostInventoryState(
   return true;
 }
 
+bool LegacyGameplayVm::restoreCarriedInventory(
+    const LegacyInventoryBridgeState &state,
+    const LegacyNativeMissionBridgeProfile &profile) {
+  std::uint32_t previous_weapon{};
+  if (state.current_weapon >= legacy_inventory_weapon_count ||
+      !runtime_.read32(profile.inventory_current_weapon, previous_weapon) ||
+      !writeHostInventoryState(state, profile)) {
+    return false;
+  }
+  if (previous_weapon == state.current_weapon) {
+    return true;
+  }
+
+  // SCUS-94240's inventory restore (8009268c) attaches the model, chooses
+  // the weapon's grip and refreshes the HUD after restoring the ammo table.
+  // Its silent equip mode preserves partially loaded magazines on a retry.
+  std::uint32_t player{};
+  std::uint32_t weapon_flags{};
+  const std::uint32_t weapon = state.current_weapon;
+  if (!runtime_.read32(profile.player_pointer, player) ||
+      !runtime_.read32(0x8010c390U + 0x20U * weapon, weapon_flags)) {
+    return false;
+  }
+  const auto cpu = runtime_.state();
+  constexpr auto budget = 1'000'000U;
+  const bool equipped =
+      invokeFrameCall(0x80045e24U, std::array{player, weapon, 1U}, budget)
+          .completed() &&
+      invokeFrameCall(0x80045c04U, std::array{player}, budget).completed() &&
+      invokeFrameCall(0x80023214U,
+                      std::array{player, (weapon_flags >> 3U) & 7U}, budget)
+          .completed() &&
+      invokeFrameCall(0x800923f8U, std::array{weapon}, budget).completed() &&
+      invokeFrameCall(0x80040294U, {}, budget).completed();
+  runtime_.restoreCpuState(cpu);
+  return equipped;
+}
+
 bool LegacyGameplayVm::startRetailDemo(
     std::span<const std::byte> recording) noexcept {
   // SCUS state 8 loads COMMON/<mission>.DEM here. The input routine at
@@ -8992,6 +9030,41 @@ bool LegacyGameplayVm::advanceAudioFrameClock(
 bool LegacyGameplayVm::advanceAudioSliceClock(
     const LegacyRetailAudioProfile &profile) noexcept {
   return advanceAudioClockCallbacks(profile, 1U);
+}
+
+bool LegacyGameplayVm::restartCheckpointMusic() {
+  // Retail's group 3 player stores its bank and cue here. Re-entering
+  // 800c087c stops the bank's current sequences and starts the authored cue.
+  // Other sound groups and the CD/XA dialogue stream have separate players.
+  std::uint32_t table{};
+  std::uint32_t paused{};
+  if (!runtime_.read32(0x801163c4U, table) ||
+      !runtime_.read32(0x801163d0U, paused)) {
+    return false;
+  }
+  if (table == 0U || paused != 0U) {
+    return true;
+  }
+
+  std::uint32_t bank{};
+  std::uint32_t bank_table{};
+  std::uint16_t cue{};
+  std::uint8_t cue_count{};
+  if (!runtime_.read32(0x801163c8U, bank) || bank == 0U ||
+      !runtime_.read32(bank + 4U, bank_table) || bank_table != table ||
+      !runtime_.read16(0x801163ccU, cue) ||
+      !runtime_.read8(bank + 0xcU, cue_count) || cue >= cue_count) {
+    return false;
+  }
+  constexpr auto keep_setting = 0xfffffffeU;
+  const auto cpu = runtime_.state();
+  const auto result =
+      invokeFrameCall(0x800c087cU,
+                      std::array{bank, static_cast<std::uint32_t>(cue),
+                                 keep_setting, keep_setting},
+                      5'000'000U);
+  runtime_.restoreCpuState(cpu);
+  return result.completed();
 }
 
 bool LegacyGameplayVm::stopRetailXa(const LegacyRetailAudioProfile &profile,

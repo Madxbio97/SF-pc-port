@@ -588,7 +588,7 @@ bool LegacyFirstMissionRuntime::applyCampaignCarryState(
       return restored;
     };
     try {
-      if (!vm_->writeHostInventoryState(inventory) ||
+      if (!vm_->restoreCarriedInventory(inventory) ||
           !vm_->writeHostPlayerVitals(static_cast<std::int16_t>(state.health),
                                       static_cast<std::int16_t>(state.armor)) ||
           !publishPresentationFrame()) {
@@ -643,7 +643,7 @@ bool LegacyFirstMissionRuntime::applyRetryInventoryState(
       // A retry is not a new campaign baseline. Restore only the ordinary
       // weapon table over the checkpoint VM and leave health, mission-local
       // items, initial_snapshot_ and checkpoint_ untouched.
-      if (!vm_->writeHostInventoryState(inventory) ||
+      if (!vm_->restoreCarriedInventory(inventory) ||
           !publishPresentationFrame()) {
         if (!rollback()) {
           markFault();
@@ -746,6 +746,12 @@ bool LegacyFirstMissionRuntime::restoreCheckpoint() noexcept {
   resetAgentPark2BombDetonation();
   try {
     if (!vm_->restoreSnapshot(checkpoint_->vm)) {
+      markFault();
+      return false;
+    }
+    // If a checkpoint has an incomplete sound bank, keep its saved audio.
+    if (!vm_->restartCheckpointMusic() &&
+        !vm_->restoreSnapshot(checkpoint_->vm)) {
       markFault();
       return false;
     }
