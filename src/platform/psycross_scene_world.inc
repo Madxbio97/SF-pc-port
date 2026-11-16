@@ -1654,6 +1654,7 @@ void renderGuestCameraLists(
     std::span<const game::LegacyGuestRawPacketPresentationState>
         retained_raw_packets,
     const MATRIX &view, std::vector<OT_TAG> &ordering_table,
+    std::vector<OT_TAG> &particle_ordering_table,
     std::vector<OT_TAG> &overlay_ordering_table, PrimitiveBuffer &primitives,
     RenderStats &stats) {
   // Texture residency follows the native camera, while projected guest
@@ -1875,9 +1876,6 @@ void renderGuestCameraLists(
         game::legacyHaloBackColor(sprite.color, sprite.force_fullbright);
     const auto halo_presentation = game::legacyHaloPresentationDescriptor(
         halo_clut_color, halo_back_color);
-    const auto volume_may_replace_retail_sprite =
-        game::legacyCfireVolumeMayReplaceRetailSprite(
-            gameplay.missionIndex(), persistent_fire.has_value());
     const auto fire_tuning = game::legacyCfireVolumeTuning(
         gameplay.missionIndex(), volume_kind_override == GR_VOLUME_FIRE);
     const auto retail_expl_frame_volume =
@@ -1919,28 +1917,17 @@ void renderGuestCameraLists(
       const auto view_depth = (*projected_effect)[2];
       const auto half_width = half_screen_width * view_depth / projection;
       const auto half_height = half_screen_height * view_depth / projection;
-      const auto volume_requested =
-          volume_may_replace_retail_sprite || retail_frame_volume;
-      const auto volume_presented =
-          volume_requested &&
-          enqueueGuestVolumetricEffect(
-              sprite,
-              presented_effect_position,
-              Vector3{half_width, half_height,
-                      std::max(half_width, half_height) *
-                          (retail_frame_volume ? 0.55 : 0.68)},
-              presentation.camera, primitives.volumetric_effects,
-              volume_kind_override, halo_presentation, fire_tuning,
-              persistent_fire && !retail_frame_volume
-                  ? &*persistent_fire
-                  : nullptr,
-              retail_frame_volume_flags);
-      if (game::legacyEffectVolumeConsumesRetailSprite(
-              volume_may_replace_retail_sprite, volume_presented,
-              retail_frame_volume)) {
-        // Once the volume is accepted it owns the complete particle, including
-        // the compact emissive core. The retail quad remains only as a safe
-        // fallback when the volume pass is unavailable or at capacity.
+      const auto volume_presented = enqueueGuestVolumetricEffect(
+          sprite, presented_effect_position,
+          Vector3{half_width, half_height,
+                  std::max(half_width, half_height) *
+                      (retail_frame_volume ? 0.55 : 0.68)},
+          presentation.camera, primitives.volumetric_effects,
+          volume_kind_override, halo_presentation, fire_tuning,
+          persistent_fire && !retail_frame_volume ? &*persistent_fire : nullptr,
+          retail_frame_volume_flags);
+      if (game::legacyVolumeReplacesHalo(sprite, steam_effect,
+                                         volume_presented)) {
         primitives.guest_sprites.pop_back();
         continue;
       }
@@ -2030,7 +2017,12 @@ void renderGuestCameraLists(
       emit(primitive.x1, primitive.y1, second);
       emit(primitive.x2, primitive.y2, third);
       emit(primitive.x3, primitive.y3, fourth);
-      target_table = &ordering_table;
+      // Transparent particle layers test against the opaque scene without
+      // writing depth over other overlapping smoke or gas sprites.
+      target_table = (sprite.attribute & 0x40000000U) != 0U &&
+                             (sprite.effect_family != 0U || steam_effect)
+                         ? &particle_ordering_table
+                         : &ordering_table;
     }
     addPrim(&(*target_table)[depth], &primitive);
     ++stats.submitted;
@@ -4308,7 +4300,8 @@ RenderStats renderWorld(
   renderGuestCameraLists(gameplay, textures, presentation, actor_animations,
                          actor_tick, pose_scratch, retained_sprites,
                          retained_raw_packets, view, ordering_table,
-                         guest_overlay_ordering_table, primitives, stats);
+                         fire_ordering_table, guest_overlay_ordering_table,
+                         primitives, stats);
   renderVirusScannerFallbackObjects(gameplay, presentation, view,
                                     scanner_xray_ordering_table, primitives,
                                     stats);

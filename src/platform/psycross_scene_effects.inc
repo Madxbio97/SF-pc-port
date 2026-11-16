@@ -37,7 +37,6 @@ struct FireParticle {
       game::LegacyEffectSpriteFamily::explosion};
   int volume_kind_override{-1};
   game::LegacyCfireVolumeTuning volume_tuning{};
-  bool volume_may_replace_retail_sprite{true};
   bool retail_expl_frame_volume{};
   bool retail_fire_frame_volume{};
   bool persistent_volume{};
@@ -106,9 +105,6 @@ public:
       for (auto &particle : emitter.particles) {
         particle.volume_kind_override = GR_VOLUME_FIRE;
         particle.volume_tuning = volume_tuning;
-        particle.volume_may_replace_retail_sprite =
-            game::legacyCfireVolumeMayReplaceRetailSprite(
-                gameplay.missionIndex(), true);
         particle.retail_expl_frame_volume =
             game::legacyCfireUsesRetailExplFrameVolume(
                 gameplay.missionIndex(), true, particle.family);
@@ -1248,21 +1244,10 @@ void renderFireObject(const game::ObjectFireEmitter &fire,
     const auto half_height = half_width *
                              static_cast<double>(image.displayHeight()) /
                              static_cast<double>(image.displayWidth());
-    const auto volume_requested =
-        particle.volume_may_replace_retail_sprite ||
-        particle.retail_expl_frame_volume ||
-        particle.retail_fire_frame_volume;
-    const auto volume_presented =
-        allow_volumetric_effects && volume_requested &&
-        enqueueFireVolumetricEffect(
-            particle, half_width, half_height, particle_index, images->size(),
-            camera, volumes, presentation_amount);
-    const auto retail_frame_volume = particle.retail_expl_frame_volume ||
-                                     particle.retail_fire_frame_volume;
-    if (game::legacyEffectVolumeConsumesRetailSprite(
-            particle.volume_may_replace_retail_sprite, volume_presented,
-            retail_frame_volume)) {
-      continue;
+    if (allow_volumetric_effects) {
+      static_cast<void>(enqueueFireVolumetricEffect(
+          particle, half_width, half_height, particle_index, images->size(),
+          camera, volumes, presentation_amount));
     }
     const auto frame = fireFrameMaterial(image, texture_placement,
                                          particle.family, particle.frame);
@@ -2131,9 +2116,6 @@ void renderWeaponEffects(
           std::lround(persistent_fire->anchor.z));
       particle.volume_seed = persistent_fire->seed;
     }
-    particle.volume_may_replace_retail_sprite =
-        game::legacyCfireVolumeMayReplaceRetailSprite(
-            gameplay.missionIndex(), cfire_owned);
     particle.retail_expl_frame_volume =
         game::legacyCfireUsesRetailExplFrameVolume(
             gameplay.missionIndex(), cfire_owned, particle.family);

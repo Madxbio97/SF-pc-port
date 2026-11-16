@@ -91,10 +91,9 @@ The backend owns:
 - HUD, pause-menu and optic presentation from guest snapshots;
 - renderer-only interpolation, dynamic illumination and character shadows.
 
-Optional **Volumetric effects** are renderer-only, depth-aware replacements for
-eligible fire, explosion, smoke, vapour and light-halo presentation. They may
-fall back to the authored sprite path and never alter guest effect lifetime or
-collision.
+Optional **Volumetric effects** add depth-aware lighting and density to the
+original fire, explosion, smoke and vapour sprites. A light halo may use a
+volume as its sole draw. The guest controls particle lifetime and collision.
 
 Volumetric effects do not add a separate fog renderer or setting. Authored
 distance fog remains the retail GTE/vertex depth cue, with mission skybox boundary blending.

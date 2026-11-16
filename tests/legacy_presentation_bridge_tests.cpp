@@ -1367,11 +1367,6 @@ void testVolumetricPresentationPolicies() {
   constexpr std::array missions{0U, 1U, 2U, 7U, 15U};
   for (const auto mission : missions) {
     require(
-        !sf::game::legacyCfireVolumeMayReplaceRetailSprite(mission, true) &&
-            sf::game::legacyCfireVolumeMayReplaceRetailSprite(mission, false),
-        "An authored CFIRE core was replaced or an unowned effect entered its "
-        "keep-core path");
-    require(
         sf::game::legacyCfireUsesRetailExplFrameVolume(
             mission, true, sf::game::LegacyEffectSpriteFamily::explosion) &&
             sf::game::legacyCfireUsesRetailFireFrameVolume(
@@ -1403,15 +1398,21 @@ void testVolumetricPresentationPolicies() {
           !sf::game::legacyUnboundCfireParticleCandidate(
               sf::game::LegacyEffectSpriteFamily::fire, 57U, true),
       "Unbound CFIRE candidate accepted free EXPL, wrong scale, or FIRE");
+  sf::game::LegacyGuestSpriteBridgeState effect_sprite{};
+  effect_sprite.force_fullbright = true;
   require(
-      sf::game::legacyEffectVolumeConsumesRetailSprite(true, true, false) &&
-          !sf::game::legacyEffectVolumeConsumesRetailSprite(true, true, true) &&
-          !sf::game::legacyEffectVolumeConsumesRetailSprite(false, true,
-                                                            false) &&
-          !sf::game::legacyEffectVolumeConsumesRetailSprite(true, false,
-                                                            false),
-      "Frame-derived volume consumed its retail core or replacement policy "
-      "lost a consuming case");
+      sf::game::legacyVolumeReplacesHalo(effect_sprite, false, true) &&
+          !sf::game::legacyVolumeReplacesHalo(effect_sprite, false, false) &&
+          !sf::game::legacyVolumeReplacesHalo(effect_sprite, true, true),
+      "Only a submitted light halo may replace its guest sprite");
+  for (auto family : {sf::game::LegacyEffectSpriteFamily::fire,
+                      sf::game::LegacyEffectSpriteFamily::explosion,
+                      sf::game::LegacyEffectSpriteFamily::breath,
+                      sf::game::LegacyEffectSpriteFamily::vapor}) {
+    effect_sprite.effect_family = static_cast<std::uint8_t>(family);
+    require(!sf::game::legacyVolumeReplacesHalo(effect_sprite, false, true),
+            "A volume suppressed an animated SPFX particle");
+  }
 
   using sf::platform::PersistentFireEmitterCandidate;
   using sf::platform::PersistentFireParticlePoint;
@@ -1457,13 +1458,6 @@ void testVolumetricPresentationPolicies() {
           !cfire_preload(1U, true, true, false, false, false, false),
       "CFIRE sprite residency lost global connected-route preloading or "
       "escaped its fail-closed provenance guards");
-  constexpr auto authored_particle_count = 8U;
-  const auto retained_particle_count =
-      !sf::game::legacyCfireVolumeMayReplaceRetailSprite(1U, true)
-          ? authored_particle_count
-          : 0U;
-  require(retained_particle_count == authored_particle_count,
-          "Global CFIRE policy culled authored particle lifetime");
   const auto subway = sf::game::legacyCfireVolumeTuning(1U, true);
   const auto another_mission =
       sf::game::legacyCfireVolumeTuning(2U, true);

@@ -595,9 +595,14 @@ struct FireGuestSpriteMatch {
       }
       return nullptr;
     }();
-    if (frames == nullptr || sprite.effect_frame >= frames->size() ||
-        !timContainsGuestSprite((*frames)[sprite.effect_frame], sprite)) {
+    if (frames == nullptr) {
       return std::nullopt;
+    }
+    if (sprite.effect_frame >= frames->size() ||
+        !timContainsGuestSprite((*frames)[sprite.effect_frame], sprite)) {
+      // The projected packet can precede the controller's lifetime update.
+      // Resolve its actual UV and CLUT before selecting the resident frame.
+      return match_family(*frames, family);
     }
     const auto page = timTexturePage((*frames)[sprite.effect_frame]);
     return FireGuestSpriteMatch{

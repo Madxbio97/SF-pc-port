@@ -139,14 +139,6 @@ interpolateLegacyExplParticlePosition(
          family == LegacyEffectSpriteFamily::fire;
 }
 
-// Authored CFIREA/B/C flames on every mission are recycling retail sprite
-// packets. Those packets own RGB, ABR, scale, frame and lifetime and remain
-// visible as the hot core; the native volume only augments them.
-[[nodiscard]] constexpr bool legacyCfireVolumeMayReplaceRetailSprite(
-    std::uint32_t, bool authored_cfire_owned) noexcept {
-  return !authored_cfire_owned;
-}
-
 // EXPL density is restricted to a proven authored CFIRE owner. FIRE is itself
 // an exact retail fire family and may use its high-resolution frame globally;
 // PARK2 is a separate FT4 ribbon bridge and never reaches either predicate.
@@ -176,12 +168,13 @@ inline constexpr std::uint8_t legacy_cfire_attached_explosion_scale = 57U;
          scale_byte == legacy_cfire_attached_explosion_scale;
 }
 
-// A frame-derived volume is always an augmentation. Keeping this invariant in
-// one pure policy prevents either native or guest submission from consuming
-// the retail quad when a future caller changes replacement policy.
-[[nodiscard]] constexpr bool legacyEffectVolumeConsumesRetailSprite(
-    bool may_replace, bool volume_presented, bool retail_frame_volume) noexcept {
-  return may_replace && volume_presented && !retail_frame_volume;
+// Smoke, gas and explosions carry their animation, tint and blend mode in
+// the retail quad. A light halo alone may be represented entirely by a volume.
+[[nodiscard]] constexpr bool
+legacyVolumeReplacesHalo(const LegacyGuestSpriteBridgeState &sprite, bool steam,
+                         bool volume_submitted) noexcept {
+  return volume_submitted && sprite.force_fullbright &&
+         sprite.effect_family == 0U && !steam;
 }
 
 // Some missions assign CFIRE guest slots only when their authored room becomes
