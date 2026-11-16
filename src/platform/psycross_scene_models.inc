@@ -2183,7 +2183,7 @@ void renderHmdObject(
           TexturedMaterial{triangle.texture_page, triangle.clut,
                            force_semi_transparent, false,
                            static_cast<std::uint8_t>(texture_bank)},
-          true, false, view, ordering_table, primitives.objects, stats,
+          false, false, view, ordering_table, primitives.objects, stats,
           worldOrderingDepth, false, false);
       continue;
     }
@@ -2195,7 +2195,10 @@ void renderHmdObject(
     long flags{};
     const auto depth =
         RotTransPers3(&v0, &v1, &v2, &xy0, &xy1, &xy2, &depth_cue, &flags);
-    if (depth <= 0 ||
+    // FUN_800d1be0/FUN_800d2424 submit HMD faces only for positive NCLIP.
+    // Depth hid the reverse faces while opaque; camera translucency exposed
+    // the face through the back of the head and blended every internal layer.
+    if (depth <= 0 || !frontFacing(xy0, xy1, xy2, 3U) ||
         triviallyOutsideViewport(std::array<long, 3U>{xy0, xy1, xy2})) {
       ++stats.rejected;
       continue;
