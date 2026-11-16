@@ -805,7 +805,15 @@ struct LegacyUiTimerBridgeState {
 // exact GsFOGPARAM, while terrain_depth_cue is the authored retail DPCS setup
 // consumed by the opaque world pass. The renderer can temporarily replace it
 // with a close-range darkness envelope; that state must cross the bridge too.
+struct LegacyAtmosphereQuad {
+  std::array<LegacyProjectedPointBridgeState, 4> vertices{};
+  std::array<LegacyRgbBridgeState, 4> colors{};
+  friend bool operator==(const LegacyAtmosphereQuad &,
+                         const LegacyAtmosphereQuad &) = default;
+};
+
 struct LegacyEnvironmentBridgeState {
+  std::vector<LegacyAtmosphereQuad> atmosphere_quads;
   LegacyRgbBridgeState clear_color;
   LegacyRgbBridgeState back_color;
   LegacyRgbBridgeState fog_color;
@@ -892,7 +900,9 @@ struct LegacyScrimBridgeState {
   std::vector<LegacyVramMoveBridgeState> vram_moves;
 };
 
-inline constexpr std::size_t legacy_vertex_light_capacity = 4U;
+// FUN_800cd734 uses the shared 0x27d8-byte list-node pool (12 bytes per
+// node). There is no separate four-light limit in the retail renderer.
+inline constexpr std::size_t legacy_vertex_light_capacity = 0x27d8U / 12U;
 
 // One source linked through the retail FUN_800cd734 light list. The MATRIX
 // and shaping fields are consumed verbatim by FUN_800c973c/FUN_800d3b8c;
@@ -901,6 +911,7 @@ struct LegacyVertexLightBridgeState {
   std::uint32_t source{};
   std::uint32_t flags{};
   LegacyNativeMatrix matrix;
+  LegacyNativeMatrix view;
   std::int32_t shape{};
   std::uint32_t screen_shift{};
   std::uint32_t depth_shift{};

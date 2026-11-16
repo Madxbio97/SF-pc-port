@@ -924,6 +924,22 @@ sf::game::RetailVertexLightState retailLight() {
   return light;
 }
 
+void testRetailSirenUsesGuestViewAfterFourOtherLights() {
+  std::array<sf::game::RetailVertexLightState, 5U> lights{};
+  auto &siren = lights.back();
+  siren = retailLight();
+  siren.channel_mask = 0xffU;
+  siren.guest_view = siren.matrix;
+  siren.guest_view->translation = {0, 0, 256};
+  require(sf::game::applyRetailVertexLightingPacked(0x00081018U, lights, {},
+                                                    320) == 0x00081078U,
+          "A fifth red light lost its guest view or brightened other channels");
+  siren.guest_view->translation[2] = -256;
+  require(sf::game::applyRetailVertexLightingPacked(0x00081018U, lights, {},
+                                                    320) == 0x00081018U,
+          "A wall behind the siren received red light");
+}
+
 void testRetailVertexLightSzBranchesAreExact() {
   const std::array lights{retailLight()};
   const auto sample = [&](double guest_depth) {
@@ -1234,6 +1250,7 @@ int main() {
     testBoundedSelectionKeepsDirectionalLight();
     testRetailGmdBackColorUsesNeutralTextureScale();
     testSceneTriangleLightingInterpolatesFloorColor();
+    testRetailSirenUsesGuestViewAfterFourOtherLights();
     testRetailVertexLightSzBranchesAreExact();
     testRetailVertexLightUsesExactGteProjection();
     testRetailVertexLightPreservesGsSetViewRounding();

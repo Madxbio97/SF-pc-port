@@ -59,7 +59,7 @@ int main() {
     expected.height = 1440;
     expected.msaa_samples = 4;
     expected.smaa = false;
-    expected.mission_skyboxes = false;
+    expected.mission_skyboxes = true;
     expected.fullscreen = true;
     expected.frame_limit = 240U;
     expected.controller_protocol = sf::platform::ControllerProtocol::raw_input;

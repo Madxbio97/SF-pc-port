@@ -960,7 +960,7 @@ void Spu::tickVolumeSweep(SpuVolumeSweepState &sweep) noexcept {
     level = std::max(level, 0);
   }
   sweep.current_level = static_cast<std::int16_t>(level);
-  sweep.envelope_active = static_cast<std::uint8_t>(level == 0);
+  sweep.envelope_active = static_cast<std::uint8_t>(level != 0);
 }
 
 void Spu::keyOn(std::uint32_t mask) noexcept {

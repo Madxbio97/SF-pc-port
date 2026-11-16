@@ -110,6 +110,7 @@ game::DynamicLightPoint active_dynamic_light_observer;
 std::vector<game::PreparedRetailVertexLight> active_retail_vertex_lights;
 std::int32_t active_retail_light_projection{320};
 bool active_retail_nightvision{};
+bool active_retail_environment{};
 
 void captureRenderPresentation(const game::GameplaySession &gameplay,
                                RenderPresentationSnapshot &result,
@@ -219,6 +220,7 @@ void captureRenderPresentation(const game::GameplaySession &gameplay,
 void applyRetailEnvironment(
     const game::LegacyEnvironmentBridgeState &environment,
     std::int32_t projection, bool retail_environment_active) {
+  active_retail_environment = retail_environment_active;
   DRAWENV draw_environment{};
   if (GetDrawEnv(&draw_environment) == nullptr) {
     SetDefDrawEnv(&draw_environment, 0, 0, screen_width, screen_height);

@@ -1377,6 +1377,44 @@ void LegacyGameplayVm::bindSyphonFilterUsaV11BootstrapPlatformCalls() {
   pad_motor_buffer_length_ = retail_pad_motor_count;
   refreshPadMotorState();
   bindSyphonFilterUsaV11PlatformCalls();
+  // In the SUBWAY and SUBWAY2 scores the quiet section tests intensity > 9
+  // to return to the exploration loop. At rest it can otherwise cycle through
+  // controller events indefinitely. Take that authored exit on its own beat,
+  // without changing the encounter intensity or restarting the SEP player.
+  bindHostCall(0x800c5050U, [](LegacyHostCallContext &context) {
+    context.continueGuestInstruction();
+    const auto track = context.registerValue(18U); // s2 = SEP subsequence
+    if ((track != 10U && track != 13U) || context.registerValue(16U) != 9U) {
+      return;
+    }
+    const auto handle = context.registerValue(20U);
+    // FUN_800c302c looks up the libsnd handle in six resource slots.
+    for (std::uint32_t slot = 0; slot < 6U; ++slot) {
+      std::uint32_t header{}, bank_id{};
+      std::uint16_t registered_handle{};
+      if (context.read32(0x8012ff98U + 4U * slot, header) &&
+          validGuestRamRange(header, 16U) &&
+          context.read16(header + 0xcU, registered_handle) &&
+          registered_handle == handle && context.read32(header, bank_id) &&
+          ((bank_id == 0x31627573U && track == 10U) ||  // "sub1"
+           (bank_id == 0x32627573U && track == 13U))) { // "sub2"
+        context.setRegister(16U, 0U); // s0 = threshold for this mark only
+        break;
+      }
+    }
+  });
+  // SCUS-94240 builds its atmosphere into the transient GPU arena. Keep the
+  // end of the primary, depth-zero batch only for the frame that emitted it.
+  bindHostCall(0x800c973cU, [this](LegacyHostCallContext &context) {
+    atmosphere_packet_end_ = 0U;
+    context.continueGuestInstruction();
+  });
+  bindHostCall(0x800c934cU, [this](LegacyHostCallContext &context) {
+    context.continueGuestInstruction();
+    if (context.registerValue(20U) == 0U) { // s4 = ordering-table depth
+      static_cast<void>(context.read32(0x8012c8a0U, atmosphere_packet_end_));
+    }
+  });
   bindSyphonFilterUsaV11Park2FlameLosHook();
   bindSyphonFilterUsaV11HostAimRayHook();
   bindSyphonFilterUsaV11AgentEnemyAimHooks();
@@ -4338,7 +4376,7 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
   if (!runtime_.read32(profile.dynamic_light_list, light_node)) {
     return std::nullopt;
   }
-  state.vertex_lights.reserve(profile.maximum_vertex_lights);
+  state.vertex_lights.reserve(4U);
   while (light_node != 0U) {
     if (state.vertex_lights.size() >= profile.maximum_vertex_lights ||
         !readable_ram_pointer(light_node, 0x0cU)) {
@@ -4366,6 +4404,7 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
         !runtime_.read32(source + 8U, matrix_pointer) ||
         !readable_ram_pointer(matrix_pointer, 0x20U) ||
         !read_matrix(matrix_pointer, light.matrix) ||
+        !read_matrix(source + 0x20U, light.view) ||
         !read_signed32(source + 0x0cU, light.shape) ||
         !runtime_.read32(source + 0x10U, light.screen_shift) ||
         !runtime_.read32(source + 0x14U, light.depth_shift) ||
@@ -4932,6 +4971,46 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
     // before constructing the TILE.
     state.environment.screen_filter_enabled =
         state.environment.screen_filter_material != 4U;
+    // FUN_800d6f50 pushes fixed-size POLY_G4s into OT[0], then 800c9140
+    // prepends the TILE and an additive draw mode. Read back the projected
+    // batch in OT order. No mesh is emitted when the outdoor pass is skipped.
+    std::uint16_t quad_count{};
+    if (!runtime_.read16(screen_filter_descriptor + 0x0cU, quad_count)) {
+      return std::nullopt;
+    }
+    if (quad_count != 0U && atmosphere_packet_end_ == 0U) {
+      state.environment.screen_filter_enabled = false;
+    }
+    if (atmosphere_packet_end_ != 0U && quad_count != 0U &&
+        quad_count <= 512U) {
+      constexpr std::uint32_t packet_size = 36U;
+      const auto bytes = packet_size * quad_count;
+      if (atmosphere_packet_end_ >= bytes &&
+          validGuestRamRange(atmosphere_packet_end_ - bytes, bytes)) {
+        auto &quads = state.environment.atmosphere_quads;
+        quads.reserve(quad_count);
+        auto packet = atmosphere_packet_end_;
+        for (unsigned i = 0; i < quad_count; ++i) {
+          packet -= packet_size;
+          std::uint32_t tag{}, command{};
+          if (!runtime_.read32(packet, tag) || tag >> 24U != 8U ||
+              !runtime_.read32(packet + 4U, command) ||
+              (command >> 24U) != 0x3aU) {
+            quads.clear();
+            break;
+          }
+          auto &quad = quads.emplace_back();
+          for (unsigned corner = 0; corner < 4U; ++corner) {
+            const auto rgb = packet + 4U + 8U * corner;
+            if (!read_rgb(rgb, 0U, quad.colors[corner]) ||
+                !read_signed16(rgb + 4U, quad.vertices[corner].x) ||
+                !read_signed16(rgb + 6U, quad.vertices[corner].y)) {
+              return std::nullopt;
+            }
+          }
+        }
+      }
+    }
     if (state.environment.nightvision_enabled) {
       const auto maximum =
           std::max({state.environment.screen_filter_color.red,
@@ -8824,6 +8903,7 @@ LegacyGameplayVmSnapshot LegacyGameplayVm::captureSnapshot() const {
   std::ranges::copy(runtime_.mmio(), snapshot.mmio.begin());
   snapshot.video_timing_baseline = video_timing_baseline_;
   snapshot.audio_frame_tick = audio_frame_tick_;
+  snapshot.atmosphere_packet_end = atmosphere_packet_end_;
   snapshot.interrupt_callbacks = interrupt_callbacks_;
   snapshot.attached_text_sources = attached_text_sources_;
   snapshot.ui_messages = ui_messages_;
@@ -8925,6 +9005,7 @@ bool LegacyGameplayVm::restoreSnapshot(
   }
   video_timing_baseline_ = snapshot.video_timing_baseline;
   audio_frame_tick_ = snapshot.audio_frame_tick;
+  atmosphere_packet_end_ = snapshot.atmosphere_packet_end;
   interrupt_callbacks_ = snapshot.interrupt_callbacks;
   video_timing_baseline_initialized_ =
       snapshot.video_timing_baseline_initialized;
@@ -8958,10 +9039,18 @@ bool LegacyGameplayVm::advanceAudioClockCallbacks(
     }
 
     const auto dispatch_callback = [&]() {
+      // Both callbacks run on behalf of a hardware IRQ. Keep their RAM/SPU
+      // writes while restoring the interrupted CPU even if dispatch fails.
+      struct InterruptFrame {
+        psx::R3000Runtime &runtime;
+        psx::R3000State interrupted;
+        ~InterruptFrame() { runtime.restoreCpuState(interrupted); }
+      } frame{runtime_, runtime_.state()};
       if (!dispatchCdRomReadyCallback()) {
         return false;
       }
 
+      runtime_.restoreCpuState(frame.interrupted);
       const auto callback = interrupt_callbacks_[profile.timer_irq];
       if (callback != 0U) {
         if (profile.expected_tick_callback != 0U &&

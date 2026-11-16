@@ -69,11 +69,10 @@ void drawVirusScannerFilter(bool active) {
 void drawRetailScreenFilter(
     const game::LegacyEnvironmentBridgeState &environment,
     bool retail_environment_active) {
-  if (!retail_environment_active || !environment.screen_filter_enabled) {
-    return;
-  }
   const auto material = environment.screen_filter_material;
-  if (material >= 4U) {
+  const bool draw_tile = environment.screen_filter_enabled && material < 4U;
+  if (!retail_environment_active ||
+      (!draw_tile && environment.atmosphere_quads.empty())) {
     return;
   }
   // FUN_800c9140 emits this TILE at OT depth zero. Descriptor +0x14 is the
@@ -84,21 +83,57 @@ void drawRetailScreenFilter(
       BM_SUBTRACT,
       BM_ADD_QUATER_SOURCE,
   };
-  GR_SetBlendMode(blend_modes[material]);
   GR_EnableDepth(0);
   DR_TPAGE page{};
-  SetDrawTPage(&page, 1, 0, GetTPage(0, static_cast<int>(material), 0, 0));
-  DrawPrim(&page);
-  TILE tile{};
-  setTile(&tile);
-  setSemiTrans(&tile, 1);
-  setRGB0(&tile, environment.screen_filter_color.red,
-          environment.screen_filter_color.green,
-          environment.screen_filter_color.blue);
-  setXY0(&tile, 0.0F, 0.0F);
-  setWH(&tile, static_cast<float>(screen_width),
-        static_cast<float>(screen_height));
-  DrawPrim(&tile);
+  if (draw_tile) {
+    GR_SetBlendMode(blend_modes[material]);
+    SetDrawTPage(&page, 1, 0, GetTPage(0, static_cast<int>(material), 0, 0));
+    DrawPrim(&page);
+    TILE tile{};
+    setTile(&tile);
+    setSemiTrans(&tile, 1);
+    setRGB0(&tile, environment.screen_filter_color.red,
+            environment.screen_filter_color.green,
+            environment.screen_filter_color.blue);
+    setXY0(&tile, 0.0F, 0.0F);
+    setWH(&tile, static_cast<float>(screen_width),
+          static_cast<float>(screen_height));
+    DrawPrim(&tile);
+  }
+  if (!environment.atmosphere_quads.empty()) {
+    DrawSync(0);
+    GR_SetBlendMode(BM_ADD);
+    SetDrawTPage(&page, 1, 0, GetTPage(2, 1, 0, 0));
+    DrawPrim(&page);
+    for (const auto &quad : environment.atmosphere_quads) {
+      // The PS1 GPU rejects oversized triangles independently, including
+      // horizon vertices saturated to +/-1024 by RTPT behind the camera.
+      for (const auto corners :
+           {std::array{0U, 1U, 2U}, std::array{1U, 2U, 3U}}) {
+        const auto a = quad.vertices[corners[0]];
+        const auto b = quad.vertices[corners[1]];
+        const auto c = quad.vertices[corners[2]];
+        const auto [xmin, xmax] = std::minmax({a.x, b.x, c.x});
+        const auto [ymin, ymax] = std::minmax({a.y, b.y, c.y});
+        if (xmax - xmin >= 1024 || ymax - ymin >= 512) {
+          continue;
+        }
+        POLY_G3 triangle{};
+        setPolyG3(&triangle);
+        setSemiTrans(&triangle, 1);
+        const auto ca = quad.colors[corners[0]];
+        const auto cb = quad.colors[corners[1]];
+        const auto cc = quad.colors[corners[2]];
+        setRGB0(&triangle, ca.red, ca.green, ca.blue);
+        setRGB1(&triangle, cb.red, cb.green, cb.blue);
+        setRGB2(&triangle, cc.red, cc.green, cc.blue);
+        setXY3(&triangle, screen_width * 0.5F + a.x, screen_height * 0.5F + a.y,
+               screen_width * 0.5F + b.x, screen_height * 0.5F + b.y,
+               screen_width * 0.5F + c.x, screen_height * 0.5F + c.y);
+        DrawPrim(&triangle);
+      }
+    }
+  }
   DrawSync(0);
   GR_SetBlendMode(BM_NONE);
   GR_EnableDepth(1);

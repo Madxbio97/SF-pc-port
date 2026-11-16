@@ -484,6 +484,7 @@ SceneViewerResult PsyCrossSceneViewer::run(
       presentation.environment.nightvision_enabled = false;
       if (retiring_nightvision) {
         presentation.environment.screen_filter_enabled = false;
+        presentation.environment.atmosphere_quads.clear();
         presentation.environment.nightvision_clear_override_enabled = false;
       }
     }

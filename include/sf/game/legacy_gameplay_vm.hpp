@@ -1071,6 +1071,7 @@ struct LegacyGameplayVmSnapshot {
   std::array<std::byte, psx::R3000Runtime::mmio_size> mmio{};
   std::uint32_t video_timing_baseline{};
   std::uint64_t audio_frame_tick{};
+  std::uint32_t atmosphere_packet_end{};
   std::array<std::uint32_t, interrupt_callback_count> interrupt_callbacks{};
   struct AttachedTextSource {
     std::uint32_t text_object{};
@@ -1496,6 +1497,7 @@ private:
   std::optional<LegacyHostAimRay> host_aim_ray_;
   std::optional<bool> park2_flame_line_of_sight_clear_;
   LegacyBallisticVisibility hostile_ballistic_visibility_;
+  std::uint32_t atmosphere_packet_end_{};
   std::vector<LegacyWeaponEventBridgeState> weapon_events_;
   LegacyPadMotorState pad_motor_state_;
   std::uint32_t pad_motor_buffer_address_{};

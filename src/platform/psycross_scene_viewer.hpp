@@ -68,7 +68,7 @@ public:
       ControllerButtonBindings controller_bindings = {},
       bool controller_vibration = true,
       ControllerSettingsCommitCallback controller_settings_commit = {},
-      bool mission_skyboxes = true) noexcept
+      bool mission_skyboxes = false) noexcept
       : input_(input), cheats_(cheats), difficulty_(difficulty),
         controller_bindings_(controller_bindings),
         controller_vibration_(controller_vibration),
@@ -89,7 +89,7 @@ private:
   ControllerButtonBindings controller_bindings_;
   bool controller_vibration_{true};
   ControllerSettingsCommitCallback controller_settings_commit_;
-  bool mission_skyboxes_{true};
+  bool mission_skyboxes_{};
   game::PauseSettings pause_settings_;
   bool pause_settings_initialized_{};
 };

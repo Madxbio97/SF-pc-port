@@ -2738,7 +2738,10 @@ void testLegacyGameplayVmBoundary() {
   require(registered.completed() && registered.return_value == 0U,
           "InterruptCallback did not register the retail audio timer");
   vm.clearPcm();
+  const auto interrupted_audio_cpu = vm.runtime().state();
   require(vm.advanceAudioFrameClock(audio_profile) &&
+              vm.runtime().state().gpr == interrupted_audio_cpu.gpr &&
+              vm.runtime().state().pc == interrupted_audio_cpu.pc &&
               audio_callback_count == 6U,
           "Retail 120 Hz audio callback did not run six times per frame");
 
@@ -4853,6 +4856,35 @@ void testLegacyGameplayVmBoundary() {
               vm.runtime().write32(ejected_particle + 0x10U, 50U),
           "Legacy bridge accepted an overflowing submitted LINE_F2 position");
 
+  constexpr auto fog_packet = 0x801ee000U;
+  auto fog_snapshot = vm.captureSnapshot();
+  fog_snapshot.atmosphere_packet_end = fog_packet + 36U;
+  require(vm.restoreSnapshot(fog_snapshot) &&
+              vm.runtime().write16(screen_filter_descriptor + 0x0cU, 1U) &&
+              vm.runtime().write32(fog_packet, 0x08ffffffU) &&
+              vm.runtime().write32(fog_packet + 4U, 0x3a563412U) &&
+              vm.runtime().write32(fog_packet + 8U, 0x0003fffcU) &&
+              vm.runtime().write32(fog_packet + 28U, 0x00102030U),
+          "Could not seed an original atmosphere packet");
+  const auto fog_bridge = vm.readBridgeState(bridge_profile);
+  require(
+      fog_bridge && fog_bridge->environment.atmosphere_quads.size() == 1U &&
+          fog_bridge->environment.atmosphere_quads.front().colors[0] ==
+              sf::game::LegacyRgbBridgeState{0x12, 0x34, 0x56} &&
+          fog_bridge->environment.atmosphere_quads.front().colors[3] ==
+              sf::game::LegacyRgbBridgeState{0x30, 0x20, 0x10} &&
+          fog_bridge->environment.atmosphere_quads.front().vertices[0] ==
+              sf::game::LegacyProjectedPointBridgeState{-4, 3},
+      "Projected snow gradient lost its original corner colors or position");
+  fog_snapshot.atmosphere_packet_end = 0U;
+  require(vm.restoreSnapshot(fog_snapshot) &&
+              vm.runtime().write16(screen_filter_descriptor + 0x0cU, 1U),
+          "Could not seed the indoor frame");
+  const auto indoor_fog = vm.readBridgeState(bridge_profile);
+  require(indoor_fog && indoor_fog->environment.atmosphere_quads.empty() &&
+              !indoor_fog->environment.screen_filter_enabled &&
+              vm.runtime().write16(screen_filter_descriptor + 0x0cU, 0U),
+          "An indoor frame retained the outdoor atmosphere");
   const auto renderer_flags_address =
       camera_object + bridge_profile.renderer_flags_offset;
   require(vm.runtime().write16(renderer_flags_address, 0x15U),
@@ -6439,6 +6471,32 @@ void testLegacyGameplayVmBoundary() {
               vm.runtime().write32(0x801163c4U, 0U) &&
               vm.unbindHostCall(0x800c087cU),
           "Checkpoint music did not restart only the active retail cue");
+
+  constexpr std::uint32_t music_condition = 0x800c5050U;
+  const auto condition_code = instructionBytes(
+      std::array{encodeR(16U, 0U, 2U, 0U, 0x21U), 0x03e00008U, 0U});
+  require(vm.runtime().loadBytes(music_condition, condition_code) &&
+              vm.runtime().write32(0x8012ffa0U, music_bank) &&
+              vm.runtime().write16(music_bank + 0xcU, 1U),
+          "Could not seed a score bank in a nonmatching resource slot");
+  const auto score_threshold = [&](std::uint32_t bank_id, unsigned track,
+                                   unsigned threshold, unsigned handle) {
+    require(vm.runtime().write32(music_bank, bank_id),
+            "Could not seed score ID");
+    vm.runtime().setRegister(16U, threshold);
+    vm.runtime().setRegister(18U, track);
+    vm.runtime().setRegister(20U, handle);
+    const auto result = vm.invoke(music_condition);
+    require(result.completed(), "Score marker did not return");
+    return result.return_value;
+  };
+  require(score_threshold(0x31627573U, 10U, 9U, 1U) == 0U &&
+              score_threshold(0x32627573U, 13U, 9U, 1U) == 0U &&
+              score_threshold(0x32627573U, 12U, 9U, 1U) == 9U &&
+              score_threshold(0x32627573U, 13U, 24U, 1U) == 24U &&
+              score_threshold(0x32627573U, 13U, 9U, 0U) == 9U &&
+              score_threshold(0x6b726170U, 10U, 9U, 1U) == 9U,
+          "Quiet score exit changed an unrelated track, bank or combat branch");
 
   auto impact_profile = native_profile;
   impact_profile.event_entry = 0x80031020U;

@@ -379,6 +379,20 @@ void testHardwareVolumeSweeps() {
               spu->state().voice_volume[0U][0U].envelope_active == 0U &&
               spu->state().main_volume[0U].envelope_active == 0U,
           "SPU volume sweep did not clamp and stop at positive full scale");
+  require(spu->writeRegister(voice_volume_left, 0xa000U) &&
+              spu->writeRegister(main_volume_left, 0xa000U),
+          "Could not start a descending volume sweep");
+  spu->mixFrames(1U);
+  require(spu->readRegister(current_voice_volume_left, current) &&
+              current == 0x3fffU &&
+              spu->state().main_volume[0U].envelope_active,
+          "SPU fade stopped before reaching silence");
+  spu->mixFrames(1U);
+  require(spu->readRegister(current_voice_volume_left, current) &&
+              current == 0U &&
+              spu->readRegister(current_main_volume_left, current) &&
+              current == 0U && !spu->state().main_volume[0U].envelope_active,
+          "Descending SPU sweep did not reach silence");
 }
 
 void testAdpcmLoopAndEndx() {

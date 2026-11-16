@@ -1335,6 +1335,13 @@ prepareRetailVertexLight(const RetailVertexLightState &light) noexcept {
 
   auto result = PreparedRetailVertexLight{};
   result.state = light;
+  if (light.guest_view) {
+    // 800c973c stores the completed GsSetView2 transform at light+0x20.
+    // It includes the retail projection's vertical scale as well as rotation.
+    result.view_rotation = light.guest_view->rotation;
+    result.inverse_translation = light.guest_view->translation;
+    return result;
+  }
   // GsSetView2 transposes the source rotation and computes
   // -ApplyMatrixLV(R^T, t) once per light.
   for (std::size_t row = 0U; row < 3U; ++row) {
@@ -1388,18 +1395,15 @@ std::uint32_t applyRetailVertexLightingPacked(
   if (lights.size() > maximum_retail_vertex_lights) {
     return packed_color;
   }
-  auto prepared =
-      std::array<PreparedRetailVertexLight, maximum_retail_vertex_lights>{};
-  auto count = std::size_t{};
   for (const auto &light : lights) {
-    if (auto value = prepareRetailVertexLight(light)) {
-      prepared[count++] = *value;
+    if (auto prepared = prepareRetailVertexLight(light)) {
+      if (auto point =
+              projectIntoRetailLight(*prepared, world_point, projection)) {
+        packed_color = applyRetailProjectedLight(packed_color, light, *point);
+      }
     }
   }
-  return applyRetailVertexLightingPacked(
-      packed_color,
-      std::span<const PreparedRetailVertexLight>{prepared}.first(count),
-      world_point, projection);
+  return packed_color;
 }
 
 std::uint32_t applyRetailVertexLightingPacked(

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "sf/game/effects.hpp"
+#include "sf/game/legacy_bridge_types.hpp"
 
 #include <array>
 #include <cstddef>
@@ -237,12 +238,13 @@ sampleSceneTriangleLighting(std::array<DynamicLightPoint, 3U> vertices,
                             std::array<DynamicLightVertexColor, 3U> colors,
                             DynamicLightPoint point) noexcept;
 
-// The retail renderer keeps at most four FUN_800cd6d8 light records in the
-// intrusive list rooted at DAT_80116464. Unlike the native enhancement lights
+// The retail renderer visits the intrusive list rooted at DAT_80116464.
+// Unlike the native enhancement lights
 // above, these records do not describe a radial RGB source. FUN_800d40a4
 // projects every vertex into each light's Q12 matrix and FUN_800d3b8c shapes
 // the authored primitive color with integer screen/depth falloff.
-inline constexpr std::size_t maximum_retail_vertex_lights = 4U;
+inline constexpr std::size_t maximum_retail_vertex_lights =
+    legacy_vertex_light_capacity;
 
 struct RetailVertexLightMatrix {
   // Row-major PS1 Q12 rotation. Translation remains in guest coordinates.
@@ -258,6 +260,7 @@ struct RetailVertexLightState {
   std::uint32_t depth_shift{};
   std::int32_t threshold{};
   std::uint32_t channel_mask{0x00ffffffU};
+  std::optional<RetailVertexLightMatrix> guest_view;
 };
 
 struct PreparedRetailVertexLight {

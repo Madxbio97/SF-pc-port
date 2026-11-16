@@ -2685,6 +2685,13 @@ retailVertexLightState(const game::LegacyVertexLightBridgeState &source) {
   light.depth_shift = source.depth_shift;
   light.threshold = source.threshold;
   light.channel_mask = source.channel_mask;
+  if (std::ranges::any_of(source.view.rotation,
+                          [](auto value) { return value != 0; })) {
+    light.guest_view = game::RetailVertexLightMatrix{
+        source.view.rotation,
+        {source.view.translation.x, source.view.translation.y,
+         source.view.translation.z}};
+  }
   return light;
 }
 
@@ -3280,8 +3287,7 @@ void updateDynamicLightFrame(
     light.position = {centre.x, centre.y, centre.z};
   }
 
-  std::array<game::DirectionalDynamicLightState,
-             game::maximum_retail_vertex_lights>
+  std::array<game::DirectionalDynamicLightState, game::maximum_dynamic_lights>
       directional{};
   auto directional_count = std::size_t{};
   for (const auto &source : presentation.vertex_lights) {
@@ -3300,6 +3306,9 @@ void updateDynamicLightFrame(
             true,
             true};
       }
+      continue;
+    }
+    if ((source.channel_mask & 0x00ffffffU) != 0x00ffffffU) {
       continue;
     }
     constexpr auto maximum_origin_delta = 192.0;

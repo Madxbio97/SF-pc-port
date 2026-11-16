@@ -470,12 +470,23 @@ struct TexturedMaterial {
   std::uint8_t texture_source_page{0xffU};
 };
 
-game::DynamicLightVertexColor
-applyRetailNightvision(game::DynamicLightVertexColor color) noexcept {
-  // Night vision is a post-composition TILE grade. Preserve the lit source
-  // RGB here so the normal far colour and per-vertex depth cue remain visible
-  // beneath that filter instead of being flattened by a second green pass.
-  return color;
+VertexColor sceneVertexLighting(
+    VertexColor base, game::DynamicLightPoint point,
+    const game::DynamicLightFrame &light_frame,
+    std::optional<game::DynamicLightPoint> normal = {}) noexcept {
+  auto lit = game::applyRetailVertexLighting({base.red, base.green, base.blue},
+                                             active_retail_vertex_lights, point,
+                                             active_retail_light_projection);
+  // The console modulates textures with the baked RGB and the guest light
+  // list. Adding PC lamp pools and a second gamma curve changes that palette.
+  if (!active_retail_environment) {
+    const auto modulation =
+        normal
+            ? game::sampleDynamicLightingNormalized(light_frame, point, *normal)
+            : game::sampleDynamicLighting(light_frame, point);
+    lit = game::applyDynamicLighting(lit, modulation);
+  }
+  return {lit.red, lit.green, lit.blue};
 }
 
 VertexColor decodeColor(std::uint16_t color) {
@@ -491,27 +502,18 @@ makeTexturedVertex(const SVECTOR &position, assets::EmdUv uv, VertexColor color,
                    bool apply_lighting = true,
                    game::DynamicLightPoint normal = {},
                    const game::DynamicLightFrame *dynamic_lights = nullptr) {
-  auto lit = game::DynamicLightVertexColor{color.red, color.green, color.blue};
+  auto lit = color;
   if (apply_lighting) {
-    const auto retail_lit = game::applyRetailVertexLighting(
-        lit, active_retail_vertex_lights,
-        {static_cast<double>(position.vx), static_cast<double>(position.vy),
-         static_cast<double>(position.vz)},
-        active_retail_light_projection);
     const auto point = game::DynamicLightPoint{
         static_cast<double>(position.vx), static_cast<double>(position.vy),
         static_cast<double>(position.vz)};
-    const auto normal_length_squared =
-        normal.x * normal.x + normal.y * normal.y + normal.z * normal.z;
-    const auto &light_frame =
-        dynamic_lights != nullptr ? *dynamic_lights : active_dynamic_lights;
-    const auto modulation =
-        normal_length_squared > 0.000001
-            ? game::sampleDynamicLightingNormalized(light_frame, point, normal)
-            : game::sampleDynamicLighting(light_frame, point);
-    lit = game::applyDynamicLighting(retail_lit, modulation);
+    const auto has_normal =
+        normal.x * normal.x + normal.y * normal.y + normal.z * normal.z >
+        0.000001;
+    lit = sceneVertexLighting(
+        color, point, dynamic_lights ? *dynamic_lights : active_dynamic_lights,
+        has_normal ? std::optional{normal} : std::nullopt);
   }
-  lit = applyRetailNightvision(lit);
   return TexturedVertex{
       static_cast<double>(position.vx), static_cast<double>(position.vy),
       static_cast<double>(position.vz), static_cast<double>(uv.u),
@@ -522,26 +524,14 @@ makeTexturedVertex(const SVECTOR &position, assets::EmdUv uv, VertexColor color,
 
 VertexColor dynamicallyLit(VertexColor base, double x, double y,
                            double z) noexcept {
-  const auto retail_lit = game::applyRetailVertexLighting(
-      {base.red, base.green, base.blue}, active_retail_vertex_lights, {x, y, z},
-      active_retail_light_projection);
-  const auto lit = applyRetailNightvision(game::applyDynamicLighting(
-      retail_lit,
-      game::sampleDynamicLighting(active_dynamic_lights, {x, y, z})));
-  return VertexColor{lit.red, lit.green, lit.blue};
+  return sceneVertexLighting(base, {x, y, z}, active_dynamic_lights);
 }
 
 VertexColor
 dynamicallyLit(VertexColor base, double x, double y, double z,
                game::DynamicLightPoint normal,
                const game::DynamicLightFrame &light_frame) noexcept {
-  const auto retail_lit = game::applyRetailVertexLighting(
-      {base.red, base.green, base.blue}, active_retail_vertex_lights, {x, y, z},
-      active_retail_light_projection);
-  const auto lit = applyRetailNightvision(game::applyDynamicLighting(
-      retail_lit,
-      game::sampleDynamicLightingNormalized(light_frame, {x, y, z}, normal)));
-  return VertexColor{lit.red, lit.green, lit.blue};
+  return sceneVertexLighting(base, {x, y, z}, light_frame, normal);
 }
 
 template <std::size_t Count>

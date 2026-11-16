@@ -43,17 +43,25 @@ inline void interpolateRetailVertexLights(
     if (old == previous.end() || ((old->flags ^ light.flags) & 1U) != 0U) {
       continue;
     }
-    for (std::size_t index = 0U; index < light.matrix.rotation.size();
-         ++index) {
-      light.matrix.rotation[index] = interpolate_rotation(
-          old->matrix.rotation[index], light.matrix.rotation[index]);
+    const auto blend_matrix = [&](const auto &from, auto &to) {
+      for (std::size_t index = 0U; index < to.rotation.size(); ++index) {
+        to.rotation[index] =
+            interpolate_rotation(from.rotation[index], to.rotation[index]);
+      }
+      to.translation.x =
+          interpolate_translation(from.translation.x, to.translation.x);
+      to.translation.y =
+          interpolate_translation(from.translation.y, to.translation.y);
+      to.translation.z =
+          interpolate_translation(from.translation.z, to.translation.z);
+    };
+    blend_matrix(old->matrix, light.matrix);
+    if (std::ranges::any_of(old->view.rotation,
+                            [](auto x) { return x != 0; }) &&
+        std::ranges::any_of(light.view.rotation,
+                            [](auto x) { return x != 0; })) {
+      blend_matrix(old->view, light.view);
     }
-    light.matrix.translation.x = interpolate_translation(
-        old->matrix.translation.x, light.matrix.translation.x);
-    light.matrix.translation.y = interpolate_translation(
-        old->matrix.translation.y, light.matrix.translation.y);
-    light.matrix.translation.z = interpolate_translation(
-        old->matrix.translation.z, light.matrix.translation.z);
   }
 }
 
@@ -82,6 +90,12 @@ inline void interpolateRetailVertexLights(
     mix(light.matrix.translation.x);
     mix(light.matrix.translation.y);
     mix(light.matrix.translation.z);
+    for (const auto value : light.view.rotation) {
+      mix(value);
+    }
+    mix(light.view.translation.x);
+    mix(light.view.translation.y);
+    mix(light.view.translation.z);
     mix(light.shape);
     mix(light.screen_shift);
     mix(light.depth_shift);
