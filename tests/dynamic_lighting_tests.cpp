@@ -1,4 +1,5 @@
 #include "sf/game/dynamic_lighting.hpp"
+#include "sf/platform/retail_vertex_light_presentation.hpp"
 #include "sf/platform/world_object_shadow_policy.hpp"
 
 #include <algorithm>
@@ -1191,6 +1192,44 @@ void testMissionFlashlightRecordLightsItsRetailForwardAxis() {
           "Mission flashlight illuminated geometry behind its retail axis");
 }
 
+void testRetailVertexLightingCacheKeepsSectionIdentity() {
+  using Colour = sf::game::DynamicLightVertexColor;
+  sf::platform::RetailSectionVertexLightCache<Colour> cache;
+  auto evaluations = 0;
+  const auto sample = [&](Colour colour) {
+    ++evaluations;
+    return colour;
+  };
+  const auto same = [](const Colour &a, const Colour &b) {
+    return a.red == b.red && a.green == b.green && a.blue == b.blue;
+  };
+  const Colour first{10, 20, 30}, second{40, 50, 60}, changed{70, 80, 90};
+  cache.beginSection(2);
+  require(same(cache.resolve(0, [&] { return sample(first); }), first),
+          "First retail vertex light result was lost");
+  require(same(cache.resolve(0, [&] { return sample(changed); }), first) &&
+              evaluations == 1,
+          "A shared vertex was relit during the same section pass");
+  require(same(cache.resolve(1, [&] { return sample(second); }), second),
+          "Distinct vertex colours were merged by the shared-light cache");
+
+  // A different section, light matrix or guest colour pass may reuse index
+  // zero. Neither its previous colour nor a high-water allocation is valid.
+  cache.beginSection(1);
+  require(same(cache.resolve(0, [&] { return sample(changed); }), changed),
+          "A new section inherited the preceding section's lighting");
+  cache.beginSection(4096);
+  require(
+      same(cache.resolve(4095, [&] { return sample(second); }), second) &&
+          same(cache.resolve(0, [&] { return sample(first); }), first),
+      "Growing the section cache lost vertex identity or retained old light");
+  cache.beginSection(0);
+  cache.beginSection(2);
+  require(same(cache.resolve(1, [&] { return sample(changed); }), changed) &&
+              evaluations == 6,
+          "A retired section retained a previous light or guest colour");
+}
+
 void testMissionLightsMatchExecutedPsxColours() {
   struct Fixture {
     std::array<std::int16_t, 9> rotation;
@@ -1342,6 +1381,7 @@ int main() {
     testPreparedRetailVertexLightMatchesExactPath();
     testRetailVertexLightRayUsesGuestMatrixAndAttachedAxis();
     testMissionFlashlightRecordLightsItsRetailForwardAxis();
+    testRetailVertexLightingCacheKeepsSectionIdentity();
     testMissionLightsMatchExecutedPsxColours();
     testCaveFlashlightUsesRetailWorldYAxis();
     std::cout << "Dynamic lighting tests passed\n";

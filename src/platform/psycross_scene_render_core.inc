@@ -348,6 +348,15 @@ struct WorldPolygonLightingCacheEntry {
 
 class WorldPolygonLightingCache final {
 public:
+  void beginSection(std::size_t vertex_count) {
+    vertex_cache_.beginSection(vertex_count);
+  }
+
+  template <typename Compute>
+  const VertexColor &vertexColor(std::size_t index, Compute &&compute) {
+    return vertex_cache_.resolve(index, std::forward<Compute>(compute));
+  }
+
   void beginFrame(std::uint64_t guest_frame, std::uint16_t room,
                   std::uint64_t light_signature,
                   std::span<const std::uint16_t> submission_models) {
@@ -410,6 +419,7 @@ public:
 
 private:
   std::vector<WorldPolygonLightingCacheEntry> entries_;
+  RetailSectionVertexLightCache<VertexColor> vertex_cache_;
   std::size_t cursor_{};
   std::uint64_t guest_frame_{std::numeric_limits<std::uint64_t>::max()};
   std::uint64_t generation_{1U};

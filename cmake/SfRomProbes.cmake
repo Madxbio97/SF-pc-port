@@ -28,6 +28,8 @@ if(SF_BUILD_ROM_PROBES)
         apps/sf_g4_campaign_transition_probe.cpp)
     sf_add_game_probe(sf_retail_environment_probe
         apps/sf_retail_environment_probe.cpp)
+    sf_add_game_probe(sf_retail_lighting_probe
+        apps/sf_retail_lighting_probe.cpp)
     sf_add_game_probe(sf_retail_prop_state_probe
         apps/sf_retail_prop_state_probe.cpp)
 endif()
@@ -75,6 +77,8 @@ function(sf_register_supported_rom_tests)
         sf_g4_campaign_transition_probe "rom;g4;g4.3;campaign;checkpoint" 900)
     sf_add_supported_rom_test(sf_retail_environment_rom
         sf_retail_environment_probe "rom;rendering;environment;effects" 900)
+    sf_add_supported_rom_test(sf_retail_lighting_rom
+        sf_retail_lighting_probe "rom;rendering;lighting" 300)
     sf_add_supported_rom_test(sf_retail_grenade_rom sf_retail_grenade_probe
         "rom;gameplay;rendering;grenade" 300)
 endfunction()

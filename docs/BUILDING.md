@@ -100,6 +100,20 @@ cmake --build --preset windows-psycross-release
 ctest --preset windows-psycross-release -L rom
 ```
 
+The lighting gate runs all 20 initial mission scenes without opening a game
+window, first with mission lights and then with the original flashlight.
+It compares native packed colours against replayed original CPU/GTE instructions:
+
+```powershell
+cmake --build build/windows-psycross --config Release --target sf_retail_lighting_probe
+.\build\windows-psycross\Release\sf_retail_lighting_probe.exe 'D:/Games/Syphon Filter (USA) (v1.1).cue'
+ctest --preset windows-psycross-release -R sf_retail_lighting_rom
+```
+
+The direct command accepts optional mission index and frames per phase (default
+30). The CTest gate is registered only when `SF_SUPPORTED_ROM_CUE` is configured.
+It does not replace manual gameplay or full-frame performance validation.
+
 Disable them again with `-DSF_BUILD_ROM_PROBES=OFF`. Never commit or upload BIN,
 CUE, extracted retail data, saves or generated logs.
 

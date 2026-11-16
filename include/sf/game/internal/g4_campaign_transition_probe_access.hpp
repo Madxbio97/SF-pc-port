@@ -15,6 +15,14 @@ namespace sf::game {
 // PsyCross.
 class G4CampaignTransitionProbeAccess final {
 public:
+  // Diagnostic-only access for observing and replaying original light calls.
+  [[nodiscard]] static LegacyGameplayVm *
+  lightingProbeVm(LegacyFirstMissionRuntime &runtime) noexcept {
+    return runtime.ready_ && !runtime.faulted_ && !runtime.finished_
+               ? runtime.vm_.get()
+               : nullptr;
+  }
+
   [[nodiscard]] static bool
   invokeRetailFlashlight(LegacyFirstMissionRuntime &runtime, bool enabled) {
     if (!runtime.ready_ || runtime.faulted_ || runtime.finished_ ||

@@ -10,6 +10,8 @@ pre-release tags rather than a stable semantic-versioning promise.
 - Matched original PSX colour rounding and saturation when multiple projected
   lights affect a surface. Added reference colours from executed BASEEXT,
   BASEEXT2 and CAVE2 instructions.
+- Added an opt-in all-mission ROM lighting parity gate and reused shared
+  terrain-vertex lighting results to reduce CPU work during camera movement.
 
 ## 0.1.0-public-test.29 - 2026-08-13
 

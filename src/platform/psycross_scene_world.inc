@@ -3436,6 +3436,23 @@ const std::array<VertexColor, 4U> &cachedWorldPolygonLighting(
   if (cache.current(entry)) {
     return entry.colors;
   }
+  if (active_retail_environment) {
+    for (std::size_t corner{}; corner < Count; ++corner) {
+      const auto index = polygon.vertex_indices[corner];
+      entry.colors[corner] = cache.vertexColor(index, [&] {
+        const auto &vertex = section.vertices[index];
+        const auto base = decodeColor(live_colors.empty() ? vertex.color
+                                                          : live_colors[index]);
+        return sceneVertexLighting(base,
+                                   {static_cast<double>(vertex.x),
+                                    static_cast<double>(vertex.y),
+                                    static_cast<double>(vertex.z)},
+                                   active_baked_world_dynamic_lights);
+      });
+    }
+    cache.commit(entry);
+    return entry.colors;
+  }
   auto positions = std::array<SVECTOR, Count>{};
   for (auto corner = std::size_t{}; corner < Count; ++corner) {
     positions[corner] =
@@ -3963,6 +3980,7 @@ RenderStats renderWorld(
         }
         continue;
       }
+      world_lighting_cache.beginSection(section.vertices.size());
       auto &precise_depths = primitives.world_vertex_scratch.precise_depths;
       auto &depth_cues = primitives.world_vertex_scratch.depth_cues;
       auto &projected_vertices =

@@ -96,3 +96,50 @@ Full scene frame-time percentiles, presentation pacing and subjective movement
 smoothness still require the user's manual reference-scene runs above. The
 approximately 49% CPU improvement here must not be presented as a 49% whole-game
 FPS increase.
+
+## 2026-11-16 all-mission lighting and CPU cost
+
+The opt-in `sf_retail_lighting_probe` observed original renderer calls with
+mission sources and with the flashlight enabled in all 20 missions, then
+replayed `FUN_800d3b8c/FUN_800d3cb4` through the integer R3000/GTE. All 57,344
+sampled packed colours matched; no source vector was unmatched. Observed light
+projection H was 38 throughout. A separate native-presentation check confirmed
+that this guest H reaches lighting on every mission independently of display
+camera H=261. These are initial-scene automated checks, not a manual walkthrough
+of every room, script state or camera transition.
+
+CPU-only rotating-camera measurement on the same i9-12900F reference machine
+compares `1e55bd4` to shared vertex-light caching. It traverses actual active
+EMD sections, including camera frustum rejection, interpolated light matrices,
+live guest colours and the production polygon-lighting cache. Each process
+warms 60 iterations and measures 720, with 12 presentation samples per guest
+tick; three fresh processes run sequentially. Resolution, GPU filtering,
+swaps and VSync are excluded from this isolated stage measurement.
+
+Median of the three per-run metrics, in milliseconds:
+
+| Mission | Mean before | Mean after | P95 before | P95 after | P99 before | P99 after |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Georgia Street (SUBWAY) | 0.571 | 0.215 | 0.692 | 0.263 | 0.821 | 0.319 |
+| Romer's Base (BASEEXT) | 0.928 | 0.408 | 1.112 | 0.489 | 1.274 | 0.557 |
+| CAVE2 | 0.388 | 0.119 | 0.418 | 0.138 | 0.500 | 0.188 |
+
+A single control run with the former H=261 used 0.561, 0.914 and 0.371 ms mean
+respectively. Restoring the wider original light footprint added only about
+0.01-0.02 ms to this CPU workload; eliminating repeated shared-vertex work more
+than compensates for it. No lighting-stage sample in the optimized runs
+exceeded 1 ms. This does not establish full-frame hitch percentiles.
+
+All before/after colour hashes and polygon/vertex counts were identical:
+
+| Mission | Colour hash | Polygon visits including warmup |
+| --- | --- | ---: |
+| SUBWAY | `fb0e5f30c3ed476f` | 1,578,078 |
+| BASEEXT | `3862dd6d82f0ff80` | 997,750 |
+| CAVE2 | `48dfbaab949f932d` | 1,125,563 |
+
+The cache is reset per section pass, retains allocation capacity and keeps
+different vertex indices distinct even when their positions coincide.
+Portable tests cover reuse, changed colours, section changes and growth.
+Full-frame smoothness remains a manual acceptance check under the protocol
+above; these numbers are not a whole-game FPS claim.

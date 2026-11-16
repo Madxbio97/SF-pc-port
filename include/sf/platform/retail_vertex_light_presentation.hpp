@@ -13,6 +13,39 @@
 
 namespace sf::platform {
 
+// World polygons often reference the same retail vertex. Reuse its result
+// during one section pass while keeping distinct indices and authored colours
+// separate. A new section pass samples new light matrices and guest colours.
+template <typename Colour> class RetailSectionVertexLightCache final {
+  struct Entry {
+    Colour colour{};
+    std::uint32_t generation{};
+  };
+  std::vector<Entry> entries_;
+  std::uint32_t generation_{};
+
+public:
+  void beginSection(std::size_t vertex_count) {
+    if (entries_.size() < vertex_count)
+      entries_.resize(vertex_count);
+    if (++generation_ == 0U) {
+      for (auto &entry : entries_)
+        entry.generation = 0U;
+      generation_ = 1U;
+    }
+  }
+
+  template <typename Compute>
+  const Colour &resolve(std::size_t index, Compute &&compute) {
+    auto &entry = entries_[index];
+    if (entry.generation != generation_) {
+      entry.colour = compute();
+      entry.generation = generation_;
+    }
+    return entry.colour;
+  }
+};
+
 inline void interpolateRetailVertexLights(
     std::span<const game::LegacyVertexLightBridgeState> previous,
     std::span<const game::LegacyVertexLightBridgeState> current, double amount,
