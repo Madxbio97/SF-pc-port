@@ -1892,15 +1892,31 @@ void LegacyGameplayVm::bindAgentDifficultyDamageHook(
                              weapon};
     };
     if (hostile_ballistic_visibility_ && player_slot >= 0 &&
-        target_slot == player_slot && attacker_slot >= 0 &&
-        attacker_slot != player_slot && owner_slot != player_slot &&
-        damage > 0 && legacyBallisticDamageType(damage_type)) {
-      const auto source = ballistic_source(attacker_slot);
-      // Retail also posts type 0x0f for scripted damage. Only the two sniper
-      // weapons use it as a direct ballistic event.
+        target_slot == player_slot && attacker_slot != player_slot &&
+        owner_slot != player_slot && damage > 0 &&
+        legacyBallisticDamageType(damage_type)) {
+      // FUN_8006a4b8 applies ranged falloff with attacker=-1 and the shooter
+      // in owner. Identify its exact call site before resolving that owner;
+      // ordinary owner-only scripted damage must pass through unchanged.
+      constexpr std::uint32_t ranged_falloff_damage_return = 0x8006a944U;
+      const auto source_slot =
+          attacker_slot == -1 &&
+                  context.returnAddress() == ranged_falloff_damage_return
+              ? owner_slot
+              : attacker_slot;
+      const auto source = ballistic_source(source_slot);
+      // FUN_80046a3c selects direct-hit damage at weapon_table + 6. This
+      // path also serves ordinary pistols, automatic weapons and shotguns.
+      // Match the live table so fire, explosions and scripted events keep
+      // their own damage handling.
+      constexpr std::uint32_t weapon_damage_types = 0x8010c396U;
+      constexpr std::uint32_t weapon_stride = 0x20U;
+      std::uint16_t direct_damage_type{};
       if (source && legacyWeaponUsesBallisticLineOfSight(source->weapon) &&
-          (damage_type == 0x892 || source->weapon == 12U ||
-           source->weapon == 13U)) {
+          (damage_type == 0x892 ||
+           (context.read16(weapon_damage_types + source->weapon * weapon_stride,
+                           direct_damage_type) &&
+            damage_type == std::bit_cast<std::int16_t>(direct_damage_type)))) {
         const auto motion_position =
             [&](std::uint32_t instance) -> std::optional<LegacyNativePoint> {
           std::uint32_t motion{}, x{}, y{}, z{};

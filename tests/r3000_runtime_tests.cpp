@@ -7467,6 +7467,85 @@ void testLegacyGameplayVmAgentDamageHook() {
               blocked_linked_hit.return_value == 0U,
           "A linked projectile bypassed its shooter's blocked line of sight");
 
+  // These are FUN_80046a3c's direct-hit types from the retail weapon table.
+  // Georgia Street's pistol and automatic enemies use this path while Gabe
+  // holds first-person aim; a collision-only guard lets both shoot through
+  // walls.
+  struct WeaponDamageType {
+    std::uint8_t weapon;
+    std::uint16_t type;
+  };
+  constexpr std::array<WeaponDamageType, 14> ballistic_weapon_types{
+      {{1U, 0x0fU},
+       {2U, 0x0fU},
+       {4U, 0x0fU},
+       {5U, 0x0fU},
+       {6U, 0x11U},
+       {7U, 0x11U},
+       {8U, 0x10U},
+       {9U, 0x10U},
+       {10U, 0x10U},
+       {11U, 0x10U},
+       {12U, 0x0fU},
+       {13U, 0x0fU},
+       {17U, 0x10U},
+       {22U, 0x10U}}};
+  constexpr std::uint32_t weapon_damage_types = 0x8010c396U;
+  for (const auto &[weapon, direct_type] : ballistic_weapon_types) {
+    require(vm.runtime().write8(shooter_record + 0x24U, weapon) &&
+                vm.runtime().write16(weapon_damage_types + weapon * 0x20U,
+                                     direct_type),
+            "Could not configure the retail direct-hit weapon type");
+    const auto blocked_direct =
+        damage(player_slot, 5, shooter_slot, shooter_slot,
+               static_cast<std::int16_t>(direct_type));
+    require(blocked_direct.completed() && blocked_direct.return_value == 0U,
+            "A direct ballistic hit bypassed the wall obstruction guard");
+    require(vm.runtime().write32(shooter_motion, 200U),
+            "Could not expose the direct-hit shooter");
+    const auto exposed_direct =
+        damage(player_slot, 5, shooter_slot, shooter_slot,
+               static_cast<std::int16_t>(direct_type));
+    require(exposed_direct.completed() && exposed_direct.return_value == 5U,
+            "The wall guard suppressed an exposed direct ballistic hit");
+    require(vm.runtime().write32(shooter_motion, 100U),
+            "Could not restore the covered direct-hit target");
+  }
+  require(vm.runtime().write8(shooter_record + 0x24U, 1U),
+          "Could not restore the pistol fixture");
+  const auto wrong_weapon_type =
+      damage(player_slot, 5, shooter_slot, shooter_slot, 0x10);
+  require(wrong_weapon_type.completed() && wrong_weapon_type.return_value == 5U,
+          "The wall guard treated a mismatched event as a pistol bullet");
+
+  // The retail falloff routine supplies attacker=-1 and a verified owner.
+  // Exercise its real return address through a guest call, including an
+  // exposed shot, without turning unrelated owner-only scripts into bullets.
+  constexpr std::uint32_t falloff_call = 0x8006a938U;
+  constexpr std::array falloff_words{
+      encodeR(31U, 0U, 8U, 0U, 0x21U),
+      encodeJ(0x03U, damage_entry),
+      std::uint32_t{0U},
+      encodeR(8U, 0U, 0U, 0U, 0x08U),
+      std::uint32_t{0U},
+  };
+  require(vm.loadOverlay(falloff_call, instructionBytes(falloff_words)),
+          "Could not prepare the retail ranged-falloff call site");
+  const std::array falloff_arguments{std::uint32_t{0xffffffffU},
+                                     static_cast<std::uint32_t>(shooter_slot),
+                                     static_cast<std::uint32_t>(player_slot),
+                                     std::uint32_t{5U}, std::uint32_t{0x0fU}};
+  const auto covered_falloff = vm.invoke(falloff_call, falloff_arguments);
+  require(covered_falloff.completed() && covered_falloff.return_value == 0U,
+          "An owner-attributed ranged shot bypassed the wall guard");
+  require(vm.runtime().write32(shooter_motion, 200U),
+          "Could not expose the ranged-falloff shooter");
+  const auto exposed_falloff = vm.invoke(falloff_call, falloff_arguments);
+  require(exposed_falloff.completed() && exposed_falloff.return_value == 5U,
+          "The wall guard suppressed an exposed ranged-falloff shot");
+  require(vm.runtime().write32(shooter_motion, 100U),
+          "Could not restore the covered shooter after ranged falloff");
+
   require(vm.runtime().write32(shooter_motion, 200U),
           "Could not move the shooter into the clear");
   const auto clear_hit = damage(player_slot, 5, shooter_slot, shooter_slot,

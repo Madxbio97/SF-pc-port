@@ -906,9 +906,11 @@ legacyWeaponUsesBallisticLineOfSight(std::uint8_t weapon) noexcept {
 
 [[nodiscard]] constexpr bool
 legacyBallisticDamageType(std::int16_t damage_type) noexcept {
-  // 0x892 is the weapon collision/hitscan event. 0x0f is the retail direct
-  // ballistic event used by linked sniper targets.
-  return damage_type == 0x0892 || damage_type == 0x000f;
+  // Collision hits use 0x892. FUN_80046a3c reads direct-hit types from the
+  // weapon table: 0x0f for pistols/rifles, 0x10 for automatic weapons and
+  // 0x11 for shotguns. The caller also checks the actual shooter weapon.
+  return damage_type == 0x0892 || damage_type == 0x000f ||
+         damage_type == 0x0010 || damage_type == 0x0011;
 }
 
 struct LegacyNativeMissionBridgeProfile {
