@@ -3,6 +3,15 @@
 All notable public-test changes are documented here. The project currently uses
 pre-release tags rather than a stable semantic-versioning promise.
 
+## Unreleased
+
+- Matched the original sprite rectangle/FT4 selection, pivot, UV flips and
+  integer rotation input; preserved priority-zero camera-list UI.
+- Preserved inclusive retail sprite texture bounds and the final texture
+  row/column through filtered rendering, with separate UI/world depth.
+- Added an opt-in original-instruction sprite parity gate across all 20 missions.
+  See [the audit and remaining checklist](docs/PSX_PARITY_AUDIT.md).
+
 ## 0.2.0-beta.3 - 2026-11-16
 
 - Fixed wall-occluded hostile bullet damage and danger accumulation.

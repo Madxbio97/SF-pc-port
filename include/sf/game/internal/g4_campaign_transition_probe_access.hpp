@@ -15,9 +15,9 @@ namespace sf::game {
 // PsyCross.
 class G4CampaignTransitionProbeAccess final {
 public:
-  // Diagnostic-only access for observing and replaying original light calls.
+  // Diagnostic-only access for observing and replaying original presentation.
   [[nodiscard]] static LegacyGameplayVm *
-  lightingProbeVm(LegacyFirstMissionRuntime &runtime) noexcept {
+  presentationProbeVm(LegacyFirstMissionRuntime &runtime) noexcept {
     return runtime.ready_ && !runtime.faulted_ && !runtime.finished_
                ? runtime.vm_.get()
                : nullptr;

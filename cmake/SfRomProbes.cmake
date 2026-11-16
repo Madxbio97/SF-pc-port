@@ -30,6 +30,8 @@ if(SF_BUILD_ROM_PROBES)
         apps/sf_retail_environment_probe.cpp)
     sf_add_game_probe(sf_retail_lighting_probe
         apps/sf_retail_lighting_probe.cpp)
+    sf_add_game_probe(sf_retail_sprite_probe
+        apps/sf_retail_sprite_probe.cpp)
     sf_add_game_probe(sf_retail_prop_state_probe
         apps/sf_retail_prop_state_probe.cpp)
 endif()
@@ -79,6 +81,8 @@ function(sf_register_supported_rom_tests)
         sf_retail_environment_probe "rom;rendering;environment;effects" 900)
     sf_add_supported_rom_test(sf_retail_lighting_rom
         sf_retail_lighting_probe "rom;rendering;lighting" 300)
+    sf_add_supported_rom_test(sf_retail_sprite_rom
+        sf_retail_sprite_probe "rom;rendering;ui;particles" 300)
     sf_add_supported_rom_test(sf_retail_grenade_rom sf_retail_grenade_probe
         "rom;gameplay;rendering;grenade" 300)
 endfunction()

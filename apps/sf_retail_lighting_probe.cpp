@@ -39,7 +39,7 @@ std::size_t checkMission(sf::game::GameDisc &disc,
   sf::game::LegacyFirstMissionRuntime runtime{package.definition(),
                                               package.legacyImage()};
   auto *vm =
-      sf::game::G4CampaignTransitionProbeAccess::lightingProbeVm(runtime);
+      sf::game::G4CampaignTransitionProbeAccess::presentationProbeVm(runtime);
   if (!vm)
     throw std::runtime_error{"original mission runtime is not ready"};
   std::uint32_t instruction{}, colour_instruction{};

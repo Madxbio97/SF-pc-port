@@ -3,6 +3,12 @@
 Completed recovery milestones are retained in [STAGES.md](STAGES.md) and the
 `*_FINDINGS.md` files. This page lists active work only.
 
+## PSX parity
+
+The current [audit and remaining comparison checklist](PSX_PARITY_AUDIT.md)
+records verified original-instruction contracts separately from manual scene
+and gameplay checks.
+
 ## Performance and presentation
 
 - Establish three repeatable scene captures and record a hardware baseline using

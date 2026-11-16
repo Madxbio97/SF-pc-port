@@ -47,6 +47,42 @@ void require(bool v, const char *m) {
   if (!v)
     throw std::runtime_error(m);
 }
+// Production packet-to-vertex UV setup, exercised with a real GL context.
+extern void MakeTexcoordQuad(GrVertex *, unsigned char *, unsigned char *,
+                             unsigned char *, unsigned char *, u_short, u_short,
+                             unsigned char);
+void testRetailSpriteTextureBounds() {
+  const auto saved_filter = g_cfg_bilinearFiltering;
+  g_cfg_bilinearFiltering = 1;
+  std::array<GrVertex, 4U> vertices{};
+  // Backend winding is TL, TR, BR, BL; ordinary native UI uses exclusive UVs.
+  vertices[1].x = vertices[2].x = 1.0F;
+  vertices[2].y = vertices[3].y = 1.0F;
+  std::array<unsigned char, 2U> uv0{16U, 32U}, uv1{47U, 32U}, uv2{47U, 63U},
+      uv3{16U, 63U};
+  MakeTexcoordQuad(vertices.data(), uv0.data(), uv1.data(), uv2.data(),
+                   uv3.data(), 0U, 0U, 0U);
+  require(vertices[0].umax == 46U && vertices[0].vmax == 62U &&
+              vertices[0].tcx == -1,
+          "native HUD exclusive UV convention changed");
+  for (auto &vertex : vertices) {
+    vertex._p1 = 1;
+    vertex.umin = 16U;
+    vertex.vmin = 32U;
+    vertex.umax = 47U;
+    vertex.vmax = 63U;
+    vertex.precise_u = 15.5F;
+    vertex.precise_v = 31.5F;
+  }
+  MakeTexcoordQuad(vertices.data(), uv0.data(), uv1.data(), uv2.data(),
+                   uv3.data(), 0U, 0U, 0U);
+  for (const auto &vertex : vertices)
+    require(vertex.umax == 47U && vertex.vmax == 63U && vertex.tcx == 0 &&
+                vertex.tcy == 0 && vertex.precise_u == 15.5F &&
+                vertex.precise_v == 31.5F,
+            "retail sprite lost its final texel or received two UV offsets");
+  g_cfg_bilinearFiltering = saved_filter;
+}
 extern char begin_scene_flag;
 void testNestedSceneRetainsInputBoundary() {
   const auto event_type = SDL_RegisterEvents(1);
@@ -442,6 +478,7 @@ int main() {
   }
   int result = 0;
   try {
+    testRetailSpriteTextureBounds();
     testNestedSceneRetainsInputBoundary();
     testActorNearProjection();
     testActorDepth();

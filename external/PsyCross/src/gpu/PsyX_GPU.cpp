@@ -363,8 +363,8 @@ static void SetTexcoordFilteringState(GrVertex* vertex, int count,
 	// sprites/HUD use u+width/v+height as an exclusive far edge, so only that
 	// convention receives the half-texel correction. Bounds keep every tap in
 	// the primitive's authored atlas tile.
-	const char	  offset			  = g_cfg_bilinearFiltering && exclusiveFarEdge ? -1 : 0;
-	unsigned char minU				  = 255;
+	char offset = g_cfg_bilinearFiltering && exclusiveFarEdge ? -1 : 0;
+	unsigned char minU = 255;
 	unsigned char minV				  = 255;
 	unsigned char maxU				  = 0;
 	unsigned char maxV				  = 0;
@@ -389,6 +389,10 @@ static void SetTexcoordFilteringState(GrVertex* vertex, int count,
 	}
 	if(hasPreciseTexcoords)
 	{
+		// Explicit UVs own inclusive atlas bounds and the rectangle half-texel
+		// adjustment. Do not trim a second time based on the projected XY.
+		exclusiveFarEdge = 0;
+		offset = 0;
 		minU = 255;
 		minV = 255;
 		maxU = 0;
@@ -1059,7 +1063,8 @@ static bool IsExactProjectedVertex(VERTTYPE* vertex, ushort gteIndex,
 {
 #if USE_PGXP && USE_EXTENDED_PRIM_POINTERS
 	PGXPVData cached;
-	return LookupVertexPGXP(&cached, vertex, gteIndex, cacheOffset);
+	return LookupVertexPGXP(&cached, vertex, gteIndex, cacheOffset) &&
+		   cached.scr_h > 0.0f;
 #else
 	(void)vertex;
 	(void)gteIndex;

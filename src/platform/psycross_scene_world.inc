@@ -1849,16 +1849,12 @@ void renderGuestCameraLists(
            static_cast<float>(third[1]), static_cast<float>(fourth[0]),
            static_cast<float>(fourth[1]));
 
-    const auto horizontal_flip = (sprite.attribute & 0x800000U) != 0U;
-    const auto vertical_flip = (sprite.attribute & 0x400000U) != 0U;
-    const auto last_u = static_cast<std::uint8_t>(
-        static_cast<unsigned int>(sprite.u) + sprite.width - 1U);
-    const auto last_v = static_cast<std::uint8_t>(
-        static_cast<unsigned int>(sprite.v) + sprite.height - 1U);
-    const auto first_u = horizontal_flip ? last_u : sprite.u;
-    const auto second_u = horizontal_flip ? sprite.u : last_u;
-    const auto first_v = vertical_flip ? last_v : sprite.v;
-    const auto second_v = vertical_flip ? sprite.v : last_v;
+    const auto texture_corners = game::legacyGuestSpriteTextureCorners(
+        sprite, sort_transform.textured_quad);
+    const auto first_u = texture_corners.left;
+    const auto second_u = texture_corners.right;
+    const auto first_v = texture_corners.top;
+    const auto second_v = texture_corners.bottom;
     auto material_u0 = first_u;
     auto material_u1 = second_u;
     auto material_v0 = first_v;
@@ -1994,40 +1990,62 @@ void renderGuestCameraLists(
                   static_cast<int>(std::lround((*projected_effect)[2] * 0.25)),
                   1, ordering_table_size - 1)
             : static_cast<int>(std::clamp<std::uint32_t>(
-                  sprite.ordering_depth, 1U, ordering_table_size - 1U));
+                  sprite.ordering_depth, 0U, ordering_table_size - 1U));
     auto *target_table = &overlay_ordering_table;
+    const auto view_depth =
+        world_effect ? preciseCameraDepth(view, presented_effect_position.x,
+                                          presented_effect_position.y,
+                                          presented_effect_position.z)
+                     : 128.0;
+    if (world_effect && view_depth <= 0.0) {
+      primitives.guest_sprites.pop_back();
+      ++stats.rejected;
+      continue;
+    }
+    const auto projection =
+        static_cast<float>(std::max(presentation.camera.projection, 1));
+    const auto pgxp_depth = static_cast<float>(view_depth / 128.0);
+    const auto uv_bounds =
+        static_cast<std::uint32_t>(std::min(material_u0, material_u1)) |
+        (static_cast<std::uint32_t>(std::min(material_v0, material_v1)) << 8U) |
+        (static_cast<std::uint32_t>(std::max(material_u0, material_u1))
+         << 16U) |
+        (static_cast<std::uint32_t>(std::max(material_v0, material_v1)) << 24U);
+    // SPRT spans texel edges; retail FT4 addresses inclusive corner centres.
+    // Keep those conventions explicit instead of guessing from screen XY.
+    const auto rectangle_uv = !sort_transform.textured_quad;
+    const auto emit = [&](VERTTYPE &x, VERTTYPE &y, const auto &point,
+                          std::uint8_t u, std::uint8_t v, bool right,
+                          bool bottom) {
+      PGXPVData data{};
+      data.lookup = PGXP_LOOKUP_VALUE(x, y);
+      data.px = static_cast<float>((point[0] - center_x) * view_depth /
+                                   projection / 128.0);
+      data.py = static_cast<float>((point[1] - center_y) * view_depth /
+                                   projection / 128.0);
+      data.pz = pgxp_depth;
+      data.sx = static_cast<float>(point[0]);
+      data.sy = static_cast<float>(point[1]);
+      data.scr_h = world_effect ? projection : 0.0F;
+      data.ofx = static_cast<float>(center_x);
+      data.ofy = static_cast<float>(center_y);
+      data.precise_texcoord = 1U;
+      data.precise_u = static_cast<float>(u) +
+                       (rectangle_uv ? (right ? 0.5F : -0.5F) : 0.0F);
+      data.precise_v = static_cast<float>(v) +
+                       (rectangle_uv ? (bottom ? 0.5F : -0.5F) : 0.0F);
+      data.texture_bounds = uv_bounds;
+      static_cast<void>(PGXP_EmitCacheData(&data));
+    };
+    emit(primitive.x0, primitive.y0, first, material_u0, material_v0, false,
+         false);
+    emit(primitive.x1, primitive.y1, second, material_u1, material_v0, true,
+         false);
+    emit(primitive.x2, primitive.y2, third, material_u0, material_v1, false,
+         true);
+    emit(primitive.x3, primitive.y3, fourth, material_u1, material_v1, true,
+         true);
     if (world_effect) {
-      const auto view_depth =
-          preciseCameraDepth(view, presented_effect_position.x,
-                             presented_effect_position.y,
-                             presented_effect_position.z);
-      if (view_depth <= 0.0) {
-        primitives.guest_sprites.pop_back();
-        ++stats.rejected;
-        continue;
-      }
-      const auto projection =
-          static_cast<float>(std::max(presentation.camera.projection, 1));
-      const auto pgxp_depth = static_cast<float>(view_depth / 128.0);
-      const auto emit = [&](VERTTYPE &x, VERTTYPE &y, const auto &point) {
-        PGXPVData data{};
-        data.lookup = PGXP_LOOKUP_VALUE(x, y);
-        data.px = static_cast<float>((point[0] - center_x) * view_depth /
-                                     projection / 128.0);
-        data.py = static_cast<float>((point[1] - center_y) * view_depth /
-                                     projection / 128.0);
-        data.pz = pgxp_depth;
-        data.sx = static_cast<float>(point[0]);
-        data.sy = static_cast<float>(point[1]);
-        data.scr_h = projection;
-        data.ofx = static_cast<float>(center_x);
-        data.ofy = static_cast<float>(center_y);
-        static_cast<void>(PGXP_EmitCacheData(&data));
-      };
-      emit(primitive.x0, primitive.y0, first);
-      emit(primitive.x1, primitive.y1, second);
-      emit(primitive.x2, primitive.y2, third);
-      emit(primitive.x3, primitive.y3, fourth);
       // Transparent particle layers test against the opaque scene without
       // writing depth over other overlapping smoke or gas sprites.
       target_table = (sprite.attribute & 0x40000000U) != 0U &&

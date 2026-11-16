@@ -1293,8 +1293,6 @@ void testNativeFirstPersonOwnsEveryGuestScreenPrimitive() {
 
 void testRetailGuestSpriteSortSelection() {
   sf::game::LegacyGuestSpriteBridgeState sprite;
-  // Bit 27 used to be mistaken for the renderer-wide fast-sort selector.
-  sprite.attribute = 0x08000000U;
   sprite.width = 96U;
   sprite.height = 64U;
   sprite.mapping_x = 48;
@@ -1302,25 +1300,64 @@ void testRetailGuestSpriteSortSelection() {
   sprite.scale_x = 2048;
   sprite.scale_y = 8192;
   sprite.rotation = 360;
+  sprite.u = 16U;
+  sprite.v = 32U;
 
   const auto regular = sf::game::legacyGuestSpriteSortTransform(sprite, false);
   require(regular.local_left == -48.0 && regular.local_top == -32.0 &&
               regular.local_right == 48.0 && regular.local_bottom == 32.0 &&
               regular.scale_x == 0.5 && regular.scale_y == 2.0 &&
-              regular.angle_units == 1.0,
-          "Regular GsSPRITE path ignored authored transform fields");
+              regular.angle_units == 1.0 && regular.textured_quad,
+          "Regular GsSPRITE FT4 path ignored authored transforms");
 
-  const auto fast = sf::game::legacyGuestSpriteSortTransform(sprite, true);
-  require(fast.local_left == 0.0 && fast.local_top == 0.0 &&
-              fast.local_right == 96.0 && fast.local_bottom == 64.0 &&
-              fast.scale_x == 1.0 && fast.scale_y == 1.0 &&
-              fast.angle_units == 0.0,
-          "Fast GsSPRITE path did not use the exact x/y/w/h rectangle");
-
+  for (const auto attribute : {0x08000000U, 0x08c00000U}) {
+    sprite.attribute = attribute;
+    const auto forced = sf::game::legacyGuestSpriteSortTransform(sprite, false);
+    const auto uv =
+        sf::game::legacyGuestSpriteTextureCorners(sprite, forced.textured_quad);
+    require(forced.local_left == -48.0 && forced.local_top == -32.0 &&
+                forced.local_right == 48.0 && forced.local_bottom == 32.0 &&
+                forced.scale_x == 1.0 && forced.scale_y == 1.0 &&
+                forced.angle_units == 0.0 && !forced.textured_quad &&
+                uv.left == 16U && uv.top == 32U && uv.right == 111U &&
+                uv.bottom == 95U,
+            "Bit 27 SPRT shortcut applied scale, rotation or flips");
+  }
+  for (const auto attribute : {0U, 0x00c00000U, 0x08c00000U}) {
+    sprite.attribute = attribute;
+    const auto fast = sf::game::legacyGuestSpriteSortTransform(sprite, true);
+    const auto uv =
+        sf::game::legacyGuestSpriteTextureCorners(sprite, fast.textured_quad);
+    require(fast.local_left == 0.0 && fast.local_top == 0.0 &&
+                fast.local_right == 96.0 && fast.local_bottom == 64.0 &&
+                fast.scale_x == 1.0 && fast.scale_y == 1.0 &&
+                fast.angle_units == 0.0 && !fast.textured_quad &&
+                uv.left == 16U && uv.top == 32U,
+            "Fast GsSPRITE path applied pivot, transforms or flips");
+  }
+  sprite.attribute = 0x00c00000U;
+  const auto flipped = sf::game::legacyGuestSpriteSortTransform(sprite, false);
+  const auto uv =
+      sf::game::legacyGuestSpriteTextureCorners(sprite, flipped.textured_quad);
+  require(flipped.textured_quad && uv.left == 111U && uv.top == 95U &&
+              uv.right == 16U && uv.bottom == 32U,
+          "Transformed sprite lost the original FT4 UV flips");
+  for (const auto rotation : {-719, -360, -359, 359, 360, 719}) {
+    sprite.rotation = rotation;
+    require(
+        sf::game::legacyGuestSpriteSortTransform(sprite, false).angle_units ==
+            static_cast<double>(rotation / 360),
+        "Sprite rotation did not truncate to the original GTE angle");
+  }
   sprite.attribute = 0U;
-  require(sf::game::legacyGuestSpriteSortTransform(sprite, true).local_right ==
-              fast.local_right,
-          "GsSPRITE attribute incorrectly selected the renderer fast path");
+  sprite.rotation = 0;
+  sprite.scale_x = sprite.scale_y = 4096;
+  require(
+      !sf::game::legacyGuestSpriteSortTransform(sprite, false).textured_quad,
+      "Unit-scale sprite missed the original rectangle shortcut");
+  sprite.attribute = 0x00800000U;
+  require(sf::game::legacyGuestSpriteSortTransform(sprite, false).textured_quad,
+          "Unscaled flipped sprite incorrectly selected a rectangle");
 }
 
 void testVolumetricPresentationPolicies() {

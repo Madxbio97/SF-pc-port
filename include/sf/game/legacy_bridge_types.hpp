@@ -412,11 +412,13 @@ struct LegacyGuestSpriteSortTransform {
   double scale_x{1.0};
   double scale_y{1.0};
   double angle_units{};
+  bool textured_quad{};
 };
 
-// GsSortFastSprite reads only x/y/w/h. The regular GsSortSprite path applies
-// mapping origin, Q12 scale and authored rotation. Selection is the camera
-// render-context byte +0x09, never a bit in GsSPRITE.attribute.
+// GsSortFastSprite ignores the pivot and all transforms. GsSortSprite has
+// its own SPRT shortcut: attribute bit 27 forces an untransformed rectangle
+// with the mapping origin subtracted. Only its FT4 path supports UV flips.
+// Retail entry points: 0x800e82b4 / 0x800e87b4 (USA v1.1).
 [[nodiscard]] constexpr LegacyGuestSpriteSortTransform
 legacyGuestSpriteSortTransform(const LegacyGuestSpriteBridgeState &sprite,
                                bool renderer_fast_path) noexcept {
@@ -433,15 +435,36 @@ legacyGuestSpriteSortTransform(const LegacyGuestSpriteBridgeState &sprite,
   }
   const auto left = -static_cast<double>(sprite.mapping_x);
   const auto top = -static_cast<double>(sprite.mapping_y);
+  const auto rectangle =
+      (sprite.attribute & 0x08000000U) != 0U ||
+      (sprite.scale_x == 4096 && sprite.scale_y == 4096 &&
+       sprite.rotation == 0 && (sprite.attribute & 0x00c00000U) == 0U);
   return LegacyGuestSpriteSortTransform{
       left,
       top,
       left + sprite.width,
       top + sprite.height,
-      static_cast<double>(sprite.scale_x) / 4096.0,
-      static_cast<double>(sprite.scale_y) / 4096.0,
-      static_cast<double>(sprite.rotation) / 360.0,
+      rectangle ? 1.0 : static_cast<double>(sprite.scale_x) / 4096.0,
+      rectangle ? 1.0 : static_cast<double>(sprite.scale_y) / 4096.0,
+      // PsyQ truncates Q12 degrees to an integer GTE angle, toward zero.
+      rectangle ? 0.0 : static_cast<double>(sprite.rotation / 360),
+      !rectangle,
   };
+}
+
+struct LegacyGuestSpriteTextureCorners {
+  std::uint8_t left{}, top{}, right{}, bottom{};
+};
+
+[[nodiscard]] constexpr LegacyGuestSpriteTextureCorners
+legacyGuestSpriteTextureCorners(const LegacyGuestSpriteBridgeState &sprite,
+                                bool textured_quad) noexcept {
+  const auto last_u = static_cast<std::uint8_t>(sprite.u + sprite.width - 1U);
+  const auto last_v = static_cast<std::uint8_t>(sprite.v + sprite.height - 1U);
+  const auto flip_x = textured_quad && (sprite.attribute & 0x00800000U) != 0U;
+  const auto flip_y = textured_quad && (sprite.attribute & 0x00400000U) != 0U;
+  return {flip_x ? last_u : sprite.u, flip_y ? last_v : sprite.v,
+          flip_x ? sprite.u : last_u, flip_y ? sprite.v : last_v};
 }
 
 inline constexpr std::uint32_t legacy_retail_scope_sprite_stride = 0x2cU;
