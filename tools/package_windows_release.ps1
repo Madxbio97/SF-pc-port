@@ -1,6 +1,7 @@
 param(
-    [string]$Version = "0.1.0-public-test.29",
-    [string]$Configuration = "Release"
+    [string]$Version = "0.2.0-beta.3",
+    [string]$Configuration = "Release",
+    [string]$ChangeInventoryPath
 )
 
 $ErrorActionPreference = "Stop"
@@ -74,6 +75,40 @@ $vcFiles = @(
     "vcruntime140_1.dll"
 )
 
+$vcpkgInstalled = Join-Path $repoRoot "build\windows-psycross\vcpkg_installed"
+$cachePath = Join-Path $repoRoot "build\windows-psycross\CMakeCache.txt"
+if (Test-Path -LiteralPath $cachePath -PathType Leaf) {
+    foreach ($line in [IO.File]::ReadAllLines($cachePath)) {
+        if ($line -match '^VCPKG_INSTALLED_DIR:(?:PATH|STRING)=(.+)$') {
+            $vcpkgInstalled = $Matches[1]
+            break
+        }
+    }
+}
+$vcpkgShare = Join-Path $vcpkgInstalled "x64-windows\share"
+$licenseSources = @{
+    "FFmpeg.txt" = Join-Path $vcpkgShare "ffmpeg\copyright"
+    "fmt.txt" = Join-Path $vcpkgShare "fmt\copyright"
+    "OpenAL-Soft.txt" = Join-Path $vcpkgShare "openal-soft\copyright"
+    "SMAA.txt" = Join-Path $repoRoot "external\PsyCross\src\render\smaa\LICENSE.txt"
+    "Industry-Font-COPYRIGHT.txt" = Join-Path $repoRoot "tools\fonts\industry\COPYRIGHT.txt"
+    "SDL2.txt" = Join-Path $vcpkgShare "sdl2\copyright"
+}
+foreach ($entry in $licenseSources.GetEnumerator()) {
+    if (-not (Test-Path -LiteralPath $entry.Value -PathType Leaf)) {
+        throw "Required license file is missing: $($entry.Value)"
+    }
+}
+$releaseNotesPath = Join-Path $repoRoot "docs\releases\$Version.md"
+if (-not (Test-Path -LiteralPath $releaseNotesPath -PathType Leaf)) {
+    throw "Required release notes are missing: $releaseNotesPath"
+}
+$notes = [IO.File]::ReadAllText($releaseNotesPath, [Text.Encoding]::UTF8)
+if ($ChangeInventoryPath -and
+    -not (Test-Path -LiteralPath $ChangeInventoryPath -PathType Leaf)) {
+    throw "Change inventory is missing: $ChangeInventoryPath"
+}
+
 New-Item -ItemType Directory -Path $packageDir | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $packageDir "licenses") | Out-Null
 
@@ -142,21 +177,11 @@ foreach ($file in $vcFiles) {
 Copy-Item -LiteralPath (Join-Path $repoRoot "LICENSE") -Destination (Join-Path $packageDir "LICENSE.txt")
 Copy-Item -LiteralPath (Join-Path $repoRoot "external\PsyCross\LICENSE") -Destination (Join-Path $packageDir "licenses\PsyCross.txt")
 
-$vcpkgShare = Join-Path $repoRoot "build\windows-psycross\vcpkg_installed\x64-windows\share"
-$licenseSources = @{
-    "FFmpeg.txt" = Join-Path $vcpkgShare "ffmpeg\copyright"
-    "fmt.txt" = Join-Path $vcpkgShare "fmt\copyright"
-    "OpenAL-Soft.txt" = Join-Path $vcpkgShare "openal-soft\copyright"
-    "SMAA.txt" = Join-Path $repoRoot "external\PsyCross\src\render\smaa\LICENSE.txt"
-    "Industry-Font-COPYRIGHT.txt" = Join-Path $repoRoot "tools\fonts\industry\COPYRIGHT.txt"
-    "SDL2.txt" = Join-Path $vcpkgShare "sdl2\copyright"
-}
-
 foreach ($entry in $licenseSources.GetEnumerator()) {
-    if (-not (Test-Path -LiteralPath $entry.Value -PathType Leaf)) {
-        throw "Required license file is missing: $($entry.Value)"
-    }
     Copy-Item -LiteralPath $entry.Value -Destination (Join-Path $packageDir "licenses\$($entry.Key)")
+}
+if ($ChangeInventoryPath) {
+    Copy-Item -LiteralPath $ChangeInventoryPath -Destination (Join-Path $packageDir "CHANGE_INVENTORY.md")
 }
 
 $buildDate = Get-Date -Format "yyyy-MM-dd"
@@ -226,17 +251,13 @@ if ($repairScriptLiterals) {
     $readme = [Text.Encoding]::UTF8.GetString([Text.Encoding]::Default.GetBytes($readme))
 }
 
-$releaseNotesPath = Join-Path $repoRoot "docs\releases\$Version.md"
-if (-not (Test-Path -LiteralPath $releaseNotesPath -PathType Leaf)) {
-    throw "Required release notes are missing: $releaseNotesPath"
-}
-$notes = [IO.File]::ReadAllText($releaseNotesPath, [Text.Encoding]::UTF8)
-$commit = try { (& git -C $repoRoot rev-parse --short HEAD 2>$null).Trim() } catch { "unknown" }
+$commit = try { (& git -C $repoRoot rev-parse HEAD 2>$null).Trim() } catch { "unknown" }
 if (-not $commit) { $commit = "unknown" }
 
+$channel = if ($Version -match "(?i)beta") { "Beta" } else { "Public Test" }
 $buildInfo = @"
 Product: Syphon Filter PC
-Channel: Public Test
+Channel: $channel
 Version: $Version
 Platform: Windows x64
 Build type: $Configuration

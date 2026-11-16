@@ -4,7 +4,7 @@ if(POLICY CMP0174)
     cmake_policy(SET CMP0174 NEW)
 endif()
 
-project(SyphonFilterPC VERSION 0.1.0 LANGUAGES CXX)
+project(SyphonFilterPC VERSION 0.2.0 LANGUAGES CXX)
 
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 

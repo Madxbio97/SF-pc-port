@@ -3,15 +3,26 @@
 All notable public-test changes are documented here. The project currently uses
 pre-release tags rather than a stable semantic-versioning promise.
 
-## Unreleased
+## 0.2.0-beta.3 - 2026-11-16
 
-- Restored flashlight and moving searchlight illumination using the original
-  light-space projection, independently of PC camera FOV and aspect ratio.
-- Matched original PSX colour rounding and saturation when multiple projected
-  lights affect a surface. Added reference colours from executed BASEEXT,
-  BASEEXT2 and CAVE2 instructions.
-- Added an opt-in all-mission ROM lighting parity gate and reused shared
-  terrain-vertex lighting results to reduce CPU work during camera movement.
+- Fixed wall-occluded hostile bullet damage and danger accumulation.
+- Restored glass fragments, smoke, gas and explosion sprites; fixed the
+  textured-glass presentation contract that caused a crash.
+- Restored close-camera player transparency, backface culling and nearest
+  surface handling while keeping later transparent effects correctly occluded.
+- Refined darker scene grading, dithering and smooth gradients; removed
+  Kazakhstan atmosphere contour bands.
+- Restored PSX flashlight/searchlight projection and packed colour arithmetic.
+  All 57,344 sampled colours matched original instructions across 20 missions.
+- Adapted gameplay/pause UI, radar, timer, weapon art, notifications and the
+  full weapon-selection backing to widescreen without stretching glyphs.
+- Restored carried weapon grip, checkpoint score restart and SPU volume sweep;
+  smoothed host-audio starvation transitions.
+- Reduced vertex allocation/registration, nested input polling and repeated
+  shared-vertex lighting. CPU subsystem timings improved with matching output.
+- Restored retail radar packets, pause-menu presentation and attract demos.
+- Prepared an audited Windows x64 package with the complete dated change
+  inventory and a manual gameplay checklist.
 
 ## 0.1.0-public-test.29 - 2026-08-13
 
