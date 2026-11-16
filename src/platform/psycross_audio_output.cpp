@@ -423,6 +423,7 @@ ALsizei PsyCrossAudioOutput::fillStream(ALvoid *samples,
     --fade_remaining;
   }
   fade_in_frames_remaining_.store(fade_remaining, std::memory_order_relaxed);
+  stream_continuity_.process(destination, supplied);
   return byte_count;
 }
 
@@ -507,6 +508,7 @@ void PsyCrossAudioOutput::reset(std::string_view reason) noexcept {
     // publishes the new empty generation. The callback buffer remains
     // attached and can be restarted without reallocating device objects.
     stream_frames_.clear();
+    stream_continuity_.reset();
     staged_frames_.clear();
     staged_offset_ = 0U;
     fade_in_frames_remaining_.store(restart_fade_frames,

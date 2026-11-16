@@ -1361,15 +1361,38 @@ GLint u_textureBlendModeLoc;
 
 #endif
 
+// PS1 texture modulation uses the authored 5-bit texel and an 8-bit shade,
+// then truncates the result to RGB555. Expanding the texel to full-range RGB
+// before modulation retains extra light in dark surfaces on every mission.
+#define GPU_PSX_COLOR_FUNC                                                     \
+  R"PSYX(
+  vec4 shadePSX(vec4 texel) {
+    vec3 shade8;
+    if (v_texcoord.z > 1.5) {
+      vec3 vertex8 = floor(v_color.rgb * 127.5 + 0.0001);
+      shade8 = texel.rgb * (255.0 / 128.0) * vertex8;
+    } else {
+      shade8 = floor(v_color.rgb * 255.0 + 0.0001);
+    }
+    vec3 color5 = floor(clamp(shade8, 0.0, 255.0) / 8.0 + 0.0001);
+    vec3 expanded = (color5 * 8.0 + floor(color5 / 4.0)) / 255.0;
+    return vec4(expanded, texel.a * v_color.a);
+  }
+)PSYX"
+
 #define GPU_FRAGMENT_SAMPLE_SHADER(bit)                                        \
   GPU_FETCH_VRAM_FUNC                                                          \
   GPU_ARRAY_FUNC                                                               \
-  GPU_SAMPLE_TEXTURE_##bit##BIT_FUNC                                           \
+  GPU_SAMPLE_TEXTURE_##bit##BIT_FUNC GPU_PSX_COLOR_FUNC                        \
       "	uniform int textureBlendMode;\n"                                       \
       "	uniform sampler2D s_rgLut;\n"                                          \
       "	const vec2 c_LUTTexel = vec2(1.0 / 256.0, 1.0 / 256.0);\n"             \
-      "	vec4 lut(vec2 rg) { return texture2D(s_rgLut, rg - c_LUTTexel * "      \
-      "0.0001); }\n"                                                           \
+      "	vec4 lut(vec2 rg) {\n"                                                 \
+      "		vec4 texel = texture2D(s_rgLut, rg - c_LUTTexel * 0.0001);\n"         \
+      "		texel.rgb = floor(texel.rgb * 255.0 / 8.0 + 0.0001) * (8.0 / "        \
+      "255.0);\n"                                                              \
+      "		return texel;\n"                                                      \
+      "	}\n"                                                                   \
       "	vec2 boundedPSX(vec2 P) { return clamp(P, v_texbounds.xy, "            \
       "v_texbounds.zw); }\n"                                                   \
       "	vec4 bilinearTextureSample(vec2 P, out float coverage) {\n"            \
@@ -1418,17 +1441,22 @@ GLint u_textureBlendModeLoc;
       "		vec4 color;\n"                                                        \
       "		if (textureFilterMode > 0) {\n"                                       \
       "			color = textureFilterMode > 2\n"                                     \
-      "				? anisotropicTextureSample(v_texcoord.xy, coverage)\n"            \
-      "				: textureFilterMode > 1\n"                                        \
-      "					? trilinearTextureSample(v_texcoord.xy, coverage)\n"            \
-      "					: edgeSafeBilinearTextureSample(v_texcoord.xy, coverage);\n"    \
+      "				? anisotropicTextureSample(v_texcoord.xy, "                         \
+      "coverage)\n"                                                            \
+      "				: textureFilterMode > 1\n"                                          \
+      "					? "                                                                \
+      "trilinearTextureSample(v_texcoord.xy, coverage)\n"                      \
+      "					: "                                                                \
+      "edgeSafeBilinearTextureSample(v_texcoord.xy, coverage);\n"              \
       "			float sourceCoverage;\n"                                             \
-      "			vec4 sourceColor = pointTextureSample(v_texcoord.xy, "             \
-      "sourceCoverage);\n"                                                  \
+      "			vec4 sourceColor = pointTextureSample(v_texcoord.xy, "               \
+      "sourceCoverage);\n"                                                     \
       "			if (textureBlendMode == 0) {\n"                                      \
       "				if (sourceCoverage < 0.5) { discard; }\n"                           \
-      "				float mipConfidence = smoothstep(0.50, 0.75, coverage);\n"          \
-      "				color = mix(sourceColor, color, mipConfidence);\n"                  \
+      "				float mipConfidence = smoothstep(0.50, 0.75, "                      \
+      "coverage);\n"                                                           \
+      "				color = mix(sourceColor, color, "                                   \
+      "mipConfidence);\n"                                                      \
       "				coverage = 1.0;\n"                                                  \
       "			} else {\n"                                                          \
       "				coverage = smoothstep(0.015, 0.98, "                                \
@@ -1438,7 +1466,7 @@ GLint u_textureBlendModeLoc;
       "		} else {\n"                                                           \
       "			color = nearestTextureSample(v_texcoord.xy);\n"                      \
       "		}\n"                                                                  \
-      "		vec4 shaded = dither(color * v_color);\n"                             \
+      "		vec4 shaded = shadePSX(color);\n"                                     \
       "		if (textureFilterMode > 0 && textureBlendMode > 0) {\n"               \
       "			shaded.a *= coverage;\n"                                             \
       "			if (textureBlendMode != 1) { shaded.rgb *= coverage; "               \

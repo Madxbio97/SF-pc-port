@@ -14,8 +14,8 @@ namespace sf::platform {
 // Single-producer/single-consumer PCM ring used between the emulation thread
 // and OpenAL Soft's realtime callback. The storage is allocated once; neither
 // push nor pop allocates, blocks, or takes a lock. A short producer stall can
-// therefore become an exact interval of silence without stopping/restarting
-// the device source or replaying stale buffers afterwards.
+// therefore be handled without stopping/restarting the device source or
+// replaying stale buffers afterwards.
 template <typename Frame> class AudioFrameRing final {
 public:
   explicit AudioFrameRing(std::size_t capacity)
@@ -74,6 +74,82 @@ private:
   std::vector<Frame> frames_;
   std::atomic<std::uint64_t> read_position_{};
   std::atomic<std::uint64_t> write_position_{};
+};
+
+// Consumer-owned continuity at host underruns. Real PCM passes through
+// unchanged during normal playback. Only missing frames and the short recovery
+// ramp are synthesized, so an empty device buffer cannot introduce a full-scale
+// step. No allocation, locks, or producer-side access are allowed while
+// playing.
+template <typename Frame> class AudioStreamContinuity final {
+public:
+  explicit AudioStreamContinuity(std::size_t fade_frames) noexcept
+      : fade_frames_(static_cast<std::int32_t>(
+            std::clamp<std::size_t>(fade_frames, 1U, 32'768U))) {}
+
+  void process(std::span<Frame> output, std::size_t supplied) noexcept {
+    if (output.empty()) {
+      return;
+    }
+    supplied = std::min(supplied, output.size());
+    if (supplied != 0U) {
+      if (starved_) {
+        recovery_start_ = last_;
+        recovery_remaining_ = fade_frames_;
+      }
+      for (std::size_t index{}; index < supplied && recovery_remaining_ > 0;
+           ++index) {
+        const auto weight = --recovery_remaining_;
+        output[index] = blend(recovery_start_, output[index], weight);
+      }
+      last_ = output[supplied - 1U];
+    }
+    if (supplied == output.size()) {
+      starved_ = false;
+      return;
+    }
+    if (!starved_ || supplied != 0U) {
+      tail_start_ = last_;
+      tail_remaining_ = fade_frames_;
+    }
+    for (auto index = supplied; index < output.size(); ++index) {
+      const auto weight = std::max<std::int32_t>(0, tail_remaining_ - 1);
+      output[index] = blend(tail_start_, Frame{}, weight);
+      tail_remaining_ = weight;
+    }
+    last_ = output.back();
+    starved_ = true;
+  }
+
+  // Call only after the device callback has stopped.
+  void reset() noexcept {
+    last_ = {};
+    tail_start_ = {};
+    recovery_start_ = {};
+    tail_remaining_ = 0;
+    recovery_remaining_ = 0;
+    starved_ = false;
+  }
+
+private:
+  [[nodiscard]] Frame blend(Frame from, Frame to,
+                            std::int32_t from_weight) const noexcept {
+    const auto channel = [&](std::int16_t a, std::int16_t b) {
+      return static_cast<std::int16_t>(
+          (static_cast<std::int32_t>(a) * from_weight +
+           static_cast<std::int32_t>(b) * (fade_frames_ - from_weight)) /
+          fade_frames_);
+    };
+    return Frame{channel(from.left, to.left), channel(from.right, to.right)};
+  }
+
+  std::int32_t fade_frames_;
+  Frame last_{};
+  Frame tail_start_{};
+  Frame recovery_start_{};
+  std::int32_t tail_remaining_{};
+  std::int32_t recovery_remaining_{};
+  bool starved_{};
 };
 
 // Pure, deterministic start/recovery policy used by the OpenAL sink. Initial

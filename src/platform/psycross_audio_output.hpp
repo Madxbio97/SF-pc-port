@@ -93,6 +93,8 @@ private:
   ALuint callback_buffer_{};
   LPALBUFFERCALLBACKSOFT buffer_callback_{};
   AudioFrameRing<psx::SpuPcmFrame> stream_frames_{maximum_stream_frames};
+  AudioStreamContinuity<psx::SpuPcmFrame> stream_continuity_{
+      restart_fade_frames};
   std::size_t minimum_start_frames_{};
   std::vector<ALuint> buffers_;
   std::vector<ALuint> available_;

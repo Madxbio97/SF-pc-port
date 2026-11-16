@@ -57,6 +57,95 @@ void testRealtimeFrameRingWrapsWithoutBlockingOrReordering() {
           "Realtime audio ring retained frames across a stream reset");
 }
 
+struct StereoFrame {
+  std::int16_t left{};
+  std::int16_t right{};
+  bool operator==(const StereoFrame &) const = default;
+};
+
+void testHostUnderrunContinuity() {
+  sf::platform::AudioStreamContinuity<StereoFrame> continuity{4U};
+  std::array<StereoFrame, 8U> original{};
+  for (std::size_t index{}; index < original.size(); ++index) {
+    const auto sample = static_cast<int>(index) * 4000 - 16000;
+    original[index] = {static_cast<std::int16_t>(sample),
+                       static_cast<std::int16_t>(-sample)};
+  }
+  auto normal = original;
+  continuity.process(normal, normal.size());
+  require(normal == original, "Continuous guest PCM was altered");
+
+  std::array<StereoFrame, 4U> partial{};
+  partial[0] = partial[1] = {24000, -16000};
+  continuity.process(partial, 2U);
+  require(partial == std::array<StereoFrame, 4U>{StereoFrame{24000, -16000},
+                                                 {24000, -16000},
+                                                 {18000, -12000},
+                                                 {12000, -8000}},
+          "A partial host buffer introduced a hard step to silence");
+  std::array<StereoFrame, 2U> empty{};
+  continuity.process(empty, 0U);
+  require(empty ==
+              std::array<StereoFrame, 2U>{StereoFrame{6000, -4000}, {0, 0}},
+          "Underrun tail restarted instead of continuing across callbacks");
+  empty.fill({123, 456});
+  continuity.process(empty, 0U);
+  require(empty == std::array<StereoFrame, 2U>{},
+          "An exhausted underrun tail replayed stale PCM");
+
+  std::array<StereoFrame, 2U> resumed{};
+  resumed.fill({-24000, 16000});
+  continuity.process(resumed, resumed.size());
+  require(resumed == std::array<StereoFrame, 2U>{StereoFrame{-6000, 4000},
+                                                 {-12000, 8000}},
+          "Host recovery jumped from silence to full PCM amplitude");
+  resumed.fill({-24000, 16000});
+  continuity.process(resumed, resumed.size());
+  require(resumed == std::array<StereoFrame, 2U>{StereoFrame{-18000, 12000},
+                                                 {-24000, 16000}},
+          "Recovery ramp did not continue across callback boundaries");
+
+  // A second starvation can interrupt recovery before it reaches zero.
+  std::array<StereoFrame, 1U> short_gap{};
+  continuity.process(short_gap, 0U);
+  require(short_gap[0] == StereoFrame{-18000, 12000},
+          "A short underrun did not start at the last emitted sample");
+  std::array<StereoFrame, 1U> early_resume{StereoFrame{24000, -16000}};
+  continuity.process(early_resume, 1U);
+  require(early_resume[0] == StereoFrame{-7500, 5000},
+          "Early recovery did not blend from its actual emitted tail");
+  continuity.process(short_gap, 0U);
+  continuity.reset();
+  normal = original;
+  continuity.process(normal, normal.size());
+  require(normal == original, "Stream reset retained an old mission's tail");
+}
+
+void testHostUnderrunBoundsFullScaleSteps() {
+  constexpr auto fade_frames = 44'100U / 200U;
+  sf::platform::AudioStreamContinuity<StereoFrame> continuity{fade_frames};
+  std::array<StereoFrame, 1U> frame{StereoFrame{32767, -32768}};
+  continuity.process(frame, 1U);
+  auto previous = frame[0];
+  for (unsigned index{}; index < fade_frames * 2U; ++index) {
+    continuity.process(frame, 0U);
+    require(std::abs(int(frame[0].left) - previous.left) <= 150 &&
+                std::abs(int(frame[0].right) - previous.right) <= 150,
+            "Full-scale starvation exceeded the five-millisecond slope");
+    previous = frame[0];
+  }
+  for (unsigned index{}; index < fade_frames * 2U; ++index) {
+    frame[0] = {-32768, 32767};
+    continuity.process(frame, 1U);
+    require(std::abs(int(frame[0].left) - previous.left) <= 150 &&
+                std::abs(int(frame[0].right) - previous.right) <= 150,
+            "Full-scale recovery exceeded the five-millisecond slope");
+    previous = frame[0];
+  }
+  require(frame[0] == StereoFrame{-32768, 32767},
+          "Recovery did not return to unmodified PCM");
+}
+
 void testStoppedSourcePrebufferIsNotRecycled() {
   sf::platform::AudioOutputRecyclePolicy policy;
   require(!policy.shouldRecycle(false) && policy.prebuffering(),
@@ -175,6 +264,8 @@ int main() {
   try {
     testStartupAndStableRecovery();
     testRealtimeFrameRingWrapsWithoutBlockingOrReordering();
+    testHostUnderrunContinuity();
+    testHostUnderrunBoundsFullScaleSteps();
     testStoppedSourcePrebufferIsNotRecycled();
     testBoundedGainRamp();
     testRetailVolumeMapping();
