@@ -1,4 +1,5 @@
 #include "PsyX/PsyX_public.h"
+#include "sf/platform/retail_ui_presentation.hpp"
 
 #include <cmath>
 #include <iostream>
@@ -67,6 +68,33 @@ void testAdaptivePreservesPixelAspect() {
         "Original mode unexpectedly changed its presentation scale");
 }
 
+void testWidescreenUiAnchors() {
+  const auto scale =
+      PsyX_CalculatePresentationScale(1920, 1080, PSYX_ASPECT_ADAPTIVE);
+  const auto canvas = sf::platform::retailUiCanvas(scale.x, scale.y);
+  require(canvas.left == -64 && canvas.right == 448 && canvas.top == 0 &&
+              canvas.bottom == 240 && canvas.width() == 512 &&
+              canvas.mapX(192) == 192,
+          "16:9 UI canvas did not preserve the centre and expose both edges");
+  require(canvas.left + 12 == -52 && canvas.right - 12 == 436 &&
+              canvas.mapX(36) == -16 && canvas.mapX(226) == 237,
+          "Radar/weapon margins or pause-panel bounds did not adapt to 16:9");
+  const auto ultra_scale =
+      PsyX_CalculatePresentationScale(3440, 1440, PSYX_ASPECT_ADAPTIVE);
+  const auto ultra = sf::platform::retailUiCanvas(ultra_scale.x, ultra_scale.y);
+  require(ultra.left == -152 && ultra.right == 536 &&
+              ultra.mapX(0) == ultra.left && ultra.mapX(384) == ultra.right &&
+              ultra.mapX(192) == 192,
+          "Ultrawide menu and centred weapon selection diverged");
+  const auto original_scale =
+      PsyX_CalculatePresentationScale(1920, 1080, PSYX_ASPECT_ORIGINAL_4_3);
+  const auto original =
+      sf::platform::retailUiCanvas(original_scale.x, original_scale.y);
+  require(original.left == 0 && original.right == 384 &&
+              original.mapX(36) == 36 && original.mapX(226) == 226,
+          "Original 4:3 UI layout changed");
+}
+
 void testInvalidSizeIsBounded() {
     const auto viewport = PsyX_CalculatePresentationViewport(
         0, -1, PSYX_ASPECT_ADAPTIVE);
@@ -83,6 +111,7 @@ int main() {
         testOriginalFourThree();
         testAdaptiveUsesEntireDrawable();
         testAdaptivePreservesPixelAspect();
+        testWidescreenUiAnchors();
         testInvalidSizeIsBounded();
         std::cout << "Aspect ratio tests passed\n";
         return 0;

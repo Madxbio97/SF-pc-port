@@ -97,6 +97,42 @@ void testExactTransformSideChannel() {
           "Precise screen Y was quantized");
 }
 
+void testNearClippedVerticesKeepDistinctSubunitPositions() {
+  InitGeom();
+  SetGeomOffset(192, 120);
+  SetGeomScreen(320);
+  PGXP_ClearCache();
+  MATRIX matrix{};
+  matrix.m[0][0] = matrix.m[1][1] = matrix.m[2][2] = 4096;
+  constexpr std::array rotation{1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
+  constexpr std::array translation{0.0, 0.0, 0.0};
+  PGXP_MatrixRegister(&matrix, rotation.data());
+  PGXP_MatrixRegisterTranslation(&matrix, translation.data());
+  SetRotMatrix(&matrix);
+  SetTransMatrix(&matrix);
+  // The first two different clipped corners have an identical PSX tuple.
+  // Register their final addresses, as the native clipped HMD path does.
+  std::array<SVECTOR, 3U> packed{SVECTOR{-1, -1, 1, 0}, SVECTOR{-1, -1, 1, 0},
+                                 SVECTOR{1, -1, 4, 0}};
+  constexpr std::array exact{std::array{-0.8, -0.6, 1.0},
+                             std::array{-0.6, -1.0, 1.0},
+                             std::array{1.0, -1.0, 4.0}};
+  for (std::size_t i{}; i < packed.size(); ++i)
+    PGXP_VectorRegister(&packed[i], exact[i].data());
+  long xy0{}, xy1{}, xy2{}, cue{}, flags{};
+  static_cast<void>(RotTransPers3(&packed[0], &packed[1], &packed[2], &xy0,
+                                  &xy1, &xy2, &cue, &flags));
+  std::array<PGXPVData, 3U> projected{};
+  for (ushort i{}; i < projected.size(); ++i)
+    require(PGXP_GetCacheDataExact(&projected[i], i) != 0,
+            "Clipped subunit triangle lost its exact projection");
+  require(near(projected[0].sx, -64.0, 0.001) &&
+              near(projected[0].sy, -72.0, 0.001) &&
+              near(projected[1].sx, 0.0, 0.001) &&
+              near(projected[1].sy, -200.0, 0.001),
+          "Distinct close-camera corners collapsed to their shared PSX tuple");
+}
+
 void testExactProjectionIsMarkedAcrossGteDivideSaturation() {
   InitGeom();
   SetGeomOffset(192, 120);
@@ -357,6 +393,7 @@ void testWorldDepthClassificationIsCameraStable() {
 int main() {
   try {
     testExactTransformSideChannel();
+    testNearClippedVerticesKeepDistinctSubunitPositions();
     testExactProjectionIsMarkedAcrossGteDivideSaturation();
     testExactCacheHintWinsDuplicateLookup();
     testExactCacheIndexDoesNotDependOnRoundedScreenLookup();

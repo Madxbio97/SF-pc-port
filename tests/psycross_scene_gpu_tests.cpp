@@ -1,4 +1,5 @@
 #define SDL_MAIN_HANDLED
+#include <PsyX/PsyX_globals.h>
 #include <PsyX/PsyX_public.h>
 #include <PsyX/PsyX_render.h>
 #include <PsyX/common/glad.h>
@@ -161,6 +162,32 @@ void testActorDepth() {
 extern const char *gpu_shader_4;
 extern const char *gpu_shader_8;
 extern const char *gpu_shader_16;
+// This compiles the production PSX vertex shader and reads the actual
+// projection installed for a scene split, rather than mirroring its constants.
+extern void GR_InitialisePSXShaders();
+void testActorNearProjection() {
+  GR_InitialisePSXShaders();
+  g_windowWidth = 640;
+  g_windowHeight = 480;
+  GR_SetTexture(0, TF_16_BIT, TEXTURE_FILTER_NEAREST);
+  const RECT16 bounds{0, 0, 384, 240};
+  GR_SetOffscreenState(&bounds, 0);
+  GLint program{};
+  glGetIntegerv(GL_CURRENT_PROGRAM, &program);
+  const auto location =
+      glGetUniformLocation(static_cast<GLuint>(program), "Projection3D");
+  require(location >= 0, "scene shader lost its depth projection");
+  std::array<float, 16U> projection{};
+  glGetUniformfv(static_cast<GLuint>(program), location, projection.data());
+  for (const auto guest_z : {2.0F, 4.0F, 16.0F, 32.0F, 128.0F}) {
+    const auto z = guest_z / 128.0F;
+    const auto clip = projection[10] * z + projection[14];
+    require(clip >= -z && clip <= z,
+            "GPU near plane sliced a positive camera-close head surface");
+  }
+  require(glGetError() == GL_NO_ERROR, "actor near projection GL error");
+}
+
 void testSceneTone() {
   // Compile the shipping vertex and fragment sources as well as the controlled
   // fullscreen fixture below. No game window or gameplay input is involved.
@@ -267,14 +294,26 @@ void testSceneTone() {
     minimum = std::min(minimum, unsigned(world[i]));
     maximum = std::max(maximum, unsigned(world[i]));
     total += world[i];
-    auto c = world[i] >> 3;
-    require(world[i] == ((c << 3) | (c >> 2)),
-            "dither bypassed final RGB555 quantization");
   }
-  require(maximum > minimum && maximum - minimum <= 9,
-          "scene dither missing or stronger than one RGB555 step");
-  require(total / 1024.0 < 94 && total / 1024.0 > 75,
-          "scene curve failed to darken midtones moderately");
+  require(maximum > minimum && maximum - minimum <= 6,
+          "smooth scene grain missing or stronger than its subtle range");
+  require(total / 1024.0 < 85 && total / 1024.0 > 72,
+          "scene curve did not retain the darker contrast grade");
+  std::array<bool, 256U> tones{};
+  double previous = -1.0;
+  for (int shade = 0; shade < 256; ++shade) {
+    const auto ramp = render(1, static_cast<float>(shade), 0);
+    double sum{};
+    for (std::size_t pixel{}; pixel < ramp.size(); pixel += 4)
+      sum += ramp[pixel];
+    const auto mean = sum / 1024.0;
+    require(mean >= previous && mean - previous <= 3.5,
+            "scene gradient reversed or retained a hard palette jump");
+    tones[static_cast<std::size_t>(std::lround(mean))] = true;
+    previous = mean;
+  }
+  require(std::count(tones.begin(), tones.end(), true) > 160,
+          "filtered scene gradients collapsed back to 32 colour steps");
   require(glGetError() == GL_NO_ERROR, "tone GL error");
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
   glDeleteFramebuffers(1, &fbo);
@@ -304,6 +343,7 @@ int main() {
   }
   int result = 0;
   try {
+    testActorNearProjection();
     testActorDepth();
     testSceneTone();
     std::cout << "Actor self-depth and scene tone GPU tests passed\n";

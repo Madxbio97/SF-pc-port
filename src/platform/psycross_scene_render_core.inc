@@ -294,6 +294,19 @@ SVECTOR makeVertex(double x, double y, double z) {
   return result;
 }
 
+// Register after the returned SVECTOR reaches its final address. Distinct
+// sub-unit clipped vertices can round to the same PSX tuple, so a lookup by
+// packed value cannot recover their different positions near the camera.
+template <typename Vertex>
+void registerPreciseTriangle(const std::array<SVECTOR *, 3U> &packed,
+                             const std::array<Vertex, 3U> &vertices) {
+  for (std::size_t corner = 0U; corner < vertices.size(); ++corner) {
+    const auto &point = vertices[corner];
+    const std::array exact{point.x, point.y, point.z};
+    PGXP_VectorRegister(packed[corner], exact.data());
+  }
+}
+
 int cameraDepth(const MATRIX &view, const SVECTOR &vertex) {
   return static_cast<int>(
              (static_cast<std::int64_t>(view.m[2][0]) * vertex.vx +

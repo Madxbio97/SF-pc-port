@@ -550,23 +550,28 @@ void drawAcdStrip(const AcdCrossSection &first, const AcdCrossSection &second,
   setPolyF4(&polygon);
   setSemiTrans(&polygon, 1);
   setRGB0(&polygon, color.red, color.green, color.blue);
-  setXY4(&polygon, static_cast<float>(first.ax), static_cast<float>(first.ay),
-         static_cast<float>(first.bx), static_cast<float>(first.by),
-         static_cast<float>(second.ax), static_cast<float>(second.ay),
-         static_cast<float>(second.bx), static_cast<float>(second.by));
+  const auto canvas = gameplayUiCanvas();
+  setXY4(
+      &polygon, static_cast<float>(canvas.mapX(first.ax)),
+      static_cast<float>(first.ay), static_cast<float>(canvas.mapX(first.bx)),
+      static_cast<float>(first.by), static_cast<float>(canvas.mapX(second.ax)),
+      static_cast<float>(second.ay), static_cast<float>(canvas.mapX(second.bx)),
+      static_cast<float>(second.by));
   DrawPrim(&polygon);
 }
 
 void drawAcdSegment(const AcdLineSegment &segment, PauseRgb color,
                     bool semi_transparent) {
-  drawAcdLine(segment.x0, segment.y0, segment.x1, segment.y1, color,
-              semi_transparent);
+  const auto canvas = gameplayUiCanvas();
+  drawAcdLine(canvas.mapX(segment.x0), segment.y0, canvas.mapX(segment.x1),
+              segment.y1, color, semi_transparent);
 }
 
 bool drawOriginalAcdFrame(std::uint64_t animation_tick) {
   drawSolidRect(0, 0, screen_width, screen_height, 0U, 0U, 0U);
   DrawSync(0);
 
+  const auto canvas = gameplayUiCanvas();
   const auto state = std::min(animation_tick, acd_reveal_duration);
   const auto strip_count =
       static_cast<std::size_t>((30U * state) / acd_reveal_duration);
@@ -606,10 +611,12 @@ bool drawOriginalAcdFrame(std::uint64_t animation_tick) {
     const auto &first = acd_frame_sections[index];
     const auto &second = acd_frame_sections[index + 1U];
     if (index != 14U) {
-      drawAcdLine(first.ax, first.ay, second.ax, second.ay, color);
+      drawAcdLine(canvas.mapX(first.ax), first.ay, canvas.mapX(second.ax),
+                  second.ay, color);
     }
     if (index != 16U) {
-      drawAcdLine(first.bx, first.by, second.bx, second.by, color);
+      drawAcdLine(canvas.mapX(first.bx), first.by, canvas.mapX(second.bx),
+                  second.by, color);
     }
   }
   if (state == acd_reveal_duration) {
@@ -815,7 +822,9 @@ bool drawPauseMenu(const game::PauseMenu &menu,
         drawMenuText(source, bounds, scale, color, alignment, line_height,
                      interface_textures, bindings, prompt_tokens);
       };
-  const auto commands = menu.buildRenderCommands();
+  auto commands = menu.buildRenderCommands();
+  for (auto &command : commands)
+    command.bounds = widescreenPauseBounds(command.bounds);
   std::optional<game::PauseRect> map_command_bounds;
   std::optional<game::PauseRect> map_draw_bounds;
   auto texture_uploaded = false;
@@ -870,7 +879,9 @@ bool drawPauseMenu(const game::PauseMenu &menu,
     }
   }
   interface_textures.restoreFont();
-  const auto animated_section = animatedSectionSelection(menu);
+  auto animated_section = animatedSectionSelection(menu);
+  if (animated_section)
+    *animated_section = widescreenPauseBounds(*animated_section);
   const auto animated_item = animatedItemSelection(menu, commands);
   const auto map_highlight =
       pauseMapHighlightColor(pauseColor(game::PauseColorRole::map_highlight));

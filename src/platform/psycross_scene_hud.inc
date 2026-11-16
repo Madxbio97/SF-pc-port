@@ -882,6 +882,7 @@ std::optional<GameplayMessageLayout> buildGameplayMessageLayout(
     return std::nullopt;
   }
   const auto russian_language = game::russianLanguageActive();
+  const auto canvas = gameplayUiCanvas();
   std::string source;
   std::string presented;
   std::string reveal_source;
@@ -959,19 +960,20 @@ std::optional<GameplayMessageLayout> buildGameplayMessageLayout(
   layout.visible_glyph_count = gameplayMessageVisibleGlyphCount(
       source_glyph_count, presented_source_glyphs, presentation_glyph_count);
 
-  if (russian_language) {
-    // Native Russian notifications share one readable 8-pixel font size.
+  if (russian_language ||
+      message.channel == game::LegacyUiMessageChannel::status) {
+    // Notifications share one readable 8-pixel font size.
     // Long prose wraps inside a screen-safe maximum, while short status
     // messages keep a backing sized to their actual widest rendered line.
     constexpr int horizontal_margin = 16;
-    constexpr int text_width = screen_width - horizontal_margin * 2;
+    const auto text_width = canvas.width() - horizontal_margin * 2;
     layout.wrapped_text = game::originalHudWrapText(presented, text_width);
     const auto horizontal = gameplayMessageHorizontalLayout(
-        screen_width, horizontal_margin,
+        canvas.width(), horizontal_margin,
         originalHudMaximumLineWidth(layout.wrapped_text));
     layout.available_width = static_cast<float>(horizontal.width);
     layout.scale = 1.0F;
-    layout.left = static_cast<float>(horizontal.left);
+    layout.left = static_cast<float>(canvas.left + horizontal.left + offset_x);
   } else {
     // English wording already fits the authored packet. Preserve its origin
     // and footprint while replacing only the number of glyphs the guest has
@@ -984,7 +986,7 @@ std::optional<GameplayMessageLayout> buildGameplayMessageLayout(
     const auto presentation_width =
         std::max(1, originalHudMaximumLineWidth(presented));
     const auto screen_width_available =
-        std::max(1, screen_width - 4 - absolute_left);
+        std::max(1, canvas.right - 4 - absolute_left);
     const auto width_available = std::min(source_width, screen_width_available);
     layout.wrapped_text = std::move(presented);
     layout.available_width = static_cast<float>(width_available);
@@ -993,6 +995,9 @@ std::optional<GameplayMessageLayout> buildGameplayMessageLayout(
     layout.left = static_cast<float>(absolute_left);
   }
 
+  layout.left =
+      std::clamp(layout.left, static_cast<float>(canvas.left + 4),
+                 static_cast<float>(canvas.right - 4) - layout.available_width);
   const auto line_count = originalHudLineCount(layout.wrapped_text);
   if (line_count == 0U) {
     return std::nullopt;
@@ -1000,12 +1005,17 @@ std::optional<GameplayMessageLayout> buildGameplayMessageLayout(
   layout.block_height =
       8.0F * layout.scale +
       static_cast<float>(line_count - 1U) * 9.0F * layout.scale;
+  const auto bottom_offset =
+      message.channel == game::LegacyUiMessageChannel::status
+          ? canvas.bottom - screen_height
+          : 0;
   const auto original_top =
-      static_cast<float>(screen_height / 2 + offset_y + top->y);
+      static_cast<float>(screen_height / 2 + offset_y + top->y + bottom_offset);
   constexpr float vertical_margin = 4.0F;
-  layout.top = std::clamp(original_top, vertical_margin,
-                          static_cast<float>(screen_height) - vertical_margin -
-                              layout.block_height);
+  layout.top =
+      std::clamp(original_top, static_cast<float>(canvas.top) + vertical_margin,
+                 static_cast<float>(canvas.bottom) - vertical_margin -
+                     layout.block_height);
   return layout;
 }
 
@@ -1084,7 +1094,8 @@ void arrangeStatusMessages(
     cursor = layout.top + layout.block_height + spacing;
   }
   const auto excess = std::max(
-      0.0F, cursor - spacing - (static_cast<float>(screen_height) - 4.0F));
+      0.0F, cursor - spacing -
+                (static_cast<float>(gameplayUiCanvas().bottom) - 4.0F));
   if (excess != 0.0F) {
     for (const auto index : status_indices) {
       layouts[index]->top -= excess;
@@ -1120,11 +1131,14 @@ bool drawStatusBackdrop(
     return false;
   }
 
-  left = std::clamp(left, 2.0F, static_cast<float>(screen_width - 2));
-  right = std::clamp(right, left + 1.0F, static_cast<float>(screen_width - 2));
-  top = std::clamp(top, 2.0F, static_cast<float>(screen_height - 2));
+  const auto canvas = gameplayUiCanvas();
+  left = std::clamp(left, static_cast<float>(canvas.left + 2),
+                    static_cast<float>(canvas.right - 2));
+  right = std::clamp(right, left + 1.0F, static_cast<float>(canvas.right - 2));
+  top = std::clamp(top, static_cast<float>(canvas.top + 2),
+                   static_cast<float>(canvas.bottom - 2));
   bottom =
-      std::clamp(bottom, top + 1.0F, static_cast<float>(screen_height - 2));
+      std::clamp(bottom, top + 1.0F, static_cast<float>(canvas.bottom - 2));
   const auto relative_x = [offset_x](float value) {
     return static_cast<std::int16_t>(
         std::lround(value - static_cast<float>(screen_width / 2 + offset_x)));
@@ -1954,11 +1968,14 @@ void drawGameplayHud(const HudTextureAtlas &textures,
   constexpr auto maximum_phase = 12.0;
   const auto retail_hud_phase =
       std::clamp(normal_hud_phase, 0.0, maximum_phase);
-  const auto top_offset_y = offset_y;
-  const auto radar_offset_x = offset_x;
-  const auto radar_offset_y = offset_y;
-  const auto weapon_offset_x = offset_x;
-  const auto weapon_offset_y = offset_y;
+  const auto canvas = gameplayUiCanvas();
+  const auto left_offset_x = offset_x + canvas.left;
+  const auto right_offset_x = offset_x + canvas.right - screen_width;
+  const auto top_offset_y = offset_y + canvas.top;
+  const auto radar_offset_x = left_offset_x;
+  const auto radar_offset_y = offset_y + canvas.bottom - screen_height;
+  const auto weapon_offset_x = right_offset_x;
+  const auto weapon_offset_y = offset_y + canvas.bottom - screen_height;
   const auto target_locked = gameplay.targetLocked();
   const auto project_anchor =
       [&camera, offset_x,
@@ -2008,18 +2025,18 @@ void drawGameplayHud(const HudTextureAtlas &textures,
     // image and is not the white in-game label seen above the lavender bar.
     const auto primary_status = game::localizeTextCopy(
         game::originalPrimaryStatusLabel(hud.primaryStatus()));
-    drawOriginalHudTextSolid(textures, primary_status, 20 + offset_x,
+    drawOriginalHudTextSolid(textures, primary_status, 20 + left_offset_x,
                              18 + top_offset_y);
     const auto health_color = hud.healthBarColor();
     drawOriginalStatusBar(26, hud.displayedPrimaryTrail(), hud.primaryReveal(),
                           health_color.red, health_color.green,
-                          health_color.blue, offset_x, top_offset_y);
+                          health_color.blue, left_offset_x, top_offset_y);
     drawOriginalStatusBar(26, hud.displayedPrimaryBar(), hud.primaryReveal(),
-                          150U, 150U, 255U, offset_x, top_offset_y);
+                          150U, 150U, 255U, left_offset_x, top_offset_y);
 
     if (hud.dangerReveal() != 0U) {
       const auto danger = game::localizeTextCopy("DANGER");
-      drawOriginalHudTextSolid(textures, danger, 20 + offset_x,
+      drawOriginalHudTextSolid(textures, danger, 20 + left_offset_x,
                                33 + top_offset_y);
       auto red = std::uint8_t{255U};
       auto green = std::uint8_t{100U};
@@ -2033,15 +2050,15 @@ void drawGameplayHud(const HudTextureAtlas &textures,
         blue = 0U;
       }
       drawOriginalStatusBar(41, hud.displayedDangerBar(), hud.dangerReveal(),
-                            red, green, blue, offset_x, top_offset_y);
+                            red, green, blue, left_offset_x, top_offset_y);
     }
 
     if (hud.targetReveal() != 0U) {
       const auto target = game::localizeTextCopy("TARGET");
-      drawOriginalHudTextSolid(textures, target, 20 + offset_x,
+      drawOriginalHudTextSolid(textures, target, 20 + left_offset_x,
                                48 + top_offset_y);
       drawOriginalStatusBar(56, hud.displayedTargetBar(), hud.targetReveal(),
-                            100U, 255U, 100U, offset_x, top_offset_y);
+                            100U, 255U, 100U, left_offset_x, top_offset_y);
     }
 
     if (difficulty == game::CampaignDifficulty::agent) {
@@ -2049,12 +2066,12 @@ void drawGameplayHud(const HudTextureAtlas &textures,
           gameplay.missionIndex(), agentMissionHudState(gameplay));
       std::size_t row = 0U;
       for (const auto &meter : meters.entries()) {
-        drawAgentMissionHudMeter(textures, meter, row++, offset_x,
+        drawAgentMissionHudMeter(textures, meter, row++, right_offset_x,
                                  top_offset_y);
       }
     }
 
-    drawOriginalStatusScale(offset_x, top_offset_y, retail_hud_phase);
+    drawOriginalStatusScale(left_offset_x, top_offset_y, retail_hud_phase);
 
     // Commit the status layer before the radar switches to average blending.
     // This also makes the ARMOR/HEALTH label independent of radar visibility.
@@ -2062,7 +2079,7 @@ void drawGameplayHud(const HudTextureAtlas &textures,
     drawOriginalRadar(gameplay,
                       game::originalRadarPresentationGeometry(retail_hud_phase),
                       aim_heading, radar_offset_x, radar_offset_y);
-    drawOriginalWeaponMenu(textures, hud, weapon_offset_x, weapon_offset_y);
+    drawOriginalWeaponMenu(textures, hud, offset_x, top_offset_y);
 
     // FUN_800410d0 moves all 23 weapon sprites from x=404 to x=133 and the
     // ammunition TEXT from x=389 to x=118 using this exact integer division.
@@ -2455,7 +2472,7 @@ void drawPresentationFrameMeter(const HudTextureAtlas &textures,
   constexpr auto top = 4;
   constexpr auto right_margin = 4;
   const auto width = game::originalHudTextWidth(text);
-  const auto left = screen_width - right_margin - width;
+  const auto left = gameplayUiCanvas().right - right_margin - width;
   drawSolidRect(left - 2, top - 2, width + 4, 11, 0U, 0U, 0U);
   drawOriginalHudTextSolid(textures, text, left, top, 255U);
   // The regular HUD has already flushed its immediate PsyCross primitives.

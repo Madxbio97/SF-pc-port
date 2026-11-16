@@ -40,6 +40,8 @@ void PsyX_DestroyActorDepth() {}
 #endif
 } // namespace
 
+float GR_ActorSelfDepthNearPlane() { return 1.0f; }
+
 int GR_BeginActorSelfDepth() {
 #if defined(RENDERER_OGL)
   if (!g_cfg_pgxpZBuffer || g_actorDepthPass != 0 ||

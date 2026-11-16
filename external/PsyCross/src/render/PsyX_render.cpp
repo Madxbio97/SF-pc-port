@@ -1392,12 +1392,22 @@ GLint u_textureBlendModeLoc;
     } else {
       shade8 = floor(v_color.rgb * 255.0 + 0.0001);
     }
-    if (v_texcoord.w > 0.5 && textureBlendMode <= 1) {
-      shade8 = pow(clamp(shade8 / 255.0, 0.0, 1.0), vec3(1.12)) * 255.0;
-      shade8 += sceneDither(floor(gl_FragCoord.xy));
+    bool sceneSurface = v_texcoord.w > 0.5 && textureBlendMode <= 1;
+    if (sceneSurface) {
+      vec3 tone = pow(clamp(shade8 / 255.0, 0.0, 1.0), vec3(1.14));
+      tone = mix(tone, tone * tone * (3.0 - 2.0 * tone), 0.10);
+      shade8 = tone * 255.0;
+      vec3 noiseWeight = smoothstep(vec3(0.0), vec3(8.0), shade8) *
+          (1.0 - smoothstep(vec3(247.0), vec3(255.0), shade8));
+      shade8 += sceneDither(floor(gl_FragCoord.xy)) * 0.35 * noiseWeight;
     }
     vec3 color5 = floor(clamp(shade8, 0.0, 255.0) / 8.0 + 0.0001);
     vec3 expanded = (color5 * 8.0 + floor(color5 / 4.0)) / 255.0;
+    if (sceneSurface) {
+      // Retain a trace of the console palette while allowing smooth lighting
+      // and fog between its steps on filtered PC surfaces.
+      expanded = mix(clamp(shade8 / 255.0, 0.0, 1.0), expanded, 0.20);
+    }
     return vec4(expanded, texel.a * v_color.a);
   }
 )PSYX"
@@ -2577,7 +2587,10 @@ void GR_SetOffscreenState(const RECT16 *offscreenRect, int enable) {
 
     // these constants below are guessed
     const float perspectiveFOV = 0.9265f;
-    const float perspectiveZNear = 0.25f;
+    // CPU world clipping remains at 34 guest units. The GPU must also retain
+    // the actor-only one-unit near plane; all passes share this projection
+    // so their reversed depth values remain comparable.
+    const float perspectiveZNear = GR_ActorSelfDepthNearPlane() / 128.0f;
     const float perspectiveZFar = 1000.0f;
 
     const float emuScreenAspect =

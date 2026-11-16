@@ -1597,6 +1597,14 @@ void renderPresentedPlayer(
                  ordering_table_size);
       primitives.has_translucent_player = true;
     }
+    // The environment retains its conservative near plane. A faded actor
+    // needs the outer head surface right up to the eye, including its weapon.
+    struct RestoreNearClip {
+      double previous{active_near_clip_depth};
+      ~RestoreNearClip() { active_near_clip_depth = previous; }
+    } restore_near_clip;
+    if (translucent)
+      active_near_clip_depth = GR_ActorSelfDepthNearPlane();
     if (visibility != PlayerCameraVisibility::hidden) {
       const auto wound_vertices = legacyHmdWoundVertices(
           gameplay, presentation.player_guest_slot, *player_model);

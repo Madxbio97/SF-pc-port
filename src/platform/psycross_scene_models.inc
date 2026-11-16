@@ -1428,6 +1428,7 @@ void submitClippedTriangle(
     auto v0 = makeVertex(triangle[0].x, triangle[0].y, triangle[0].z);
     auto v1 = makeVertex(triangle[1].x, triangle[1].y, triangle[1].z);
     auto v2 = makeVertex(triangle[2].x, triangle[2].y, triangle[2].z);
+    registerPreciseTriangle({&v0, &v1, &v2}, triangle);
     long xy0{};
     long xy1{};
     long xy2{};
@@ -2127,6 +2128,11 @@ void renderHmdObject(
     auto v1 = vertex(triangle.vertex_indices[1]);
     auto v2 = vertex(triangle.vertex_indices[2]);
     const std::array positions{v0, v1, v2};
+    const std::array precise_positions{
+        world_vertices[triangle.vertex_indices[0]],
+        world_vertices[triangle.vertex_indices[1]],
+        world_vertices[triangle.vertex_indices[2]]};
+    registerPreciseTriangle({&v0, &v1, &v2}, precise_positions);
     const auto face_normal = visibleSurfaceNormal(positions);
     const auto corner_normal = [&](std::size_t corner) {
       const auto vertex_index = triangle.vertex_indices[corner];
@@ -2156,6 +2162,11 @@ void renderHmdObject(
           makeTexturedVertex(v2, triangle.uv[2], back_color,
                              apply_scene_lighting, normals[2]),
       };
+      for (std::size_t corner = 0U; corner < textured.size(); ++corner) {
+        textured[corner].x = precise_positions[corner].x;
+        textured[corner].y = precise_positions[corner].y;
+        textured[corner].z = precise_positions[corner].z;
+      }
       // Retail NCDT has already applied depth cue when FUN_800d1be0 masks
       // a matching normal. Do the same before host near clipping, then let
       // the clipped polygon interpolate those final per-corner colours.

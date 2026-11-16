@@ -1,9 +1,41 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 
 namespace sf::platform {
+
+// Coordinates remain in authored PSX pixels. A wider visible canvas adds
+// space at the sides without stretching glyphs, radar marks or weapon art.
+struct RetailUiCanvas {
+  int left{};
+  int top{};
+  int right{384};
+  int bottom{240};
+  [[nodiscard]] int width() const noexcept { return right - left; }
+  [[nodiscard]] int height() const noexcept { return bottom - top; }
+  [[nodiscard]] int mapX(int x) const noexcept {
+    return left + static_cast<int>(
+                      std::lround(static_cast<double>(x) * width() / 384.0));
+  }
+};
+
+[[nodiscard]] inline RetailUiCanvas
+retailUiCanvas(double horizontal_scale, double vertical_scale) noexcept {
+  const auto safe = [](double scale) {
+    return std::isfinite(scale) && scale > 0.0 ? std::clamp(scale, 0.125, 1.0)
+                                               : 1.0;
+  };
+  const auto half_width = 192.0 / safe(horizontal_scale);
+  const auto half_height = 120.0 / safe(vertical_scale);
+  // PresentationScale is float on the GPU. Avoid a spurious extra pixel
+  // when its rounded reciprocal lands just beyond an integer edge.
+  return {static_cast<int>(std::floor(192.0 - half_width + 0.0001)),
+          static_cast<int>(std::floor(120.0 - half_height + 0.0001)),
+          static_cast<int>(std::ceil(192.0 + half_width - 0.0001)),
+          static_cast<int>(std::ceil(120.0 + half_height - 0.0001))};
+}
 
 struct RetailUiPresentationSample {
   double viewport_y{};

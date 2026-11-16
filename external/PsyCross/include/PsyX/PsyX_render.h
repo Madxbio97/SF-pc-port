@@ -378,6 +378,8 @@ extern void			GR_EndShadowMask(void);
 extern void			GR_EnableDepth(int enable);
 extern void			GR_SetDepthState(int testEnable, int writeEnable);
 /* Preserve world depth while fading only the nearest actor surface. */
+/* Positive guest-world depth retained for camera-close actor surfaces. */
+extern float GR_ActorSelfDepthNearPlane(void);
 extern int GR_BeginActorSelfDepth(void);
 extern void GR_BlendActorSelfDepth(void);
 extern void GR_EndActorSelfDepth(void);

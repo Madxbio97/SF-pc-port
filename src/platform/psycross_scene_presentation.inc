@@ -646,6 +646,22 @@ void interpolateRenderPresentation(const RenderPresentationSnapshot &previous,
   }
 }
 
+RetailUiCanvas gameplayUiCanvas() {
+  int width = 1, height = 1;
+  PsyX_GetScreenSize(&width, &height);
+  const auto scale =
+      PsyX_CalculatePresentationScale(width, height, g_cfg_aspectMode);
+  return retailUiCanvas(scale.x, scale.y);
+}
+
+game::PauseRect widescreenPauseBounds(game::PauseRect bounds) {
+  const auto canvas = gameplayUiCanvas();
+  const auto right = canvas.mapX(bounds.x + bounds.width);
+  bounds.x = static_cast<std::int16_t>(canvas.mapX(bounds.x));
+  bounds.width = static_cast<std::int16_t>(std::max(1, right - bounds.x));
+  return bounds;
+}
+
 Vector3 normalize(Vector3 value) {
   const auto length =
       std::sqrt(value.x * value.x + value.y * value.y + value.z * value.z);
