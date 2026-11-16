@@ -314,6 +314,85 @@ void testSceneTone() {
   }
   require(std::count(tones.begin(), tones.end(), true) > 160,
           "filtered scene gradients collapsed back to 32 colour steps");
+  // BASEEXT/BASEEXT2's original FUN_800d6f50 supplies 8-bit Gouraud
+  // atmosphere, including colours as low as (3,4,3). RGB555 truncation before
+  // additive blending turns that shallow gradient into wide coloured bands.
+  constexpr int gradient_width = 1024, gradient_height = 32;
+  glActiveTexture(GL_TEXTURE2);
+  glBindTexture(GL_TEXTURE_2D, tex[2]);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, gradient_width, gradient_height, 0,
+               GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+  glViewport(0, 0, gradient_width, gradient_height);
+  // Use both shipping stages and the actual Gouraud vertex attributes here:
+  // testing only a fragment-only marker would miss lost dither metadata.
+  auto atmosphere_program = GR_Shader_Compile(gpu_shader_16, 1);
+  glUseProgram(atmosphere_program);
+  const std::array<float, 16> identity{1, 0, 0, 0, 0, 1, 0, 0,
+                                       0, 0, 1, 0, 0, 0, 0, 1};
+  glUniformMatrix4fv(glGetUniformLocation(atmosphere_program, "Projection"), 1,
+                     GL_FALSE, identity.data());
+  glUniform2f(glGetUniformLocation(atmosphere_program, "PresentationScale"), 1,
+              1);
+  glUniform1i(glGetUniformLocation(atmosphere_program, "s_texture"), 0);
+  glUniform1i(glGetUniformLocation(atmosphere_program, "s_aliasTexture"), 0);
+  glUniform1i(glGetUniformLocation(atmosphere_program, "s_rgLut"), 1);
+  glUniform1i(glGetUniformLocation(atmosphere_program, "textureBlendMode"), 2);
+  glUniform1i(glGetUniformLocation(atmosphere_program, "textureFilterMode"), 0);
+  GLuint atmosphere_vao{}, atmosphere_vbo{};
+  glGenVertexArrays(1, &atmosphere_vao);
+  glBindVertexArray(atmosphere_vao);
+  glGenBuffers(1, &atmosphere_vbo);
+  glBindBuffer(GL_ARRAY_BUFFER, atmosphere_vbo);
+  const std::array<float, 18> vertices{
+      -1, -1, 3.0F / 255,   4.0F / 255,   3.0F / 255,   1,
+      3,  -1, 231.0F / 255, 232.0F / 255, 231.0F / 255, 1,
+      -1, 3,  3.0F / 255,   4.0F / 255,   3.0F / 255,   1};
+  glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices.data(),
+               GL_STATIC_DRAW);
+  const auto position = glGetAttribLocation(atmosphere_program, "a_position");
+  const auto colour = glGetAttribLocation(atmosphere_program, "a_color");
+  const auto texcoord = glGetAttribLocation(atmosphere_program, "a_texcoord");
+  require(position >= 0 && colour >= 0 && texcoord >= 0,
+          "shipping Gouraud vertex attributes are missing");
+  glEnableVertexAttribArray(static_cast<GLuint>(position));
+  glVertexAttribPointer(static_cast<GLuint>(position), 2, GL_FLOAT, GL_FALSE,
+                        6 * sizeof(float), nullptr);
+  glEnableVertexAttribArray(static_cast<GLuint>(colour));
+  glVertexAttribPointer(static_cast<GLuint>(colour), 4, GL_FLOAT, GL_FALSE,
+                        6 * sizeof(float),
+                        reinterpret_cast<const void *>(2 * sizeof(float)));
+  // MakeTexcoordTriangleZero(..., 1): solid colour with Gouraud dithering.
+  glVertexAttrib4f(static_cast<GLuint>(texcoord), 0, 0, 1, 1);
+  glClearColor(24.0F / 255.0F, 38.0F / 255.0F, 56.0F / 255.0F, 1.0F);
+  glClear(GL_COLOR_BUFFER_BIT);
+  glEnable(GL_BLEND);
+  glBlendEquation(GL_FUNC_ADD);
+  glBlendFunc(GL_ONE, GL_ONE);
+  glDrawArrays(GL_TRIANGLES, 0, 3);
+  std::vector<std::uint8_t> gradient(gradient_width * gradient_height * 4);
+  glReadPixels(0, 0, gradient_width, gradient_height, GL_RGBA, GL_UNSIGNED_BYTE,
+               gradient.data());
+  std::array<bool, 256U> gradient_tones{};
+  for (int x = 0; x < gradient_width; ++x) {
+    std::array<double, 3U> mean{};
+    for (int y = 0; y < gradient_height; ++y)
+      for (std::size_t c = 0; c < 3U; ++c)
+        mean[c] += gradient[(y * gradient_width + x) * 4 + c];
+    for (auto &channel : mean)
+      channel /= gradient_height;
+    const double expected = (x + 0.5) * 114.0 / gradient_width;
+    require(std::abs(mean[0] - (27.0 + expected)) < 1.5 &&
+                std::abs(mean[1] - (42.0 + expected)) < 1.5 &&
+                std::abs(mean[2] - (59.0 + expected)) < 1.5,
+            "Kazakhstan atmosphere retained RGB555 colour contour bands");
+    gradient_tones[static_cast<std::size_t>(std::lround(mean[0]))] = true;
+  }
+  require(std::count(gradient_tones.begin(), gradient_tones.end(), true) > 100,
+          "Gouraud atmosphere lost its continuous low-amplitude gradient");
+  glDisable(GL_BLEND);
+  glDeleteBuffers(1, &atmosphere_vbo);
+  glDeleteVertexArrays(1, &atmosphere_vao);
+  glDeleteProgram(atmosphere_program);
   require(glGetError() == GL_NO_ERROR, "tone GL error");
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
   glDeleteFramebuffers(1, &fbo);

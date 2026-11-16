@@ -1392,7 +1392,8 @@ GLint u_textureBlendModeLoc;
     } else {
       shade8 = floor(v_color.rgb * 255.0 + 0.0001);
     }
-    bool sceneSurface = v_texcoord.w > 0.5 && textureBlendMode <= 1;
+    bool sceneSurface = v_texcoord.w > 0.5 && v_texcoord.w < 1.5 &&
+        textureBlendMode <= 1;
     if (sceneSurface) {
       vec3 tone = pow(clamp(shade8 / 255.0, 0.0, 1.0), vec3(1.14));
       tone = mix(tone, tone * tone * (3.0 - 2.0 * tone), 0.10);
@@ -1400,6 +1401,18 @@ GLint u_textureBlendModeLoc;
       vec3 noiseWeight = smoothstep(vec3(0.0), vec3(8.0), shade8) *
           (1.0 - smoothstep(vec3(247.0), vec3(255.0), shade8));
       shade8 += sceneDither(floor(gl_FragCoord.xy)) * 0.35 * noiseWeight;
+    }
+    // Preserve the 8-bit interpolation of projected Gouraud atmosphere.
+    // Requantizing each channel independently to RGB555 creates coloured
+    // contour bands in BASEEXT's very shallow frost/fog gradients. Flat HUD
+    // panels and textured glyphs retain their exact console palette.
+    if (v_texcoord.w > 1.5 && v_texcoord.z < 1.5) {
+      vec3 gradient8 = v_color.rgb * 255.0;
+      float noise = sceneDither(floor(gl_FragCoord.xy)) * 0.20;
+      vec3 weight = smoothstep(vec3(0.0), vec3(4.0), gradient8) *
+          (1.0 - smoothstep(vec3(251.0), vec3(255.0), gradient8));
+      return vec4(clamp((gradient8 + noise * weight) / 255.0, 0.0, 1.0),
+                  texel.a * v_color.a);
     }
     vec3 color5 = floor(clamp(shade8, 0.0, 255.0) / 8.0 + 0.0001);
     vec3 expanded = (color5 * 8.0 + floor(color5 / 4.0)) / 255.0;
@@ -1559,7 +1572,7 @@ const char *gpu_shader_32_rgba =
   "	const vec2 c_UVFudge = vec2(0.00025, 0.00025);\n"                          \
   "	void main() {\n"                                                           \
   "		v_texcoord = a_texcoord;\n"                                               \
-  "\t\tv_texcoord.w = step(0.0001, a_zw.y);\n"                                 \
+  "\t\tv_texcoord.w = a_zw.y > 0.0 ? 1.0 : a_texcoord.w * 2.0;\n"              \
   "		v_texcoord.xy = a_precise_uv;\n"                                          \
   "		v_texcoord.xy += a_extra.xy * 0.5;\n"                                     \
   "		v_texbounds = a_texbounds;\n"                                             \

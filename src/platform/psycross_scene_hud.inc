@@ -753,7 +753,7 @@ bool drawBoundInputPrompt(const HudTextureAtlas &textures,
   // without resizing it or disturbing its guest-authored transition.
   const auto absolute_x = screen_width / 2 + offset_x + origin_x;
   const auto screen_width_available =
-      std::max(1, screen_width - 4 - absolute_x);
+      std::max(1, gameplayUiCanvas().right - 4 - absolute_x);
   const auto width_available = std::min(retail_width, screen_width_available);
   const auto scale = std::min(1.0F, static_cast<float>(width_available) /
                                         static_cast<float>(bound_width));
@@ -1087,7 +1087,7 @@ void arrangeStatusMessages(
   }
 
   constexpr float spacing = 2.0F;
-  auto cursor = 4.0F;
+  auto cursor = static_cast<float>(gameplayUiCanvas().top) + 4.0F;
   for (const auto index : status_indices) {
     auto &layout = *layouts[index];
     layout.top = std::max(layout.top, cursor);
@@ -1683,6 +1683,11 @@ void drawOriginalWeaponMenu(const HudTextureAtlas &textures,
   const auto geometry = game::originalWeaponMenuGeometry();
   const auto center_x = screen_width / 2 + offset_x;
   const auto center_y = screen_height / 2 + offset_y;
+  const auto canvas = gameplayUiCanvas();
+  // Extend only the full strip. The selected slot and weapon art keep their
+  // native size and centre while the backing/frame reach both output edges.
+  const auto strip_left = geometry.strip_left + canvas.left;
+  const auto strip_right = geometry.strip_right + canvas.right - screen_width;
 
   // FUN_800405f4 layers the narrow full strip and the taller selected slot
   // using the PS1 average blend. Their overlap produces the darker central
@@ -1708,7 +1713,7 @@ void drawOriginalWeaponMenu(const HudTextureAtlas &textures,
            static_cast<float>(center_y + bottom));
     DrawPrim(&polygon);
   };
-  draw_backing(geometry.strip_left, geometry.strip_top, geometry.strip_right,
+  draw_backing(strip_left, geometry.strip_top, strip_right,
                geometry.strip_bottom);
   draw_backing(geometry.selection_left, geometry.selection_top,
                geometry.selection_right, geometry.selection_bottom);
@@ -1721,9 +1726,11 @@ void drawOriginalWeaponMenu(const HudTextureAtlas &textures,
     setLineF2(&line);
     setRGB0(&line, geometry.frame_color.red, geometry.frame_color.green,
             geometry.frame_color.blue);
-    setXY2(&line, static_cast<float>(center_x + geometry.frame_left),
+    setXY2(&line,
+           static_cast<float>(center_x + geometry.frame_left + canvas.left),
            static_cast<float>(center_y + y),
-           static_cast<float>(center_x + geometry.frame_right),
+           static_cast<float>(center_x + geometry.frame_right + canvas.right -
+                              screen_width),
            static_cast<float>(center_y + y));
     DrawPrim(&line);
   };
@@ -2436,7 +2443,11 @@ void drawGameplayInformationLayer(
     drawRetailUiBackdrop(*message.backdrop, offset_x, offset_y);
   }
   if (const auto &timer = gameplay.legacyUiTimer()) {
-    drawRetailUiGlyphs(textures, timer->glyphs, offset_x, offset_y);
+    const auto canvas = gameplayUiCanvas();
+    // Timer FONT packets are authored beside the bottom-left radar. Move
+    // the whole glyph run, preserving its spacing, countdown and animation.
+    drawRetailUiGlyphs(textures, timer->glyphs, offset_x + canvas.left,
+                       offset_y + canvas.bottom - screen_height);
   }
   for (auto index = std::size_t{}; index < messages.size(); ++index) {
     const auto &message = messages[index];
@@ -2469,7 +2480,7 @@ void drawPresentationFrameMeter(const HudTextureAtlas &textures,
   GR_SetBlendMode(BM_NONE);
   GR_EnableDepth(0);
   GR_SetDepthState(0, 0);
-  constexpr auto top = 4;
+  const auto top = gameplayUiCanvas().top + 4;
   constexpr auto right_margin = 4;
   const auto width = game::originalHudTextWidth(text);
   const auto left = gameplayUiCanvas().right - right_margin - width;
