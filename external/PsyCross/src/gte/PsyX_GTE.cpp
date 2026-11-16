@@ -6,9 +6,11 @@
 #include "psx/libgte.h"
 
 #include <array>
-#include <map>
+#include <cstdint>
 #include <math.h>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 GTERegisters gteRegs;
 
@@ -367,10 +369,86 @@ struct VectorValueRecord
 	bool		ambiguous = false;
 };
 
-std::unordered_map<const MATRIX*, RotationRecord>	 g_exactRotations;
+// Frame-local open-addressed storage. A generation change invalidates entries
+// without freeing thousands of tree/hash nodes on every presentation. Slots
+// retain their high-water capacity; exact values and ambiguity are unchanged.
+template <typename Value> class FrameVectorMap {
+  struct Entry {
+    std::uint64_t key{};
+    std::uint32_t generation{};
+    Value value{};
+  };
+  std::vector<Entry> entries_;
+  std::size_t count_{};
+  std::uint32_t generation_{1};
+
+  static std::size_t hash(std::uint64_t key) {
+    key ^= key >> 30;
+    key *= 0xbf58476d1ce4e5b9ULL;
+    key ^= key >> 27;
+    key *= 0x94d049bb133111ebULL;
+    return static_cast<std::size_t>(key ^ (key >> 31));
+  }
+  Entry &slot(std::uint64_t key) {
+    auto index = hash(key) & (entries_.size() - 1);
+    while (entries_[index].generation == generation_ &&
+           entries_[index].key != key)
+      index = (index + 1) & (entries_.size() - 1);
+    return entries_[index];
+  }
+  void grow() {
+    auto previous = std::move(entries_);
+    entries_.resize(previous.empty() ? 256 : previous.size() * 2);
+    for (const auto &entry : previous)
+      if (entry.generation == generation_)
+        slot(entry.key) = entry;
+  }
+
+public:
+  void clear() {
+    count_ = 0;
+    if (++generation_ == 0) {
+      for (auto &entry : entries_)
+        entry.generation = 0;
+      generation_ = 1;
+    }
+  }
+  Value *find(std::uint64_t key) {
+    if (entries_.empty())
+      return nullptr;
+    auto &entry = slot(key);
+    return entry.generation == generation_ ? &entry.value : nullptr;
+  }
+  std::pair<Value *, bool> emplace(std::uint64_t key, const Value &value) {
+    if (entries_.empty())
+      grow();
+    auto *entry = &slot(key);
+    if (entry->generation == generation_)
+      return {&entry->value, false};
+    if (count_ >= entries_.size() / 2) {
+      grow();
+      entry = &slot(key);
+    }
+    *entry = Entry{key, generation_, value};
+    ++count_;
+    return {&entry->value, true};
+  }
+  void assign(std::uint64_t key, const Value &value) {
+    auto inserted = emplace(key, value);
+    *inserted.first = value;
+  }
+};
+
+std::uint64_t PackedVectorKey(const VectorKey &key) {
+  return static_cast<std::uint16_t>(key[0]) |
+         (std::uint64_t{static_cast<std::uint16_t>(key[1])} << 16) |
+         (std::uint64_t{static_cast<std::uint16_t>(key[2])} << 32);
+}
+
+std::unordered_map<const MATRIX *, RotationRecord> g_exactRotations;
 std::unordered_map<const MATRIX*, TranslationRecord> g_exactTranslations;
-std::unordered_map<const void*, VectorRecord>		 g_exactVectorsByAddress;
-std::map<VectorKey, VectorValueRecord>				 g_exactVectorsByValue;
+FrameVectorMap<VectorRecord> g_exactVectorsByAddress;
+FrameVectorMap<VectorValueRecord> g_exactVectorsByValue;
 
 RotationRecord				g_currentExactRotation;
 TranslationRecord			g_currentExactTranslation;
@@ -434,15 +512,15 @@ bool ExactVectorEqual(const ExactVector& first, const ExactVector& second)
 		   first[2] == second[2];
 }
 
-void RegisterExactVector(const void* address, const VectorKey& key,
-						 const ExactVector& exact)
-{
-	g_exactVectorsByAddress[address] = VectorRecord{key, exact};
-	const auto result =
-		g_exactVectorsByValue.emplace(key, VectorValueRecord{exact, false});
-	if(!result.second && !result.first->second.ambiguous &&
-	   !ExactVectorEqual(result.first->second.exact, exact))
-		result.first->second.ambiguous = true;
+void RegisterExactVector(const void *address, const VectorKey &key,
+                         const ExactVector &exact) {
+  g_exactVectorsByAddress.assign(reinterpret_cast<std::uintptr_t>(address),
+                                 VectorRecord{key, exact});
+  const auto result = g_exactVectorsByValue.emplace(
+      PackedVectorKey(key), VectorValueRecord{exact, false});
+  if (!result.second && !result.first->ambiguous &&
+      !ExactVectorEqual(result.first->exact, exact))
+    result.first->ambiguous = true;
 }
 } // namespace
 
@@ -677,20 +755,19 @@ extern "C" void PGXP_VectorLoad(const void* vector, int slot)
 	const auto gteKey	 = VectorKeyFromGte(slot);
 	if(memoryKey != gteKey)
 		return;
-	const auto address = g_exactVectorsByAddress.find(vector);
-	if(address != g_exactVectorsByAddress.end() &&
-	   address->second.key == memoryKey)
-	{
-		g_currentExactVectors[slot]		= address->second;
-		g_currentExactVectorValid[slot] = true;
-		return;
-	}
-	const auto value = g_exactVectorsByValue.find(memoryKey);
-	if(value != g_exactVectorsByValue.end() && !value->second.ambiguous)
-	{
-		g_currentExactVectors[slot]		= VectorRecord{memoryKey, value->second.exact};
-		g_currentExactVectorValid[slot] = true;
-	}
+        const auto *address = g_exactVectorsByAddress.find(
+            reinterpret_cast<std::uintptr_t>(vector));
+        if (address && address->key == memoryKey) {
+          g_currentExactVectors[slot] = *address;
+          g_currentExactVectorValid[slot] = true;
+          return;
+        }
+        const auto *value =
+            g_exactVectorsByValue.find(PackedVectorKey(memoryKey));
+        if (value && !value->ambiguous) {
+          g_currentExactVectors[slot] = VectorRecord{memoryKey, value->exact};
+          g_currentExactVectorValid[slot] = true;
+        }
 }
 
 void PGXP_ClearCache()

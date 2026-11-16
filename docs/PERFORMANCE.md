@@ -54,3 +54,45 @@ if any scene worsens median or 95th-percentile frame time by more than 5% on the
 same hardware, even when it still passes the absolute target.
 
 Run `ctest --preset windows-psycross-release` after every performance change.
+
+## 2026-11-16 CPU vertex submission measurement
+
+Baseline: `429a3a8`. Hardware: Intel Core i9-12900F, NVIDIA RTX 4080,
+driver 617.42, Windows build 22631 (23H2), MSVC Release with IPO.
+
+This is an isolated CPU measurement, not a completed reference-scene acceptance
+run. It submits 24 copies of the same real posed Gabe HMD through the production
+renderer while rotating the camera through 360 degrees. Each fresh process
+warms 60 iterations and measures the following 720; three processes are run
+sequentially. It performs no gameplay input, GPU draw, swap, VSync or frame cap,
+so framebuffer resolution and filtering do not affect these numbers.
+
+Median of the three per-run metrics, in milliseconds:
+
+| CPU submission | Baseline | Optimized |
+| --- | ---: | ---: |
+| Mean | 13.142 | 6.661 |
+| Median | 12.538 | 6.599 |
+| 95th percentile | 15.115 | 7.208 |
+| 99th percentile | 26.000 | 8.109 |
+
+Each run submitted exactly 4,955,952 triangle packets including warmup.
+The hash of every submitted corner's precise screen X/Y and depth is
+`7e6d79b5c9319a5b` in all baseline and optimized runs.
+
+Changes retain frame-local exact-coordinate tables by generation rather than
+allocating/freeing map nodes every frame, and register HMD/clipped triangle
+corners once at their final addresses. Address precedence and ambiguous
+packed-coordinate handling remain unchanged. Nested `PsyX_BeginScene` calls
+from HUD primitives also no longer repump SDL events after input sampling;
+explicit frame input updates and new-scene polling remain active.
+
+Regression checks cover table growth at 24,000 distinct records, repeated
+generations, copied and ambiguous vertices, close clipped surfaces, actor
+self-depth with MSAA, and the real shader atmosphere gradient. A queued SDL
+test event verifies that a nested primitive cannot consume new input.
+
+Full scene frame-time percentiles, presentation pacing and subjective movement
+smoothness still require the user's manual reference-scene runs above. The
+approximately 49% CPU improvement here must not be presented as a 49% whole-game
+FPS increase.

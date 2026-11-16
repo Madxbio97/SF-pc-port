@@ -47,6 +47,26 @@ void require(bool v, const char *m) {
   if (!v)
     throw std::runtime_error(m);
 }
+extern char begin_scene_flag;
+void testNestedSceneRetainsInputBoundary() {
+  const auto event_type = SDL_RegisterEvents(1);
+  require(event_type != static_cast<Uint32>(-1),
+          "could not reserve a renderer input-boundary test event");
+  SDL_Event event{};
+  event.type = event_type;
+  event.user.code = 42;
+  require(SDL_PushEvent(&event) == 1, "could not queue input-boundary event");
+  const auto saved = begin_scene_flag;
+  begin_scene_flag = 1;
+  const auto opened = PsyX_BeginScene();
+  begin_scene_flag = saved;
+  require(opened == 0, "nested primitive reopened the scene");
+  require(SDL_PeepEvents(&event, 1, SDL_GETEVENT, event_type, event_type) ==
+                  1 &&
+              event.user.code == 42,
+          "nested primitive pumped events after the frame input was sampled");
+}
+
 void testActorDepth() {
   auto p = program();
   glUseProgram(p);
@@ -422,6 +442,7 @@ int main() {
   }
   int result = 0;
   try {
+    testNestedSceneRetainsInputBoundary();
     testActorNearProjection();
     testActorDepth();
     testSceneTone();

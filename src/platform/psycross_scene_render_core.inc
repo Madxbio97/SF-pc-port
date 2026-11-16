@@ -282,13 +282,17 @@ SVECTOR makeVertex(const assets::EmdVertex &source) {
   return SVECTOR{source.x, source.y, source.z, 0};
 }
 
-SVECTOR makeVertex(double x, double y, double z) {
-  auto result = SVECTOR{
+SVECTOR makePackedVertex(double x, double y, double z) {
+  return SVECTOR{
       static_cast<short>(std::lround(x)),
       static_cast<short>(std::lround(y)),
       static_cast<short>(std::lround(z)),
       0,
   };
+}
+
+SVECTOR makeVertex(double x, double y, double z) {
+  auto result = makePackedVertex(x, y, z);
   const std::array exact{x, y, z};
   PGXP_VectorRegister(&result, exact.data());
   return result;

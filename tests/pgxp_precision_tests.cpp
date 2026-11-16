@@ -6,6 +6,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string_view>
+#include <vector>
 
 namespace {
 
@@ -250,6 +251,75 @@ void testRoundedScreenCollisionKeepsPrimitiveIdentity() {
           "Rounded-screen collision crossed primitive identities");
 }
 
+void testFrameVectorCacheGrowthAndReset() {
+  InitGeom();
+  SetGeomOffset(192, 120);
+  SetGeomScreen(320);
+  MATRIX matrix{};
+  matrix.m[0][0] = matrix.m[1][1] = matrix.m[2][2] = 4096;
+  matrix.t[2] = 32000;
+  const auto register_view = [&] {
+    constexpr std::array rotation{1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
+    constexpr std::array translation{0.0, 0.0, 32000.0};
+    PGXP_MatrixRegister(&matrix, rotation.data());
+    PGXP_MatrixRegisterTranslation(&matrix, translation.data());
+  };
+  constexpr std::size_t count = 24000;
+  std::vector<SVECTOR> source(count);
+  for (std::size_t frame = 0; frame < 3; ++frame) {
+    PGXP_ClearCache();
+    register_view();
+    for (std::size_t i = 0; i < count; ++i) {
+      source[i] = SVECTOR{static_cast<short>(int(i) - 12000),
+                          static_cast<short>(int(i % 317) - 158),
+                          static_cast<short>(int(i % 997) - 498), 0};
+      const std::array exact{source[i].vx + 0.125 + frame * 0.0625,
+                             source[i].vy - 0.25, source[i].vz + 0.375};
+      PGXP_VectorRegister(&source[i], exact.data());
+    }
+    // Address lookup and by-value recovery must survive every table growth
+    // and the retained table must never expose the preceding frame's data.
+    for (std::size_t i = 0; i < count; i += 7) {
+      static_cast<void>(project(matrix, source[i]));
+      const auto expected = (source[i].vx + 0.125 + frame * 0.0625) / 128.0;
+      require(near(g_FP_SXYZ2.px, expected),
+              "Frame-cache growth lost an exact address record");
+      auto copy = source[i];
+      static_cast<void>(project(matrix, copy));
+      require(near(g_FP_SXYZ2.px, expected),
+              "Frame-cache growth lost exact packed-value recovery");
+    }
+    // Equal packed vertices with different fractions remain ambiguous by
+    // value. Their original addresses must still resolve independently.
+    auto first = source[113], second = first;
+    const std::array a{first.vx + 0.125 + frame * 0.0625, first.vy - 0.25,
+                       first.vz + 0.375};
+    auto b = a;
+    b[0] -= 0.0625;
+    PGXP_VectorRegister(&first, a.data());
+    PGXP_VectorRegister(&second, b.data());
+    static_cast<void>(project(matrix, first));
+    require(near(g_FP_SXYZ2.px, a[0] / 128.0),
+            "Frame-cache ambiguity damaged the first explicit address");
+    static_cast<void>(project(matrix, second));
+    require(near(g_FP_SXYZ2.px, b[0] / 128.0),
+            "Frame-cache ambiguity damaged the second explicit address");
+    auto copy = first;
+    static_cast<void>(project(matrix, copy));
+    require(near(g_FP_SXYZ2.px, first.vx / 128.0),
+            "Ambiguous packed-value lookup guessed an exact position");
+  }
+  PGXP_ClearCache();
+  register_view();
+  auto copy = source[12];
+  static_cast<void>(project(matrix, source[12]));
+  require(near(g_FP_SXYZ2.px, copy.vx / 128.0),
+          "Cleared frame cache retained an old address record");
+  static_cast<void>(project(matrix, copy));
+  require(near(g_FP_SXYZ2.px, copy.vx / 128.0),
+          "Cleared frame cache retained an old packed-value record");
+}
+
 void testPreciseTextureCoordsStayAttachedToTransformBatch() {
   PGXP_ClearCache();
   PGXPVData first{};
@@ -398,6 +468,7 @@ int main() {
     testExactCacheHintWinsDuplicateLookup();
     testExactCacheIndexDoesNotDependOnRoundedScreenLookup();
     testRoundedScreenCollisionKeepsPrimitiveIdentity();
+    testFrameVectorCacheGrowthAndReset();
     testPreciseTextureCoordsStayAttachedToTransformBatch();
     testCacheSaturatesWithoutWrapping();
     testTextureFilterSelection();

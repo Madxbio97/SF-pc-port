@@ -1425,9 +1425,9 @@ void submitClippedTriangle(
         clipped.vertices[index],
         clipped.vertices[index + 1U],
     };
-    auto v0 = makeVertex(triangle[0].x, triangle[0].y, triangle[0].z);
-    auto v1 = makeVertex(triangle[1].x, triangle[1].y, triangle[1].z);
-    auto v2 = makeVertex(triangle[2].x, triangle[2].y, triangle[2].z);
+    auto v0 = makePackedVertex(triangle[0].x, triangle[0].y, triangle[0].z);
+    auto v1 = makePackedVertex(triangle[1].x, triangle[1].y, triangle[1].z);
+    auto v2 = makePackedVertex(triangle[2].x, triangle[2].y, triangle[2].z);
     registerPreciseTriangle({&v0, &v1, &v2}, triangle);
     long xy0{};
     long xy1{};
@@ -2116,7 +2116,9 @@ void renderHmdObject(
       back_color_override.value_or(retailHmdBackColor(object));
   const auto vertex = [&](std::size_t index) {
     const auto &world = world_vertices[index];
-    return makeVertex(world.x, world.y, world.z);
+    // The final triangle addresses are registered together below. Avoid
+    // registering the temporary return value for each corner a second time.
+    return makePackedVertex(world.x, world.y, world.z);
   };
   for (const auto &triangle : model.triangles()) {
     const auto wounded = [&](std::size_t corner) {

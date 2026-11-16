@@ -893,12 +893,16 @@ char begin_scene_flag = 0;
 
 char PsyX_BeginScene()
 {
-	PsyX_Sys_DoPollEvent();
-
 	if (begin_scene_flag)
 		return 0;
 
-	assert(!begin_scene_flag);
+        // DrawPrim also enters here for every HUD glyph and overlay. Pump only
+        // at a new scene boundary; native loops already sample input
+        // explicitly. Repeated mid-frame pumps add driver work and drain
+        // mouse/window events after the frame has consumed its input snapshot.
+        PsyX_Sys_DoPollEvent();
+
+        assert(!begin_scene_flag);
 
 	{
 		int swapInterval =
