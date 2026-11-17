@@ -41,7 +41,9 @@ int fail(std::uint32_t mission, std::string_view phase,
     std::cerr << " terminal=" << mission_state->terminal
               << " success=" << mission_state->success
               << " failure=" << mission_state->failure
-              << " transition=" << mission_state->failure_transition;
+              << " transition=" << mission_state->failure_transition
+              << " health=" << mission_state->player_health
+              << " armor=" << mission_state->player_armor;
   }
   std::cerr << '\n';
   return 2;
@@ -193,6 +195,7 @@ int runProbe(const std::filesystem::path &cue_path) {
 
   std::uint64_t transition_updates{};
   std::uint32_t failure_restarts{};
+  std::uint32_t death_restarts{};
   std::uint32_t ending_requests{};
   std::uint32_t staged_completions{};
   std::uint32_t finalized_completions{};
@@ -246,6 +249,49 @@ int runProbe(const std::filesystem::path &cue_path) {
     if (!captureStableCheckpoint(*gameplay)) {
       return fail(mission.index, "checkpoint-capture", *gameplay);
     }
+    if (!sf::game::G4CampaignTransitionProbeAccess::invokeRetailPlayerDamage(
+            *gameplay))
+      return fail(mission.index, "ordinary-death-damage", *gameplay);
+    bool death_seen{}, death_restarted{};
+    for (std::uint32_t update{}; update < maximum_transition_updates;
+         ++update) {
+      if (!step(*gameplay) || gameplay->runtimeFaulted())
+        return fail(mission.index, "ordinary-death-transition", *gameplay);
+      ++transition_updates;
+      const auto live =
+          sf::game::G4CampaignTransitionProbeAccess::liveMissionState(
+              *gameplay);
+      if (!live)
+        return fail(mission.index, "ordinary-death-state", *gameplay);
+      death_seen = death_seen || live->player_health <= 0;
+      // Retail can spend the first hit on armour or reject a hit during an
+      // authored reaction. Retry at distinct settled frame boundaries.
+      if (!death_seen && update < 96U && (update + 1U) % 32U == 0U &&
+          !sf::game::G4CampaignTransitionProbeAccess::invokeRetailPlayerDamage(
+              *gameplay))
+        return fail(mission.index, "ordinary-death-damage-retry", *gameplay);
+      if (!gameplay->failureRestartRequested())
+        continue;
+      if (!death_seen || gameplay->consumeEndingMovieRequest())
+        return fail(mission.index, "ordinary-death-boundary", *gameplay);
+      const auto terminal_sequence = gameplay->legacyPresentationSequence();
+      if (!gameplay->restartCheckpoint() ||
+          gameplay->failureRestartRequested() || gameplay->missionFailed() ||
+          !coherentPresentation(*gameplay, terminal_sequence))
+        return fail(mission.index, "ordinary-death-restore", *gameplay);
+      const auto restored =
+          sf::game::G4CampaignTransitionProbeAccess::liveMissionState(
+              *gameplay);
+      if (!restored || !sameCheckpointState(*restored, *checkpoint_state))
+        return fail(mission.index, "ordinary-death-checkpoint-state",
+                    *gameplay);
+      ++death_restarts;
+      death_restarted = true;
+      break;
+    }
+    if (!death_restarted)
+      return fail(mission.index, "ordinary-death-timeout", *gameplay);
+
     if (agent_bomb_fixture) {
       if (!sf::game::G4CampaignTransitionProbeAccess::
               seedAgentPark2BombDetonation(*gameplay, 73U) ||
@@ -458,17 +504,18 @@ int runProbe(const std::filesystem::path &cue_path) {
 
   if (campaign->active() || !campaign->saveSlot() ||
       !saves[*campaign->saveSlot()].campaign_complete ||
-      failure_restarts != mission_count || ending_requests != mission_count ||
-      staged_completions != mission_count ||
+      failure_restarts != mission_count || death_restarts != mission_count ||
+      ending_requests != mission_count || staged_completions != mission_count ||
       finalized_completions != mission_count) {
     std::cerr << "G4 campaign transition gate failed: final coverage="
               << failure_restarts << '/' << ending_requests << '/'
               << staged_completions << '/' << finalized_completions << '/'
-              << mission_count << '\n';
+              << mission_count << " ordinary-deaths=" << death_restarts << '\n';
     return 2;
   }
 
   std::cout << "G4 campaign transition gate passed: missions=" << mission_count
+            << " ordinary-deaths=" << death_restarts
             << " retail-failures=" << failure_restarts
             << " retail-successes=" << ending_requests
             << " eol-stage/finalize=" << staged_completions << '/'

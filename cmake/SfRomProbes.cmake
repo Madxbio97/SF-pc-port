@@ -91,4 +91,6 @@ function(sf_register_supported_rom_tests)
         "rom;gameplay;rendering;grenade" 300)
     sf_add_supported_rom_test(sf_retail_grenade_campaign_rom
         sf_retail_grenade_probe "rom;gameplay;grenade;campaign" 900 all)
+    sf_add_supported_rom_test(sf_retail_grenade_aftermath_rom
+        sf_retail_grenade_probe "rom;gameplay;grenade;checkpoint" 300 13 aftermath)
 endfunction()

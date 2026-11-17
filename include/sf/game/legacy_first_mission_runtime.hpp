@@ -105,19 +105,25 @@ legacyGrenadeThrowQueueAvailable(bool grenade_weapon,
 // FUN_80017844's 0x80115cca byte marks the beginning of the failure fade.
 // The retail restart is ready only after its callback reaches application
 // state 2; stopping the VM at the byte would freeze that fade in progress.
+// Ordinary player death can take this path without setting mission.failure.
+// A valid player with no health must use the same checkpoint boundary.
 [[nodiscard]] constexpr bool legacyMissionFailureRestartReady(
     std::uint32_t application_state,
     const LegacyMissionBridgeState &mission) noexcept {
-  return mission.failure && application_state == 2U;
+  const auto player_dead =
+      mission.player_slot >= 0 && mission.player_health <= 0;
+  return application_state == 2U && !mission.success &&
+         (mission.failure || player_dead);
 }
 
-// A terminal failure deliberately stops at state 2 so the host can restore
+// A terminal failure or player death stops at state 2 so the host can restore
 // the captured checkpoint. Active transitions and SILO's successful terminal
 // preamble must still run the retail state-stack dispatcher.
 [[nodiscard]] constexpr bool legacyRetailState2DispatchAllowed(
     std::uint32_t application_state,
     const LegacyMissionBridgeState &mission) noexcept {
-  return application_state == 2U && !mission.failure;
+  return application_state == 2U &&
+         !legacyMissionFailureRestartReady(application_state, mission);
 }
 
 // States 7 and 9 own asynchronous room/overlay replacement. Their common

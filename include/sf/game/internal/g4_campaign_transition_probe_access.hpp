@@ -111,6 +111,21 @@ public:
     return runtime->agent_park2_bomb_detonation_percent_;
   }
 
+  [[nodiscard]] static bool
+  invokeRetailPlayerDamage(GameplaySession &gameplay) {
+    auto *vm = gameplayVm(gameplay);
+    const auto before = vm ? vm->readMissionBridgeState() : std::nullopt;
+    if (!before || before->player_slot < 0 || before->player_health <= 0 ||
+        before->terminal)
+      return false;
+    // Environmental damage enters the same original hit/death controller,
+    // without depending on the currently equipped weapon or attacker pose.
+    const auto player = static_cast<std::uint32_t>(before->player_slot);
+    // 0x0f is the original pistol/rifle reaction, including its death clip.
+    const std::array arguments{0xffffffffU, player, player, 1000U, 0x0fU};
+    return vm->invoke(0x80069cb0U, arguments, 5'000'000U).completed();
+  }
+
   [[nodiscard]] static bool invokeRetailFailure(GameplaySession &gameplay) {
     auto *vm = gameplayVm(gameplay);
     if (vm == nullptr) {

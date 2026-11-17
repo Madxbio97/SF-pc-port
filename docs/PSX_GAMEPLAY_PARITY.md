@@ -15,6 +15,8 @@ playthrough. Manual gameplay testing remains with the user.
   exposure/retraction, thin side walls, a ceiling and coincident roots.~~
 - ~~Restore exact original player/enemy grenade positions and their final linked frame.~~
 - ~~Keep completed high-pitch SPU voices restorable in checkpoints.~~
+- ~~Restore the checkpoint after ordinary player death even without failed objectives.~~
+- ~~Run the CATACOMB gas scenario through death, fade and checkpoint restoration.~~
 - ~~Extend the PAD grenade gate to frag and gas: original selection, charge,
   release, projectile identity and quick tap after checkpoint restoration.~~
 - ~~Add a campaign grenade gate for every mission allowed by the original grant.~~
@@ -98,7 +100,7 @@ restore and a later key-on.
 | Weapons and ammunition | 26 recovered weapon records; original equip/menu, damage and inventory code; Agent weapon/controller gates | Utility-item use still needs scene-specific manual comparison |
 | Frag/gas grenades | PAD charge/release and quick tap in Georgia Street/BASEEXT/CATACOMB; original throw-callback transforms and checkpoint restore across the allowed-mission grant matrix | Callback replay does not prove uninterrupted input/animation in every combat scene, identical explosion/gas particles or every victim interaction |
 | Interactions and objectives | G2 scripts, G3.1 authored events and G3.5 overlay callbacks across the campaign | Callback/event replays are not a complete sequence of natural mission solutions |
-| Checkpoints and progression | G4: 20 failures, 20 successes, carry/inventory, checkpoint restore and EOL stage/finalize | Host persistence/transition checks do not prove every possible mid-combat checkpoint state |
+| Checkpoints and progression | G4: ordinary deaths, objective failures, successes, carry/inventory, checkpoint restore and EOL stage/finalize across the campaign | Host persistence/transition checks do not prove every possible mid-combat checkpoint state |
 | Gameplay presentation | All-mission environment, sprite and lighting regressions; native HUD/input tests | Complete-frame PSX/PC comparison remains a manual scene check |
 
 The opt-in probes use the supplied image locally. They do not control the user's
@@ -128,7 +130,7 @@ or successful all-mission PAD coverage. The callback gate stops at original
 projectile unlink, then verifies checkpoint restore; it does not certify the
 aftermath of a throw.
 
-## Validation
+## Validation before the death/restart follow-up
 
 - Portable Release: **24/24** standard tests.
 - PsyCross Release: **28/28**, including the hidden OpenGL subsystem test.
@@ -151,14 +153,53 @@ aftermath of a throw.
 The campaign callback result certifies linked projectile transforms and restore,
 not every aftermath or manual gameplay scenario described below.
 
-## Additional diagnostic follow-up
+## Resolved gas aftermath and ordinary death
 
-Continuing the artificially injected CATACOMB throw beyond projectile unlink
-reached an execution fault at update 91, with player health zero and application
-state 1. This was not reproduced by the normal PAD charge/release and quick-tap
-cases in that mission, which pass. It remains an unresolved diagnostic scenario;
-it is not counted as a shipping fix or certified explosion/gas aftermath.
-Compare gas self-damage and protected-actor consequences naturally in that scene.
+The previous CATACOMB callback scenario exposed a production restart defect.
+The original gas killed Gabe at native update 8 and completed its death/fade
+path at update 90. Terminal and failed-objective flags remained clear.
+The host checked only mission.failure before deciding whether to run state 2's
+original reinitialization. It entered that loader and exhausted its instruction
+budget at 0x80028930 while rebuilding animation tables.
+
+Original FUN_80017630 tests the player's health directly and calls FUN_80017778
+on death. FUN_80017778 enters FUN_80016184(3), which posts state 2 and transition
+3. This is independent of the objective-failure bytes. The host now recognizes
+a valid dead player at that same state-2 boundary and uses its existing coherent
+checkpoint consumer. It does not stop the original death animation/fade early
+or set invented terminal/failure flags. Successful terminal scenes and live
+state-stack transitions retain their prior handling.
+
+- ~~Distinguish ordinary death from objective failure at the restart boundary.~~
+- ~~Exercise gas, death, fade, restart request and checkpoint restoration.~~
+- ~~Verify restored health, position, weapon, ammunition and forward execution.~~
+- ~~Cover unknown player identity, overkill health, early fade and successful scenes.~~
+
+The opt-in aftermath gate invokes the same original throw callback as before,
+then continues beyond projectile unlink. It checks that the original failure
+flag stays clear, that the host publishes the restart command in state 2, and
+that the actual checkpoint restores its health, position and full inventory.
+The G4 campaign gate additionally enters original damage routine FUN_80069cb0
+with environmental damage and exercises the original death controller in every
+mission; existing objective-failure and success checks remain separate.
+
+Follow-up Release verification:
+
+- Portable standard tests: **24/24**. PsyCross: **28/28**, including OpenGL.
+- **21 original-image gates** passed across the enabled run and the targeted G4
+  rerun. The full CTest run passed its other **44** tests; after correcting the
+  newly added hit fixture to use original reaction type 0x0f (type zero has no
+  death animation), the G4 command passed the complete campaign.
+- G4: **20 ordinary deaths**, **20 objective failures**, **20 successes** and
+  **20 EOL stage/finalize pairs**, with coherent checkpoint/inventory restoration.
+- CATACOMB aftermath: original death at update **8**, state-2 checkpoint request
+  at **90**, objective-failure flag **0**, restored health/position/inventory and
+  eight subsequent updates verified.
+- Campaign grenade transforms: **19 cases / 18 missions**, **857** exact MATRIX
+  samples. The separate PAD charge/release/quick-click fixtures remain green.
+
+The artificial throw is used to reproduce the original gas/death controller;
+a full manual playthrough is still outside these automated contracts.
 
 ## Manual comparisons still required
 
@@ -193,6 +234,8 @@ ctest --preset windows-release --output-on-failure -j 3
 & .\build\windows-msvc\Release\sf_retail_grenade_probe.exe '<supported.cue>' 7
 # Isolate the original callback in one allowed mission:
 & .\build\windows-msvc\Release\sf_retail_grenade_probe.exe '<supported.cue>' 13 callback
+# Continue through gas/death/fade and restore the checkpoint:
+& .\build\windows-msvc\Release\sf_retail_grenade_probe.exe '<supported.cue>' 13 aftermath
 & .\build\windows-msvc\Release\sf_retail_grenade_probe.exe '<supported.cue>' all
 # Return to the normal portable build:
 cmake --preset windows-msvc -DSF_BUILD_ROM_PROBES=OFF -DSF_SUPPORTED_ROM_CUE=

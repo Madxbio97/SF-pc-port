@@ -1667,6 +1667,48 @@ void testLegacyVirtualCd() {
           "Virtual CD accepted a checkpoint from another catalog instance");
 }
 
+void testPlayerDeathCheckpointBoundary() {
+  using namespace sf::game;
+  LegacyMissionBridgeState mission;
+  mission.player_slot = 0x29a;
+  mission.player_health = 150;
+  require(legacyRetailState2DispatchAllowed(2U, mission) &&
+              !legacyMissionFailureRestartReady(2U, mission),
+          "Healthy state-stack transitions were blocked");
+
+  mission.player_health = 0;
+  require(!mission.terminal && !mission.failure &&
+              !legacyMissionFailureRestartReady(0U, mission) &&
+              !legacyMissionFailureRestartReady(5U, mission) &&
+              legacyMissionFailureRestartReady(2U, mission) &&
+              !legacyRetailState2DispatchAllowed(2U, mission),
+          "Ordinary death bypassed the original fade/checkpoint boundary");
+  const auto restart =
+      classifyLegacyMissionTransition(13U, 2U, 2U, mission, false, 2U);
+  require(restart.finished && restart.request_failure_restart &&
+              !restart.request_intro_movie && !restart.request_ending_movie &&
+              !mission.terminal && !mission.failure,
+          "A dead player without failed objectives did not request restart");
+
+  mission.player_health = -1;
+  require(legacyMissionFailureRestartReady(2U, mission),
+          "Overkill health bypassed checkpoint restoration");
+  mission.success = true;
+  require(!legacyMissionFailureRestartReady(2U, mission) &&
+              legacyRetailState2DispatchAllowed(2U, mission),
+          "A successful terminal scene became a death restart");
+
+  mission.success = false;
+  mission.player_slot = -1;
+  require(!legacyMissionFailureRestartReady(2U, mission) &&
+              legacyRetailState2DispatchAllowed(2U, mission),
+          "An unknown player identity became a death restart");
+  mission.player_health = 150;
+  mission.failure = true;
+  require(legacyMissionFailureRestartReady(2U, mission),
+          "Objective failure with a living player lost its restart");
+}
+
 void testLegacyGameplayVmBoundary() {
   constexpr std::array initial_words{
       encodeR(31U, 0U, 0U, 0U, 0x08U),
@@ -9114,6 +9156,7 @@ int main() {
     testDeterministicStops();
     testLegacyVirtualCd();
     testGuestPadBridge();
+    testPlayerDeathCheckpointBoundary();
     testLegacyGameplayVmBoundary();
     testLegacyGameplayVmAgentMissionTimers();
     testLegacyGameplayVmAgentDamageHook();

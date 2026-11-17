@@ -5,6 +5,10 @@ pre-release tags rather than a stable semantic-versioning promise.
 
 ## Unreleased
 
+- Restore checkpoints after ordinary player death, including CATACOMB gas
+  deaths with no failed-objective flag. Keep the original fade and protect
+  successful state transitions; extend original-ROM death/restart coverage.
+
 - Correct skeleton-space cover samples shared by enemy vision, bullets, flame
   contact and DANGER; reject head/lower-body samples crossing walls or ceilings.
 - Preserve original player/enemy grenade transforms through collisions and

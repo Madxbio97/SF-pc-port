@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -29,7 +30,10 @@ bool controlReady(const sf::game::GameplaySession &gameplay) noexcept {
 bool step(sf::game::GameplaySession &gameplay,
           const sf::game::GameplayInput &input = {}) {
   gameplay.update(input);
-  return gameplay.advanceAudioFrameClock();
+  // Production restores a requested checkpoint before advancing the retired
+  // timeline's audio clock. Use that same boundary in this headless gate.
+  return !gameplay.runtimeFaulted() && (gameplay.failureRestartRequested() ||
+                                        gameplay.advanceAudioFrameClock());
 }
 
 bool matchesOriginalProjectile(
@@ -64,7 +68,8 @@ bool matchesOriginalProjectile(
 }
 
 int run(const std::filesystem::path &cue, std::uint32_t mission_index,
-        sf::game::WeaponId weapon, bool campaign_transform_fixture) {
+        sf::game::WeaponId weapon, bool campaign_transform_fixture,
+        bool check_aftermath) {
   auto disc = sf::game::GameDisc::open(cue);
   const auto package = sf::game::MissionPackage::load(disc, mission_index);
   auto gameplay = sf::game::GameplaySession{package};
@@ -124,6 +129,9 @@ int run(const std::filesystem::path &cue, std::uint32_t mission_index,
     return 13;
   }
 
+  const auto checkpoint_frame = gameplay.legacyPresentationFrame();
+  if (!checkpoint_frame || !checkpoint_frame->ui || !checkpoint_frame->renderer)
+    return 18;
   if (!sf::game::G4CampaignTransitionProbeAccess::captureCheckpoint(gameplay))
     return 18;
   if (campaign_transform_fixture) {
@@ -161,7 +169,9 @@ int run(const std::filesystem::path &cue, std::uint32_t mission_index,
   auto first_projectile_position = sf::game::LegacyNativePoint{};
   auto *diagnostic_vm =
       sf::game::G4CampaignTransitionProbeAccess::occlusionProbeVm(gameplay);
-  for (std::uint32_t update = 0U; update < 180U; ++update) {
+  std::optional<std::uint32_t> death_update, restart_update;
+  const auto maximum_updates = check_aftermath ? 320U : 180U;
+  for (std::uint32_t update = 0U; update < maximum_updates; ++update) {
     if (!step(gameplay,
               sf::game::GameplayInput{
                   .aim = !campaign_transform_fixture && update < 150U,
@@ -200,6 +210,29 @@ int run(const std::filesystem::path &cue, std::uint32_t mission_index,
       return 5;
     }
     const auto &renderer = frame->renderer->state;
+    if (check_aftermath) {
+      if (!frame->ui)
+        return 21;
+      const auto &mission = frame->ui->mission;
+      if (mission.player_health <= 0 && !death_update)
+        death_update = update;
+      if (gameplay.failureRestartRequested()) {
+        std::uint32_t state{};
+        if (!death_update || !projectile_seen || mission.player_health > 0 ||
+            mission.terminal || mission.failure || mission.success ||
+            !diagnostic_vm ||
+            !diagnostic_vm->runtime().read32(
+                sf::game::syphonFilterUsaV11RetailOuterFrameProfile()
+                    .current_state,
+                state) ||
+            state != 2U ||
+            !frame->contains(
+                sf::game::LegacyPresentationCommandType::restart_after_failure))
+          return 21;
+        restart_update = update;
+        break;
+      }
+    }
     if (renderer.grenade_trajectory) {
       if (renderer.thrown_projectile) {
         return 6;
@@ -232,7 +265,7 @@ int run(const std::filesystem::path &cue, std::uint32_t mission_index,
     if (!renderer.thrown_projectile) {
       // The callback fixture covers the linked projectile lifetime. The
       // resulting gas/explosion and mission consequences have separate gates.
-      if (campaign_transform_fixture && projectile_seen)
+      if (campaign_transform_fixture && !check_aftermath && projectile_seen)
         break;
       continue;
     }
@@ -274,6 +307,12 @@ int run(const std::filesystem::path &cue, std::uint32_t mission_index,
   if (gameplay.runtimeFaulted()) {
     return 9;
   }
+  if (check_aftermath &&
+      (!death_update || !restart_update || *death_update >= *restart_update)) {
+    std::cerr << "Missing original death/fade/restart sequence\n";
+    return 21;
+  }
+  const auto before_restart_sequence = gameplay.legacyPresentationSequence();
   // Quick click uses the neutral PAD fixtures; the campaign fixture above
   // isolates the original projectile callback from combat interruptions.
   const auto quick_tap_fixture = !campaign_transform_fixture;
@@ -287,6 +326,34 @@ int run(const std::filesystem::path &cue, std::uint32_t mission_index,
               << static_cast<int>(runtime->rendererBridgeStage())
               << " detail=" << runtime->faultDetail() << '\n';
     return 19;
+  }
+  if (check_aftermath) {
+    const auto restored = gameplay.legacyPresentationFrame();
+    const auto &expected = checkpoint_frame->ui->mission;
+    if (!restored || !restored->ui || !restored->renderer ||
+        !sf::game::legacyPresentationFrameConsumable(*restored,
+                                                     before_restart_sequence) ||
+        gameplay.failureRestartRequested() || gameplay.missionFailed() ||
+        !gameplay.playerAlive() ||
+        restored->ui->mission.player_health != expected.player_health ||
+        restored->ui->mission.inventory.current_weapon !=
+            expected.inventory.current_weapon ||
+        restored->ui->mission.inventory.owned_weapons !=
+            expected.inventory.owned_weapons ||
+        restored->ui->mission.inventory.magazines !=
+            expected.inventory.magazines ||
+        restored->ui->mission.inventory.reserves !=
+            expected.inventory.reserves ||
+        restored->renderer->state.player.position !=
+            checkpoint_frame->renderer->state.player.position ||
+        gameplay.consumeEndingMovieRequest())
+      return 22;
+    for (std::uint32_t update{}; update < 8U; ++update)
+      if (!step(gameplay) || gameplay.failureRestartRequested())
+        return 23;
+    std::cout << "death-update=" << *death_update
+              << " restart-update=" << *restart_update
+              << " original-failure-flag=0 checkpoint-restored=1\n";
   }
   if (quick_tap_fixture) {
     auto quick_tap_projectile_seen = false;
@@ -336,7 +403,8 @@ int run(const std::filesystem::path &cue, std::uint32_t mission_index,
 int main(int argc, char **argv) {
   try {
     if (argc < 2 || argc > 4 ||
-        (argc == 4 && std::string_view{argv[3]} != "callback")) {
+        (argc == 4 && std::string_view{argv[3]} != "callback" &&
+         std::string_view{argv[3]} != "aftermath")) {
       return 1;
     }
     // FUN_80047c0c deliberately restricts the all-weapons grant by mission.
@@ -379,7 +447,8 @@ int main(int argc, char **argv) {
     for (const auto &test : cases) {
       const auto result =
           run(argv[1], test.mission, test.weapon,
-              argc == 4 || (argc == 3 && std::string_view{argv[2]} == "all"));
+              argc == 4 || (argc == 3 && std::string_view{argv[2]} == "all"),
+              argc == 4 && std::string_view{argv[3]} == "aftermath");
       std::cout << "mission=" << test.mission
                 << " grenade=" << static_cast<unsigned>(test.weapon)
                 << " result=" << result << std::endl;
