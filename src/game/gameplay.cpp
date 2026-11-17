@@ -3,6 +3,7 @@
 #include "sf/core/error.hpp"
 #include "sf/game/legacy_first_mission_runtime.hpp"
 #include "sf/game/legacy_presentation_bridge.hpp"
+#include "sf/game/legacy_world_visibility.hpp"
 #include "sf/game/mission.hpp"
 #include "sf/game/virus_scanner_target.hpp"
 
@@ -70,76 +71,6 @@ constexpr std::uint32_t opening_initial_dynamic_terrorist_path_pointer =
     0x801a4934U;
 constexpr std::int32_t opening_guest_slot_unbound = -1;
 constexpr std::int32_t opening_guest_slot_retired = -2;
-
-struct GrenadePresentationPoint {
-  double x{};
-  double y{};
-  double z{};
-};
-
-std::optional<GrenadePresentationPoint> retailGrenadePresentationPoint(
-    const LegacyGrenadeTrajectoryBridgeState &trajectory,
-    const LegacyNativePoint &retail_position) noexcept {
-  const auto origin_x = static_cast<double>(trajectory.origin.x);
-  const auto origin_y = static_cast<double>(trajectory.origin.y);
-  const auto origin_z = static_cast<double>(trajectory.origin.z);
-  const auto horizontal_x = static_cast<double>(trajectory.target.x) - origin_x;
-  const auto horizontal_z = static_cast<double>(trajectory.target.z) - origin_z;
-  const auto horizontal_distance = std::hypot(horizontal_x, horizontal_z);
-  if (horizontal_distance < 1.0) {
-    return std::nullopt;
-  }
-
-  const auto vertical_distance =
-      static_cast<double>(trajectory.target.y) - origin_y;
-  const auto direct_angle = std::atan2(vertical_distance, horizontal_distance);
-  const auto charge = std::clamp(
-      static_cast<double>(trajectory.strength_q12) / 4096.0, 0.0, 1.0);
-  const auto launch_angle =
-      std::lerp(direct_angle, std::numbers::pi * 0.5, charge);
-  const auto cosine = std::cos(launch_angle);
-  const auto tangent = std::tan(launch_angle);
-  constexpr auto gravity = 10518.0 / 4096.0;
-  const auto denominator = 2.0 * cosine * cosine *
-                           (horizontal_distance * tangent - vertical_distance);
-  if (!std::isfinite(denominator) || denominator <= 0.001) {
-    return std::nullopt;
-  }
-  const auto speed_squared =
-      gravity * horizontal_distance * horizontal_distance / denominator;
-  if (!std::isfinite(speed_squared) || speed_squared <= 0.0) {
-    return std::nullopt;
-  }
-
-  const auto direction_x = horizontal_x / horizontal_distance;
-  const auto direction_z = horizontal_z / horizontal_distance;
-  const auto from_origin_x = static_cast<double>(retail_position.x) - origin_x;
-  const auto from_origin_z = static_cast<double>(retail_position.z) - origin_z;
-  const auto travelled =
-      std::clamp(from_origin_x * direction_x + from_origin_z * direction_z, 0.0,
-                 horizontal_distance);
-  const auto ballistic_y =
-      origin_y + travelled * tangent -
-      gravity * travelled * travelled / (2.0 * speed_squared * cosine * cosine);
-  if (!std::isfinite(ballistic_y)) {
-    return std::nullopt;
-  }
-  // Mission rendering is down-positive while the retail solver is
-  // up-positive. Horizontal motion remains the exact guest collision path.
-  return GrenadePresentationPoint{static_cast<double>(retail_position.x),
-                                  -ballistic_y,
-                                  static_cast<double>(retail_position.z)};
-}
-
-double fallbackGrenadePresentationY(const LegacyNativePoint &retail_position,
-                                    std::uint8_t age) noexcept {
-  constexpr auto retail_lifetime = 60.0;
-  constexpr auto apex_height = 420.0;
-  const auto time =
-      std::clamp(static_cast<double>(age) / retail_lifetime, 0.0, 1.0);
-  const auto lift = 4.0 * apex_height * time * (1.0 - time);
-  return -static_cast<double>(retail_position.y) - lift;
-}
 
 bool legacyRetiredDynamicObject(const LegacyObjectBridgeState &guest) noexcept {
   // FUN_80065fa0 retires a recycled slot by clearing record+0x2c only;
@@ -1683,7 +1614,6 @@ void GameplaySession::reset() {
   effect_serial_ = 1U;
   mission_scripts_.reset();
   projectiles_.clear();
-  legacy_player_grenade_trajectory_.reset();
   death_updates_ = 0U;
   mission_failed_ = false;
   // The STR is followed by the retail in-engine street briefing. The guest
@@ -2635,32 +2565,13 @@ GameplaySession::traceWorldSegment(double from_x, double from_y, double from_z,
 bool GameplaySession::hostileBallisticLineOfSight(
     const LegacyNativePoint &shooter, const LegacyNativePoint &target,
     bool target_crouched) const noexcept {
-  const Point3 origin{static_cast<double>(shooter.x), shooter.y - 225.0,
-                      static_cast<double>(shooter.z)};
-  const auto dx = static_cast<double>(target.x) - shooter.x;
-  const auto dz = static_cast<double>(target.z) - shooter.z;
-  const auto length = std::hypot(dx, dz);
-  const auto side_x =
-      length > 0.0 ? -dz * player_radius / length : player_radius;
-  const auto side_z = length > 0.0 ? dx * player_radius / length : 0.0;
-  const auto x = static_cast<double>(target.x);
-  const auto z = static_cast<double>(target.z);
-  // Retail owns chase-mode crouching. The native controller can have been
-  // reset since the last guest update, so use the live PSX stance bit.
-  const auto height = target_crouched ? actor_target_height : actor_head_height;
-  const std::array points{
-      Point3{x, target.y - height, z}, Point3{x, target.y - height * 0.75, z},
-      Point3{x, target.y - height * 0.5, z},
-      Point3{x + side_x, target.y - height * 0.75, z + side_z},
-      Point3{x - side_x, target.y - height * 0.75, z - side_z}};
-  return std::ranges::any_of(points, [&](const Point3 &to) {
-    if (traceWorldSegment(origin.x, origin.y, origin.z, to.x, to.y, to.z,
-                          true) < 1.0) {
-      return false;
-    }
-    return (to.x == x && to.z == z) ||
-           traceWorldSegment(x, to.y, z, to.x, to.y, to.z, true) >= 1.0;
-  });
+  return legacyPhysicalActorVisible(shooter, target, target_crouched,
+                                    [this](const LegacyVisibilityPoint &from,
+                                           const LegacyVisibilityPoint &to) {
+                                      return traceWorldSegment(
+                                                 from.x, from.y, from.z, to.x,
+                                                 to.y, to.z, true) >= 1.0;
+                                    });
 }
 
 std::optional<double>
@@ -5262,7 +5173,6 @@ void GameplaySession::syncLegacyGameplayBridge() {
     taser_target_.reset();
     taser_tether_updates_ = 0U;
     projectiles_.clear();
-    legacy_player_grenade_trajectory_.reset();
     legacy_ui_messages_.clear();
     legacy_ui_timer_.reset();
     legacy_mission_objective_count_ = 0U;
@@ -5402,46 +5312,31 @@ void GameplaySession::syncLegacyGameplayBridge() {
     legacy_presentation_fault_detail_ = "world-vertex-colors-deferred";
   }
   if (fresh_guest_sample) {
-    if (bridge.grenade_trajectory) {
-      legacy_player_grenade_trajectory_ = bridge.grenade_trajectory;
-    } else if (!bridge.thrown_projectile) {
-      legacy_player_grenade_trajectory_.reset();
-    }
     projectiles_.clear();
-    const auto append_projectile = [&](const auto &source,
-                                       bool player_projectile) {
+    const auto append_projectile = [&](const auto &source) {
       if (!source) {
         return;
       }
       const auto &retail = *source;
-      auto x = static_cast<double>(retail.transform.translation.x);
-      auto y = fallbackGrenadePresentationY(retail.transform.translation,
-                                            retail.age);
-      auto z = static_cast<double>(retail.transform.translation.z);
-      if (player_projectile && legacy_player_grenade_trajectory_) {
-        if (const auto point = retailGrenadePresentationPoint(
-                *legacy_player_grenade_trajectory_,
-                retail.transform.translation)) {
-          x = point->x;
-          y = point->y;
-          z = point->z;
-        }
-      }
+      // The original projectile MATRIX already contains world-space Y after
+      // gravity and collision response. Do not invert it or draw a guessed arc
+      // over the physical path, including after a bounce or checkpoint restore.
       projectiles_.push_back(GameplayProjectile{
           .active = true,
           .weapon = static_cast<WeaponId>(retail.weapon),
           .phase = ProjectilePhase::flying,
           .rotation = retail.transform.rotation,
           .retail_transform = true,
-          .x = x,
-          .y = y,
-          .z = z,
-          .remaining_updates = 60U - retail.age,
+          .x = static_cast<double>(retail.transform.translation.x),
+          .y = static_cast<double>(retail.transform.translation.y),
+          .z = static_cast<double>(retail.transform.translation.z),
+          .remaining_updates =
+              legacy_thrown_projectile_last_age + 1U - retail.age,
           .age_updates = retail.age,
       });
     };
-    append_projectile(bridge.thrown_projectile, true);
-    append_projectile(bridge.enemy_thrown_projectile, false);
+    append_projectile(bridge.thrown_projectile);
+    append_projectile(bridge.enemy_thrown_projectile);
   }
   // Apply retail's room transaction before synchronizing object residency.
   // active_world_models is the original 4:3 display traversal; resident worlds

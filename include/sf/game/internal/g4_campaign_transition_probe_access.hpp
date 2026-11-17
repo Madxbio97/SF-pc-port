@@ -15,6 +15,11 @@ namespace sf::game {
 // PsyCross.
 class G4CampaignTransitionProbeAccess final {
 public:
+  [[nodiscard]] static const LegacyFirstMissionRuntime *
+  checkpointProbeRuntime(const GameplaySession &gameplay) noexcept {
+    return gameplay.legacy_first_mission_.get();
+  }
+
   [[nodiscard]] static LegacyGameplayVm *
   occlusionProbeVm(GameplaySession &gameplay) noexcept {
     return gameplayVm(gameplay);
@@ -52,7 +57,7 @@ public:
   [[nodiscard]] static bool captureCheckpoint(GameplaySession &gameplay) {
     gameplay.checkpoint_pending_ = true;
     gameplay.captureCheckpoint();
-    return gameplay.checkpoint_valid_;
+    return gameplay.checkpoint_valid_ && !gameplay.checkpoint_pending_;
   }
 
   [[nodiscard]] static bool

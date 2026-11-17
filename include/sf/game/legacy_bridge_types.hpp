@@ -1016,6 +1016,10 @@ struct LegacyDroppedItemBridgeState {
 // FUN_80026808 advances its MATRIX at object+0x1c until the retail callback
 // removes that link. Preserve that exact transform instead of reconstructing
 // a second host trajectory from the fire edge.
+// The update increments age before testing its previous value < 0x3d.
+// A gas impact also jumps to 0x3d, still linked until the next callback.
+inline constexpr std::uint8_t legacy_thrown_projectile_last_age = 0x3dU;
+
 struct LegacyThrownProjectileBridgeState {
   std::uint8_t age{};
   std::uint8_t weapon{};

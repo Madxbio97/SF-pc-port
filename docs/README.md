@@ -17,6 +17,7 @@ generated reference material.
 | [Roadmap](ROADMAP.md) | Active work only |
 | [Refactor audit](REFACTOR_AUDIT.md) | Current code hotspots and safe extraction seams |
 | [Pause-menu parity](PAUSE_MENU_PARITY.md) | Recovered MENU.OVL presentation contract |
+| [Gameplay parity](PSX_GAMEPLAY_PARITY.md) | Original behaviour, automated coverage and remaining manual comparisons |
 | [Contributing](../CONTRIBUTING.md) | Change and validation requirements |
 | [Third-party software](../THIRD_PARTY.md) | Dependencies, licenses and provenance |
 

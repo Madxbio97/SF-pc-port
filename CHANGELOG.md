@@ -5,6 +5,17 @@ pre-release tags rather than a stable semantic-versioning promise.
 
 ## Unreleased
 
+- Correct skeleton-space cover samples shared by enemy vision, bullets, flame
+  contact and DANGER; reject head/lower-body samples crossing walls or ceilings.
+- Preserve original player/enemy grenade transforms through collisions and
+  bounces, including their final linked frame before explosion/gas.
+- Fix checkpoint restoration after high-pitch ADPCM voices finish by keeping
+  the SPU phase within its fractional range.
+- Extend original-ROM grenade checks to both frag and gas, isolated quick taps
+  and every mission supported by the original grant. Correct the held-crouch,
+  stationary-aim and optic-zoom control reference.
+  See [the gameplay parity matrix](docs/PSX_GAMEPLAY_PARITY.md).
+
 - Confirm current world cover before positive enemy visual acquisition so
   retained target flags cannot reveal Gabe through a wall.
 - Resolve Girdeux flame contact from live actor roots at both original event

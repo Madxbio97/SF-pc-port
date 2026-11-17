@@ -1526,11 +1526,6 @@ private:
   unsigned int taser_tether_updates_{};
   std::uint32_t effect_serial_{1U};
   std::vector<GameplayProjectile> projectiles_;
-  // The retail preview disappears on the same tick that its projectile
-  // descriptor becomes live. Retain the last coherent guide so native
-  // presentation can place the flying grenade on that exact parabola.
-  std::optional<LegacyGrenadeTrajectoryBridgeState>
-      legacy_player_grenade_trajectory_;
   std::optional<WeaponId> pending_equipped_weapon_;
   std::deque<GuestWeaponRequest> pending_guest_weapon_requests_;
   std::optional<WeaponId> pending_guest_weapon_;

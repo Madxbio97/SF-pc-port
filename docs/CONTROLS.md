@@ -12,15 +12,15 @@ physical keyboard scancodes or mouse inputs.
 
 | Action | Default | Runtime meaning |
 | --- | --- | --- |
-| Move forward / backward | W / S | Walk in chase and first-person; crouch-walk while kneeling |
-| Turn left / right | A / D | Tank turn in chase mode; strafe in first-person |
+| Move forward / backward | W / S | Walk in chase; crouch-walk while kneeling |
+| Turn left / right | A / D | Tank turn in chase mode |
 | Strafe left / right | Q / E | Lateral movement in chase, manual-aim corner peek and side-roll direction |
 | Run | Left Shift | Run while moving forward |
 | Roll | Space | Forward roll, or left/right with a strafe direction; no backward roll |
 | Reload | R | Reload when the current weapon can accept reserve ammunition |
-| Aim | Mouse Right | Hold for manual first-person aim; WASD moves, mouse/right stick controls sight |
+| Aim | Mouse Right | Hold for manual first-person aim; mouse/right stick controls sight |
 | Fire | Mouse Left | Fire the current weapon |
-| Crouch / stealth | C | Toggle kneeling; movement becomes stealth crouch-walk |
+| Crouch / stealth | C | Hold to kneel; movement becomes stealth crouch-walk |
 | Action / interact | F | Contextual doors, switches, pickups and mission actions |
 | Target lock | Tab | Press to select/cycle; hold to retain automatic target lock |
 | Quick turn | Backspace | Retail 180-degree turn |
@@ -31,9 +31,13 @@ physical keyboard scancodes or mouse inputs.
 | Quick weapon 1..10 | 1..9, 0 | Equip the corresponding available quick slot |
 | Performance counter | F6 | Show or hide presentation FPS and frame time |
 
-Mouse movement controls the sight only while Aim is held. Crouch plus movement
-is the stealth locomotion path; Roll plus Strafe selects a side roll. These are
-composed states, not separate bindable actions.
+Mouse movement controls the sight only while Aim is held. First-person aim
+keeps Gabe's collision root stationary; Q/E retains the original corner peek.
+Releasing aim transfers the final sight heading to chase control. Hold C plus
+movement for stealth crouch-walk; Roll plus Strafe selects a side roll. In rifle
+optics, the original Triangle/Circle actions zoom in/out (F or R / Space with
+default keyboard bindings). These are composed states, not separate bindable
+actions.
 
 ## Controller
 

@@ -1,13 +1,19 @@
 #include "sf/core/error.hpp"
 #include "sf/game/game_disc.hpp"
 #include "sf/game/gameplay.hpp"
+#include "sf/game/internal/g4_campaign_transition_probe_access.hpp"
 #include "sf/game/legacy_presentation_bridge.hpp"
 #include "sf/game/mission.hpp"
 
+#include <array>
+#include <bit>
+#include <charconv>
 #include <cstdint>
 #include <filesystem>
 #include <iostream>
 #include <string>
+#include <string_view>
+#include <vector>
 
 namespace {
 
@@ -26,7 +32,39 @@ bool step(sf::game::GameplaySession &gameplay,
   return gameplay.advanceAudioFrameClock();
 }
 
-int run(const std::filesystem::path &cue, std::uint32_t mission_index) {
+bool matchesOriginalProjectile(
+    sf::game::LegacyGameplayVm &vm, std::uint32_t descriptor_pointer,
+    const sf::game::GameplayProjectile &presented,
+    const sf::game::LegacyThrownProjectileBridgeState &bridge) {
+  auto &cpu = vm.runtime();
+  std::uint32_t descriptor{}, display{}, matrix{};
+  if (!cpu.read32(descriptor_pointer, descriptor) ||
+      !cpu.read32(descriptor + 8U, display) ||
+      !cpu.read32(display + 0x0cU, matrix) || matrix == 0U)
+    return false;
+  std::array<std::int32_t, 3U> position{};
+  for (std::uint32_t i{}; i < position.size(); ++i) {
+    std::uint32_t bits{};
+    if (!cpu.read32(matrix + 0x14U + i * 4U, bits))
+      return false;
+    position[i] = std::bit_cast<std::int32_t>(bits);
+  }
+  for (std::uint32_t i{}; i < presented.rotation.size(); ++i) {
+    std::uint16_t bits{};
+    if (!cpu.read16(matrix + i * 2U, bits) ||
+        presented.rotation[i] != std::bit_cast<std::int16_t>(bits) ||
+        bridge.transform.rotation[i] != presented.rotation[i])
+      return false;
+  }
+  return presented.x == static_cast<double>(position[0]) &&
+         presented.y == static_cast<double>(position[1]) &&
+         presented.z == static_cast<double>(position[2]) &&
+         bridge.transform.translation ==
+             sf::game::LegacyNativePoint{position[0], position[1], position[2]};
+}
+
+int run(const std::filesystem::path &cue, std::uint32_t mission_index,
+        sf::game::WeaponId weapon, bool campaign_transform_fixture) {
   auto disc = sf::game::GameDisc::open(cue);
   const auto package = sf::game::MissionPackage::load(disc, mission_index);
   auto gameplay = sf::game::GameplaySession{package};
@@ -40,37 +78,24 @@ int run(const std::filesystem::path &cue, std::uint32_t mission_index) {
   if (stable != 8U) {
     return 2;
   }
-  if (mission_index == 0U) {
-    // Mission 0 starts its opening XA a few updates after control becomes
-    // available. Drain the complete active -> quiet radio cycle before
-    // holding aim; production correctly requires a release/re-arm when radio
-    // takes ownership of first-person input.
-    auto opening_radio_seen = false;
-    auto quiet_updates = std::uint32_t{};
-    auto radio_active = false;
-    for (std::uint32_t update = 0U; update < 2'000U && quiet_updates < 8U;
-         ++update) {
-      if (!step(gameplay)) {
-        return 14;
-      }
-      const auto frame = gameplay.legacyPresentationFrame();
-      if (!frame || !frame->renderer) {
-        return 14;
-      }
-      radio_active = gameplay.letterboxActive();
-      opening_radio_seen = opening_radio_seen || radio_active;
-      quiet_updates =
-          opening_radio_seen && !radio_active ? quiet_updates + 1U : 0U;
-    }
-    if (!opening_radio_seen || quiet_updates != 8U) {
+  // Let startup radio and its release/re-arm latch finish before holding L1.
+  // A control-ready actor can still have an authored radio viewport. Require
+  // a quiet neutral interval in every mission, not just Georgia Street.
+  auto quiet_updates = std::uint32_t{};
+  for (std::uint32_t update = 0U; update < 2'000U && quiet_updates < 64U;
+       ++update) {
+    if (!step(gameplay))
       return 14;
-    }
+    quiet_updates = controlReady(gameplay) && !gameplay.letterboxActive()
+                        ? quiet_updates + 1U
+                        : 0U;
   }
+  if (quiet_updates != 64U)
+    return 14;
   if (!gameplay.activateRetailAllWeaponsCheat()) {
     return 2;
   }
 
-  constexpr auto weapon = sf::game::WeaponId::fragmentation_grenade;
   for (std::uint32_t update = 0U;
        update < 300U && !gameplay.canEquipWeapon(weapon); ++update) {
     if (!step(gameplay)) {
@@ -92,11 +117,37 @@ int run(const std::filesystem::path &cue, std::uint32_t mission_index) {
     return 4;
   }
   const auto hud_layers = sf::game::weaponDefinition(weapon).icon.layers();
-  if (hud_layers.size() != 2U || hud_layers[0] != "GRENADEA.TIM" ||
-      hud_layers[1] != "GRENADEB.TIM") {
+  const auto gas = weapon == sf::game::WeaponId::gas_grenade;
+  if (hud_layers.size() != 2U ||
+      hud_layers[0] != (gas ? "GASGRENA.TIM" : "GRENADEA.TIM") ||
+      hud_layers[1] != (gas ? "GASGRENB.TIM" : "GRENADEB.TIM")) {
     return 13;
   }
 
+  if (!sf::game::G4CampaignTransitionProbeAccess::captureCheckpoint(gameplay))
+    return 18;
+  if (campaign_transform_fixture) {
+    // Reproduce only FUN_80025dfc's proven descriptor selector write, then
+    // invoke the real throw animation callback. Campaign starts can interrupt
+    // wind-up with damage; ordinary PAD input has its own separate fixtures.
+    auto *vm =
+        sf::game::G4CampaignTransitionProbeAccess::occlusionProbeVm(gameplay);
+    constexpr auto profile =
+        sf::game::syphonFilterUsaV11GameplayBridgeProfile();
+    std::uint32_t player{}, descriptor{};
+    std::uint16_t slot{};
+    std::uint8_t available{};
+    if (!vm || !vm->runtime().read32(profile.player_pointer, player) ||
+        !vm->runtime().read16(player + 2U, slot) ||
+        !vm->runtime().read32(profile.player_thrown_projectile_pointer,
+                              descriptor) ||
+        !vm->runtime().read8(descriptor, available) || available == 0U ||
+        !vm->runtime().write32(descriptor + 4U,
+                               static_cast<std::uint32_t>(weapon)) ||
+        !vm->invoke(0x80026608U, std::array{std::uint32_t{slot}}, 5'000'000U)
+             .completed())
+      return 20;
+  }
   auto preview_samples = std::uint32_t{};
   auto idle_preview_samples = std::uint32_t{};
   auto charge_preview_samples = std::uint32_t{};
@@ -106,14 +157,42 @@ int run(const std::filesystem::path &cue, std::uint32_t mission_index) {
   auto projectile_seen = false;
   auto projectile_moved_horizontally = false;
   auto projectile_moved_vertically = false;
-  auto projectile_followed_parabola = false;
+  auto projectile_samples = std::size_t{};
   auto first_projectile_position = sf::game::LegacyNativePoint{};
+  auto *diagnostic_vm =
+      sf::game::G4CampaignTransitionProbeAccess::occlusionProbeVm(gameplay);
   for (std::uint32_t update = 0U; update < 180U; ++update) {
-    if (!step(gameplay, sf::game::GameplayInput{
-                            .aim = update < 150U,
-                            .fire_pressed = update == 20U,
-                            .fire_held = update >= 20U && update < 52U,
-                        })) {
+    if (!step(gameplay,
+              sf::game::GameplayInput{
+                  .aim = !campaign_transform_fixture && update < 150U,
+                  .fire_pressed = !campaign_transform_fixture && update == 20U,
+                  .fire_held = !campaign_transform_fixture && update >= 20U &&
+                               update < 52U,
+              })) {
+      const auto *runtime =
+          sf::game::G4CampaignTransitionProbeAccess::checkpointProbeRuntime(
+              gameplay);
+      std::cerr << "grenade update failed: update=" << update
+                << " runtime=" << static_cast<int>(runtime->faultReason())
+                << " renderer-stage="
+                << static_cast<int>(runtime->rendererBridgeStage())
+                << " detail=" << runtime->faultDetail()
+                << " finished=" << runtime->finished()
+                << " health=" << gameplay.hud().vitals().health << '\n';
+      if (diagnostic_vm) {
+        std::uint32_t state{};
+        (void)diagnostic_vm->runtime().read32(
+            sf::game::syphonFilterUsaV11RetailOuterFrameProfile().current_state,
+            state);
+        const auto live_mission = diagnostic_vm->readMissionBridgeState();
+        std::cerr << "live-state=" << state << " pc=" << std::hex
+                  << diagnostic_vm->runtime().state().pc << std::dec
+                  << " mission=" << live_mission.has_value()
+                  << " end=" << (live_mission && live_mission->terminal)
+                  << " failure=" << (live_mission && live_mission->failure)
+                  << " success=" << (live_mission && live_mission->success)
+                  << '\n';
+      }
       return 5;
     }
     const auto frame = gameplay.legacyPresentationFrame();
@@ -151,6 +230,10 @@ int run(const std::filesystem::path &cue, std::uint32_t mission_index) {
       ++preview_samples;
     }
     if (!renderer.thrown_projectile) {
+      // The callback fixture covers the linked projectile lifetime. The
+      // resulting gas/explosion and mission consequences have separate gates.
+      if (campaign_transform_fixture && projectile_seen)
+        break;
       continue;
     }
     const auto &position = renderer.thrown_projectile->transform.translation;
@@ -165,47 +248,85 @@ int run(const std::filesystem::path &cue, std::uint32_t mission_index) {
       projectile_moved_vertically = projectile_moved_vertically ||
                                     position.y != first_projectile_position.y;
     }
-    if (gameplay.projectiles().size() != 1U ||
+    if (gameplay.projectiles().size() !=
+            1U + static_cast<std::size_t>(
+                     renderer.enemy_thrown_projectile.has_value()) ||
         !gameplay.projectiles().front().retail_transform ||
         gameplay.projectiles().front().weapon != weapon) {
       return 8;
     }
     const auto &presented = gameplay.projectiles().front();
-    if (presented.x != static_cast<double>(position.x) ||
-        presented.z != static_cast<double>(position.z)) {
+    auto *vm =
+        sf::game::G4CampaignTransitionProbeAccess::occlusionProbeVm(gameplay);
+    constexpr auto profile =
+        sf::game::syphonFilterUsaV11GameplayBridgeProfile();
+    if (!vm || !matchesOriginalProjectile(
+                   *vm, profile.player_thrown_projectile_pointer, presented,
+                   *renderer.thrown_projectile))
       return 15;
-    }
-    projectile_followed_parabola =
-        projectile_followed_parabola ||
-        presented.y < -static_cast<double>(position.y) - 8.0;
+    if (renderer.enemy_thrown_projectile &&
+        !matchesOriginalProjectile(*vm, profile.enemy_thrown_projectile_pointer,
+                                   gameplay.projectiles().back(),
+                                   *renderer.enemy_thrown_projectile))
+      return 15;
+    ++projectile_samples;
   }
   if (gameplay.runtimeFaulted()) {
     return 9;
   }
-  auto quick_tap_projectile_seen = false;
-  for (std::uint32_t update = 0U; update < 120U; ++update) {
-    if (!step(gameplay, sf::game::GameplayInput{
-                            .aim = true,
-                            .fire_pressed = update == 0U,
-                            .fire_held = false,
-                        })) {
-      return 16;
-    }
-    const auto frame = gameplay.legacyPresentationFrame();
-    if (!frame || !frame->renderer) {
-      return 16;
-    }
-    quick_tap_projectile_seen =
-        quick_tap_projectile_seen ||
-        frame->renderer->state.thrown_projectile.has_value();
+  // Quick click uses the neutral PAD fixtures; the campaign fixture above
+  // isolates the original projectile callback from combat interruptions.
+  const auto quick_tap_fixture = !campaign_transform_fixture;
+  // Check the real checkpoint in every campaign case.
+  if (!gameplay.restartCheckpoint()) {
+    const auto *runtime =
+        sf::game::G4CampaignTransitionProbeAccess::checkpointProbeRuntime(
+            gameplay);
+    std::cerr << "grenade checkpoint restore failed: runtime="
+              << static_cast<int>(runtime->faultReason()) << " renderer-stage="
+              << static_cast<int>(runtime->rendererBridgeStage())
+              << " detail=" << runtime->faultDetail() << '\n';
+    return 19;
   }
-  if (!quick_tap_projectile_seen) {
-    return 17;
+  if (quick_tap_fixture) {
+    auto quick_tap_projectile_seen = false;
+    for (std::uint32_t update = 0U; update < 120U; ++update) {
+      if (!step(gameplay, sf::game::GameplayInput{
+                              .aim = true,
+                              .fire_pressed = update == 0U,
+                              .fire_held = false,
+                          })) {
+        return 16;
+      }
+      const auto frame = gameplay.legacyPresentationFrame();
+      if (!frame || !frame->renderer) {
+        return 16;
+      }
+      quick_tap_projectile_seen =
+          quick_tap_projectile_seen ||
+          frame->renderer->state.thrown_projectile.has_value();
+    }
+    if (!quick_tap_projectile_seen) {
+      return 17;
+    }
   }
-  return preview_samples >= 24U && idle_preview_samples >= 4U &&
-                 charge_preview_samples >= 12U && strength_grew &&
-                 projectile_seen && projectile_moved_horizontally &&
-                 projectile_moved_vertically && projectile_followed_parabola
+  std::cout << "preview=" << preview_samples << " idle=" << idle_preview_samples
+            << " charge=" << charge_preview_samples << " grew=" << strength_grew
+            << " projectile=" << projectile_seen
+            << " horizontal=" << projectile_moved_horizontally
+            << " vertical=" << projectile_moved_vertically
+            << " original-transform-samples=" << projectile_samples
+            << " quick-tap="
+            << (quick_tap_fixture ? "passed" : "separate-pad-fixture")
+            << " mismatches=0" << '\n';
+  const auto pad_charge_passed =
+      campaign_transform_fixture ||
+      (preview_samples >= 24U && idle_preview_samples >= 4U &&
+       charge_preview_samples >= 12U && strength_grew);
+  return pad_charge_passed && projectile_seen && projectile_samples != 0U &&
+                 (campaign_transform_fixture ||
+                  (projectile_moved_horizontally &&
+                   projectile_moved_vertically))
              ? 0
              : 10;
 }
@@ -214,12 +335,59 @@ int run(const std::filesystem::path &cue, std::uint32_t mission_index) {
 
 int main(int argc, char **argv) {
   try {
-    if (argc < 2 || argc > 3) {
+    if (argc < 2 || argc > 4 ||
+        (argc == 4 && std::string_view{argv[3]} != "callback")) {
       return 1;
     }
-    const auto mission_index =
-        argc == 3 ? static_cast<std::uint32_t>(std::stoul(argv[2])) : 0U;
-    return run(argv[1], mission_index);
+    // FUN_80047c0c deliberately restricts the all-weapons grant by mission.
+    struct Case {
+      std::uint32_t mission;
+      sf::game::WeaponId weapon;
+    };
+    std::vector<Case> cases;
+    const auto append_mission = [&](std::uint32_t mission) {
+      if (mission < 5U || mission >= 14U)
+        cases.push_back({mission, sf::game::WeaponId::fragmentation_grenade});
+      if ((mission >= 7U && mission <= 13U) || mission == 19U)
+        cases.push_back({mission, sf::game::WeaponId::gas_grenade});
+    };
+    if (argc == 2) {
+      cases = {{0U, sf::game::WeaponId::fragmentation_grenade},
+               {7U, sf::game::WeaponId::gas_grenade},
+               {13U, sf::game::WeaponId::gas_grenade}};
+    } else if (std::string_view{argv[2]} == "all") {
+      if (argc != 3)
+        return 1;
+      for (const auto &mission : sf::game::missionCatalog())
+        append_mission(mission.index);
+    } else {
+      const auto argument = std::string_view{argv[2]};
+      std::uint32_t mission{};
+      const auto parsed = std::from_chars(
+          argument.data(), argument.data() + argument.size(), mission);
+      if (parsed.ec != std::errc{} ||
+          parsed.ptr != argument.data() + argument.size() ||
+          mission >= sf::game::missionCatalog().size())
+        return 1;
+      append_mission(mission);
+    }
+    if (cases.empty()) {
+      std::cerr
+          << "Original all-weapons grant has no grenade in this mission\n";
+      return 1;
+    }
+    for (const auto &test : cases) {
+      const auto result =
+          run(argv[1], test.mission, test.weapon,
+              argc == 4 || (argc == 3 && std::string_view{argv[2]} == "all"));
+      std::cout << "mission=" << test.mission
+                << " grenade=" << static_cast<unsigned>(test.weapon)
+                << " result=" << result << std::endl;
+      if (result != 0)
+        return result;
+    }
+    std::cout << "Original grenade gate passed: cases=" << cases.size() << '\n';
+    return 0;
   } catch (const sf::core::Error &error) {
     std::cerr << error.what() << '\n';
     return 11;

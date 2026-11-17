@@ -5,7 +5,9 @@ This audit compares recovered presentation contracts. It does not certify an
 identical complete framebuffer or a complete mission playthrough.
 
 The [November 17 cover/stealth follow-up](PSX_OCCLUSION_FIXES.md) records the
-subsequent Girdeux, visual-acquisition and crouched-target corrections.
+subsequent Girdeux, visual-acquisition and crouched-target corrections. The
+[gameplay audit](PSX_GAMEPLAY_PARITY.md) adds the corrected skeleton-space cover
+samples and campaign-wide behavioural/weapon gates.
 
 ## Completed in this pass
 

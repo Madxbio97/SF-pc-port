@@ -39,7 +39,7 @@ if(SF_BUILD_ROM_PROBES)
 endif()
 
 function(sf_add_supported_rom_test name target labels timeout)
-    add_test(NAME ${name} COMMAND ${target} "${SF_SUPPORTED_ROM_CUE}")
+    add_test(NAME ${name} COMMAND ${target} "${SF_SUPPORTED_ROM_CUE}" ${ARGN})
     set_tests_properties(${name} PROPERTIES
         LABELS "${labels}"
         TIMEOUT ${timeout})
@@ -89,4 +89,6 @@ function(sf_register_supported_rom_tests)
         sf_retail_occlusion_probe "rom;visibility;stealth;flame" 300)
     sf_add_supported_rom_test(sf_retail_grenade_rom sf_retail_grenade_probe
         "rom;gameplay;rendering;grenade" 300)
+    sf_add_supported_rom_test(sf_retail_grenade_campaign_rom
+        sf_retail_grenade_probe "rom;gameplay;grenade;campaign" 900 all)
 endfunction()

@@ -1138,7 +1138,10 @@ void Spu::advanceVoice(std::size_t voice_index, std::uint16_t pitch,
       finishBlock(voice_index, noise_enabled);
     }
   }
-  voice.pitch_counter = static_cast<std::uint16_t>(phase);
+  // A high-pitch voice can stop at the block end before the loop consumes
+  // every whole-sample step. Only the fractional phase belongs in this field;
+  // retaining whole steps made our own completed-voice snapshots invalid.
+  voice.pitch_counter = static_cast<std::uint16_t>(phase % pitch_one);
 }
 
 void Spu::advanceNoiseFrames(std::uint64_t frames) noexcept {

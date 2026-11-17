@@ -3872,7 +3872,12 @@ void testLegacyGameplayVmBoundary() {
           vm.runtime().write16(generic_text_object + 0x16U, 0U),
       "Attached-text hook did not retain the predicted retail pool object");
 
-  const auto gameplay_text_snapshot = vm.captureSnapshot();
+  // This large fixture retains several complete machine snapshots. Construct
+  // these directly on the heap to stay below the default Windows stack limit.
+  const auto gameplay_text_snapshot_storage =
+      std::unique_ptr<sf::game::LegacyGameplayVmSnapshot>{
+          new sf::game::LegacyGameplayVmSnapshot{vm.captureSnapshot()}};
+  const auto &gameplay_text_snapshot = *gameplay_text_snapshot_storage;
   require(
       gameplay_text_snapshot.ui_messages.size() == 2U &&
           gameplay_text_snapshot.ui_messages[0].channel ==
@@ -4096,7 +4101,7 @@ void testLegacyGameplayVmBoundary() {
           "Unlinked radar contact or critical flash survived the next frame");
   require(vm.runtime().write32(bridge_profile.interface_renderer_pointer, 0U),
           "Could not release radar fixture");
-  const auto bridge = vm.readBridgeState(bridge_profile);
+  auto bridge = vm.readBridgeState(bridge_profile);
   require(
       bridge && bridge->camera.eye.x == 100 && bridge->camera.eye.y == -200 &&
           bridge->camera.eye.z == 300 && bridge->camera.target.x == 400 &&
@@ -4302,7 +4307,30 @@ void testLegacyGameplayVmBoundary() {
           bridge->park2_flamethrower_ribbons.empty(),
       "Legacy typed gameplay bridge mismatch");
 
-  const auto before_textured_glass = vm.captureSnapshot();
+  // Original FUN_80026808 keeps age 61 linked; the following callback
+  // unlinks/explodes it at age 62. Gas impacts jump directly to age 61.
+  require(vm.runtime().write8(thrown_projectile_descriptor + 1U, 61U) &&
+              vm.runtime().write8(enemy_projectile_descriptor + 1U, 61U),
+          "Could not prepare the final linked grenade frame");
+  bridge = vm.readBridgeState(bridge_profile);
+  require(bridge && bridge->thrown_projectile &&
+              bridge->enemy_thrown_projectile &&
+              bridge->thrown_projectile->age == 61U,
+          "Final grenade/gas contact frame disappeared before retail unlink");
+  require(vm.runtime().write8(thrown_projectile_descriptor + 1U, 62U) &&
+              vm.runtime().write8(enemy_projectile_descriptor + 1U, 62U),
+          "Could not prepare retired grenade descriptors");
+  bridge = vm.readBridgeState(bridge_profile);
+  require(bridge && !bridge->thrown_projectile &&
+              !bridge->enemy_thrown_projectile &&
+              vm.runtime().write8(thrown_projectile_descriptor + 1U, 7U) &&
+              vm.runtime().write8(enemy_projectile_descriptor + 1U, 9U),
+          "Retired grenade matrix leaked into native presentation");
+
+  const auto before_textured_glass_storage =
+      std::unique_ptr<sf::game::LegacyGameplayVmSnapshot>{
+          new sf::game::LegacyGameplayVmSnapshot{vm.captureSnapshot()}};
+  const auto &before_textured_glass = *before_textured_glass_storage;
   require(vm.runtime().write32(effect_controllers + 0x34U + 0x2cU, 3U) &&
               vm.runtime().write32(effect_controllers + 0x34U + 0x30U, 1U) &&
               vm.runtime().write32(guest_raw + 0x08U, 0x07000000U) &&
@@ -4881,7 +4909,10 @@ void testLegacyGameplayVmBoundary() {
           "Legacy bridge accepted an overflowing submitted LINE_F2 position");
 
   constexpr auto fog_packet = 0x801ee000U;
-  auto fog_snapshot = vm.captureSnapshot();
+  const auto fog_snapshot_storage =
+      std::unique_ptr<sf::game::LegacyGameplayVmSnapshot>{
+          new sf::game::LegacyGameplayVmSnapshot{vm.captureSnapshot()}};
+  auto &fog_snapshot = *fog_snapshot_storage;
   fog_snapshot.atmosphere_packet_end = fog_packet + 36U;
   require(vm.restoreSnapshot(fog_snapshot) &&
               vm.runtime().write16(screen_filter_descriptor + 0x0cU, 1U) &&

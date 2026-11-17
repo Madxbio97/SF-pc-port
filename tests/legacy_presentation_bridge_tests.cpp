@@ -656,6 +656,10 @@ void testInvalidAndFaultFrames() {
           "Presentation bridge accepted a non-grenade projectile");
   render.thrown_projectile->weapon = 19U;
   render.thrown_projectile->age = 61U;
+  require(static_cast<bool>(
+              sf::game::buildLegacyPresentationFrame(1U, 0U, render, ui)),
+          "Presentation bridge rejected the final linked grenade frame");
+  render.thrown_projectile->age = 62U;
   require(!sf::game::buildLegacyPresentationFrame(1U, 0U, render, ui),
           "Presentation bridge accepted an expired thrown projectile");
   render.thrown_projectile->age = 7U;

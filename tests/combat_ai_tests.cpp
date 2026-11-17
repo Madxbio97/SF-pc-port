@@ -3,6 +3,7 @@
 #include "sf/game/agent_park_timer.hpp"
 #include "sf/game/combat.hpp"
 #include "sf/game/effects.hpp"
+#include "sf/game/legacy_world_visibility.hpp"
 #include "sf/game/mission_scripts.hpp"
 #include "sf/game/npc_ai.hpp"
 
@@ -11,6 +12,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -21,6 +23,92 @@ void require(bool condition, std::string_view message) {
   if (!condition) {
     throw std::runtime_error{std::string{message}};
   }
+}
+
+void testRetailCoverUsesSkeletonSpace() {
+  using sf::game::LegacyNativePoint;
+  using sf::game::legacyPhysicalActorVisible;
+  using sf::game::LegacyVisibilityPoint;
+  struct Wall {
+    bool across_x;
+    double plane, low, high, top, bottom;
+  };
+  const auto clear = [](std::span<const Wall> walls) {
+    return [walls](const LegacyVisibilityPoint &from,
+                   const LegacyVisibilityPoint &to) {
+      for (const auto &wall : walls) {
+        const auto start = wall.across_x ? from.x : from.z;
+        const auto end = wall.across_x ? to.x : to.z;
+        if (std::abs(end - start) < 0.000001)
+          continue;
+        const auto t = (wall.plane - start) / (end - start);
+        if (t < 0.0 || t > 1.0)
+          continue;
+        const auto lateral = wall.across_x ? from.z + (to.z - from.z) * t
+                                           : from.x + (to.x - from.x) * t;
+        const auto y = from.y + (to.y - from.y) * t;
+        if (lateral >= wall.low && lateral <= wall.high && y >= wall.top &&
+            y <= wall.bottom)
+          return false;
+      }
+      return true;
+    };
+  };
+  // Original MUSEUM2 capture: floor=-644, standing root=-751, crouched
+  // root=-702, head joint=-813/-763. Shift the floor to zero here.
+  const LegacyNativePoint standing_source{0, -107, 0};
+  const LegacyNativePoint standing_target{1000, -107, 0};
+  const LegacyNativePoint crouched_source{0, -58, 0};
+  const LegacyNativePoint crouched_target{1000, -58, 0};
+  const std::array full_wall{Wall{true, 900, -500, 500, -230, 0}};
+  require(!legacyPhysicalActorVisible(standing_source, standing_target, false,
+                                      clear(full_wall)) &&
+              !legacyPhysicalActorVisible(standing_source, crouched_target,
+                                          true, clear(full_wall)),
+          "Skeleton roots were treated as floor positions above a full wall");
+  const std::array low_cover{Wall{true, 900, -500, 500, -140, 0}};
+  require(legacyPhysicalActorVisible(standing_source, standing_target, false,
+                                     clear(low_cover)) &&
+              !legacyPhysicalActorVisible(standing_source, crouched_target,
+                                          true, clear(low_cover)),
+          "Low cover did not distinguish the original live player stances");
+  const std::array muzzle_cover{Wall{true, 100, -500, 500, -80, 0}};
+  require(legacyPhysicalActorVisible(standing_source, standing_target, false,
+                                     clear(muzzle_cover)) &&
+              !legacyPhysicalActorVisible(crouched_source, standing_target,
+                                          false, clear(muzzle_cover)),
+          "A crouched shooter fired from an invented point above its body");
+  require(legacyPhysicalActorVisible(standing_source,
+                                     LegacyNativePoint{800, -107, 0}, false,
+                                     clear(full_wall)) &&
+              !legacyPhysicalActorVisible(standing_source, standing_target,
+                                          false, clear(full_wall)),
+          "Physical exposure retained a stale cover result");
+  const std::array cubicle{
+      Wall{true, 900, -20, 20, -230, 0},
+      Wall{false, -20, 950, 1050, -230, 0},
+      Wall{false, 20, 950, 1050, -230, 0},
+  };
+  require(!legacyPhysicalActorVisible(standing_source, standing_target, false,
+                                      clear(cubicle)),
+          "Shoulder samples escaped through a thin side wall");
+  const auto overhang = [&](const LegacyVisibilityPoint &from,
+                            const LegacyVisibilityPoint &to) {
+    if (!clear(low_cover)(from, to))
+      return false;
+    const auto dy = to.y - from.y;
+    if (std::abs(dy) < 0.000001)
+      return true;
+    const auto t = (-140.0 - from.y) / dy;
+    const auto x = from.x + (to.x - from.x) * t;
+    return t < 0.0 || t > 1.0 || x < 950.0 || x > 1050.0;
+  };
+  require(!legacyPhysicalActorVisible(LegacyNativePoint{0, -200, 0},
+                                      standing_target, false, overhang),
+          "A head sample escaped vertically through an overhang");
+  require(legacyPhysicalActorVisible(standing_source, standing_source, false,
+                                     clear(std::span<const Wall>{})),
+          "Coincident actor roots produced an invalid visibility query");
 }
 
 void testAgentPark2BombDetonationPolicy() {
@@ -947,6 +1035,7 @@ void testOpeningCameraAndMapFadeRuntime() {
 
 int main() {
   try {
+    testRetailCoverUsesSkeletonSpace();
     testOriginalWeaponRecords();
     testAgentPark2BombDetonationPolicy();
     testArmorFirstDamage();

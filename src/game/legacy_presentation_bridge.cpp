@@ -367,7 +367,7 @@ bool validThrownProjectile(
     const std::optional<LegacyThrownProjectileBridgeState> &projectile) {
   return !projectile ||
          ((projectile->weapon == 19U || projectile->weapon == 20U) &&
-          projectile->age <= 60U &&
+          projectile->age <= legacy_thrown_projectile_last_age &&
           projectile->transform.translation.y !=
               std::numeric_limits<std::int32_t>::min() &&
           std::ranges::any_of(

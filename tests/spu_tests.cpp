@@ -492,6 +492,36 @@ void testCdInputMixer() {
           "CD controller stereo matrix was not applied at SPU consumption");
 }
 
+void testStoppedHighPitchVoiceSnapshot() {
+  for (const auto pitch : {std::uint16_t{0x3000U}, std::uint16_t{0x3fffU}}) {
+    auto spu = std::make_unique<sf::psx::Spu>();
+    std::array<std::byte, 16U> block{};
+    block[0] = std::byte{0x0cU};
+    block[1] = std::byte{0x01U}; // End, without repeat.
+    std::fill(block.begin() + 2, block.end(), std::byte{0x77U});
+    writeRamBytes(*spu, 0U, block);
+    keyOnVoiceZero(*spu, pitch);
+    spu->mixFrames(10U);
+    const auto &voice = spu->state().voices[0];
+    require(voice.active == 0U && (spu->endx() & 1U) != 0U &&
+                voice.pitch_counter < 0x1000U,
+            "Completed high-pitch voice retained whole-sample phase");
+    auto snapshot = std::make_unique<sf::psx::SpuState>();
+    *snapshot = spu->state();
+    require(spu->validateState(*snapshot) && spu->restoreState(*snapshot),
+            "SPU rejected its own snapshot after high-pitch sample end");
+    spu->mixFrames(4U);
+    require(spu->state().voices[0].active == 0U && (spu->endx() & 1U) != 0U,
+            "Snapshot restore restarted a completed ADPCM voice");
+    keyOnVoiceZero(*spu, pitch);
+    spu->mixFrames(1U);
+    require(spu->state().voices[0].active == 1U &&
+                spu->state().voices[0].pitch_counter < 0x1000U &&
+                spu->validateState(spu->state()),
+            "Completed-voice snapshot changed a later key-on");
+  }
+}
+
 void testSnapshotRestoresNextPcmExactly() {
   auto spu = std::make_unique<sf::psx::Spu>();
   std::array<std::byte, 16U> block{};
@@ -697,6 +727,7 @@ int main() {
     testAdpcmLoopAndEndx();
     testAdpcmAddressMaskAndLateLoopRegisterWrite();
     testCdInputMixer();
+    testStoppedHighPitchVoiceSnapshot();
     testSnapshotRestoresNextPcmExactly();
     testInvalidStateRejection();
     testVabSoundUsesRetailSampleAndSpuPath();

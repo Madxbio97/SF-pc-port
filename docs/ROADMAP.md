@@ -7,7 +7,9 @@ Completed recovery milestones are retained in [STAGES.md](STAGES.md) and the
 
 The current [audit and remaining comparison checklist](PSX_PARITY_AUDIT.md)
 records verified original-instruction contracts separately from manual scene
-and gameplay checks.
+and gameplay checks. The [gameplay matrix](PSX_GAMEPLAY_PARITY.md) records
+all-mission behavioural gates, corrected cover coordinates and unverified
+playthrough scenarios.
 
 ## Performance and presentation
 

@@ -4972,7 +4972,9 @@ LegacyGameplayVm::readBridgeState(const LegacyGameplayBridgeProfile &profile) {
         constexpr std::uint32_t object_matrix_offset = 0x1cU;
         if (readable_ram_pointer(render_object, object_matrix_offset + 0x20U) &&
             runtime_.read32(render_object, renderer_link) &&
-            renderer_link != 0U && age <= 60U &&
+            // FUN_80026808 increments before testing the previous age < 61.
+            // Age 61 is still linked (also the gas-impact retirement edge).
+            renderer_link != 0U && age <= legacy_thrown_projectile_last_age &&
             (weapon == 19U || weapon == 20U)) {
           LegacyThrownProjectileBridgeState projectile;
           projectile.age = age;
@@ -8356,7 +8358,8 @@ bool LegacyGameplayVm::updateAgentGrenadeAwareness(
   }
   const auto &projectile = *state.thrown_projectile;
   if ((projectile.weapon != 19U && projectile.weapon != 20U) ||
-      projectile.age > 60U || profile.alert_entry == 0U) {
+      projectile.age > legacy_thrown_projectile_last_age ||
+      profile.alert_entry == 0U) {
     return true;
   }
 
