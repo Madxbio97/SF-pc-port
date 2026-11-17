@@ -395,9 +395,9 @@ struct LegacyPark2FlamethrowerBridgeProfile {
 
 // PARK2's flamethrower applies its contact damage through the common event
 // dispatcher. Retail checks distance only, so a nearby column can separate
-// HANS from Gabe while the event still lands. A transient host LOS sample is
-// allowed to suppress only these two exact overlay call sites; every unknown
-// revision and every unrelated event remains guest-owned.
+// HANS from Gabe while the event still lands. Resolve live collision roots
+// at these exact event sites; visibility must not depend on camera culling.
+// Unknown revisions and unrelated events remain guest-owned.
 struct LegacyPark2FlameLosProfile {
   std::uint32_t event_entry{0x80015364U};
   std::array<std::uint32_t, 2U> return_addresses{{
@@ -878,8 +878,10 @@ struct LegacyHostDamageEvent {
   std::int16_t damage_type{};
 };
 
-using LegacyBallisticVisibility =
-    std::function<bool(const LegacyNativePoint &, const LegacyNativePoint &)>;
+// A camera-independent physical visibility query on live actor roots.
+// Shared by bullet/contact damage, positive visual acquisition and danger.
+using LegacyBallisticVisibility = std::function<bool(
+    const LegacyNativePoint &, const LegacyNativePoint &, bool)>;
 
 [[nodiscard]] constexpr bool
 legacyWeaponUsesBallisticLineOfSight(std::uint8_t weapon) noexcept {

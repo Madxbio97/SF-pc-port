@@ -43,6 +43,32 @@ guestMotionPosition(const LegacyHostCallContext &context,
                            std::bit_cast<std::int32_t>(z)};
 }
 
+std::optional<std::uint32_t>
+guestActorInstance(const LegacyHostCallContext &context, std::uint32_t slot,
+                   const LegacyNativeMissionBridgeProfile &profile) noexcept {
+  std::uint32_t records{}, count{}, instance{};
+  std::uint16_t identity{};
+  if (!context.read32(profile.object_records_pointer, records) ||
+      !context.read32(profile.object_count, count) ||
+      count > profile.maximum_objects || slot >= count ||
+      !validGuestRamRange(records, count * 0x4cU) ||
+      !context.read32(records + slot * 0x4cU + 0x34U, instance) ||
+      !validGuestRamRange(instance, 4U) ||
+      !context.read16(instance + 2U, identity) || identity != slot) {
+    return std::nullopt;
+  }
+  return instance;
+}
+
+bool guestActorCrouched(const LegacyHostCallContext &context,
+                        std::uint32_t actor) noexcept {
+  std::uint32_t control{}, flags{};
+  return validGuestRamRange(actor, 0x14U) &&
+         context.read32(actor + 0x10U, control) &&
+         validGuestRamRange(control, 4U) && context.read32(control, flags) &&
+         (flags & 0x00100000U) != 0U;
+}
+
 bool guestFrameReached(std::uint32_t frame, std::uint32_t target) noexcept {
   return std::bit_cast<std::int32_t>(frame - target) >= 0;
 }
@@ -1349,36 +1375,74 @@ void LegacyGameplayVm::bindSyphonFilterUsaV11PlatformCalls() {
 
 void LegacyGameplayVm::bindSyphonFilterUsaV11Park2FlameLosHook(
     const LegacyPark2FlameLosProfile &profile) {
-  bindHostCall(
-      profile.event_entry, [this, profile](LegacyHostCallContext &context) {
-        if (!park2_flame_line_of_sight_clear_.has_value() ||
-            *park2_flame_line_of_sight_clear_) {
-          context.continueGuestInstruction();
-          return;
-        }
+  bindHostCall(profile.event_entry, [this,
+                                     profile](LegacyHostCallContext &context) {
+    if (!hostile_ballistic_visibility_ &&
+        park2_flame_line_of_sight_clear_ != false) {
+      context.continueGuestInstruction();
+      return;
+    }
 
-        const auto return_address = context.returnAddress();
-        std::uint32_t call_instruction{};
-        std::uint32_t delay_instruction{};
-        std::uint32_t current_player{};
-        if (return_address < 8U ||
-            !context.read32(return_address - 8U, call_instruction) ||
-            !context.read32(return_address - 4U, delay_instruction) ||
-            !context.read32(profile.current_player_slot, current_player) ||
-            !legacyPark2FlameEventSuppressed(
-                park2_flame_line_of_sight_clear_, return_address,
-                call_instruction, delay_instruction, context.argument(0U),
-                context.argument(1U), context.argument(2U),
-                context.argument(3U), current_player, profile)) {
-          context.continueGuestInstruction();
-          return;
-        }
+    const auto return_address = context.returnAddress();
+    std::uint32_t call_instruction{};
+    std::uint32_t delay_instruction{};
+    std::uint32_t current_player{};
+    if (return_address < 8U ||
+        !context.read32(return_address - 8U, call_instruction) ||
+        !context.read32(return_address - 4U, delay_instruction) ||
+        !context.read32(profile.current_player_slot, current_player) ||
+        !legacyPark2FlameEventSuppressed(
+            false, return_address, call_instruction, delay_instruction,
+            context.argument(0U), context.argument(1U), context.argument(2U),
+            context.argument(3U), current_player, profile)) {
+      context.continueGuestInstruction();
+      return;
+    }
 
-        // HLE-return to the exact PARK2 continuation, skipping only the blocked
-        // proximity event. The retail flame animation and state machine
-        // continue.
-        context.setReturnValue(0U);
-      });
+    // Resolve live collision roots here, independently of whether HANS
+    // was visible to the previous camera or had a published hand pose.
+    auto clear = park2_flame_line_of_sight_clear_;
+    if (hostile_ballistic_visibility_) {
+      constexpr auto native = syphonFilterUsaV11NativeMissionBridgeProfile();
+      constexpr std::uint32_t boss_slot = 9U;
+      constexpr std::uint16_t boss_class = 0x3cU;
+      const auto boss = guestActorInstance(context, boss_slot, native);
+      std::uint32_t player{}, records{}, definitions{}, definition{},
+          definition_count{};
+      std::uint16_t class_id{}, player_identity{};
+      if (!boss || !context.read32(native.player_pointer, player) ||
+          !validGuestRamRange(player, 4U) ||
+          !context.read16(player + 2U, player_identity) ||
+          player_identity != current_player ||
+          !context.read32(native.object_records_pointer, records) ||
+          !context.read32(native.object_definitions_pointer, definitions) ||
+          !context.read32(native.object_definition_count, definition_count) ||
+          !context.read32(records + boss_slot * 0x4cU, definition) ||
+          definition >= definition_count || definition_count > 4096U ||
+          !validGuestRamRange(definitions, definition_count * 0x14U) ||
+          !context.read16(definitions + definition * 0x14U, class_id) ||
+          class_id != boss_class) {
+        context.continueGuestInstruction();
+        return;
+      }
+      const auto from = guestMotionPosition(context, *boss);
+      const auto to = guestMotionPosition(context, player);
+      if (!from || !to) {
+        context.continueGuestInstruction();
+        return;
+      }
+      clear = hostile_ballistic_visibility_(
+          *from, *to, guestActorCrouched(context, player));
+    }
+    if (clear != false) {
+      context.continueGuestInstruction();
+      return;
+    }
+
+    // Skip only the blocked contact event. Flame animation and the retail
+    // state machine continue, including legitimate firing into cover.
+    context.setReturnValue(0U);
+  });
 }
 
 void LegacyGameplayVm::bindSyphonFilterUsaV11BootstrapPlatformCalls() {
@@ -1935,7 +1999,9 @@ void LegacyGameplayVm::bindAgentDifficultyDamageHook(
             damage_type == std::bit_cast<std::int16_t>(direct_damage_type)))) {
         const auto from = guestMotionPosition(context, source->instance);
         const auto to = guestMotionPosition(context, player);
-        if (from && to && !hostile_ballistic_visibility_(*from, *to)) {
+        if (from && to &&
+            !hostile_ballistic_visibility_(
+                *from, *to, guestActorCrouched(context, player))) {
           context.setReturnValue(0U);
           return;
         }
@@ -2072,6 +2138,46 @@ void LegacyGameplayVm::bindAgentDifficultyDamageHook(
                         guestArgument(static_cast<std::int16_t>(saturated)));
   });
 
+  // FUN_8005a2b0 confirms visual acquisition after retail target selection,
+  // range and FOV. Here v0 is target.flags & 2 and s2 is the observer.
+  // Confirm the positive result before retail refreshes last-known position.
+  constexpr std::uint32_t vision_boundary = 0x8005a638U;
+  bindHostCall(vision_boundary, [this,
+                                 profile](LegacyHostCallContext &context) {
+    context.continueGuestInstruction();
+    if (!hostile_ballistic_visibility_ || context.registerValue(2U) != 2U)
+      return;
+    const auto actor = context.registerValue(18U);
+    std::uint32_t instruction{}, mask_instruction{}, player{}, target{},
+        flags{};
+    std::uint16_t actor_slot{}, player_slot{}, target_slot{};
+    if (!context.read32(context.pc(), instruction) ||
+        instruction != 0x10400005U ||
+        !context.read32(context.pc() - 4U, mask_instruction) ||
+        mask_instruction != 0x30420002U || !validGuestRamRange(actor, 0x18U) ||
+        !context.read16(actor + 2U, actor_slot) ||
+        !context.read32(profile.player_pointer, player) || actor == player ||
+        !validGuestRamRange(player, 4U) ||
+        !context.read16(player + 2U, player_slot) ||
+        guestActorInstance(context, actor_slot, profile) != actor ||
+        !context.read32(actor + 0x14U, target) ||
+        !validGuestRamRange(target, 8U) ||
+        !context.read16(target, target_slot) || target_slot != player_slot ||
+        !context.read32(target + 4U, flags) || (flags & 2U) == 0U) {
+      return;
+    }
+    const auto from = guestMotionPosition(context, actor);
+    const auto to = guestMotionPosition(context, player);
+    if (from && to &&
+        !hostile_ballistic_visibility_(*from, *to,
+                                       guestActorCrouched(context, player)) &&
+        context.write32(target + 4U, flags & ~2U)) {
+      // Take the existing occluded branch. Hearing/damage/script alerts are
+      // separate retail paths and are not intercepted.
+      context.setRegister(2U, 0U);
+    }
+  });
+
   // FUN_8003d100 folds each of the six tracked actors into the HUD's safe-Q12
   // product. s3 is its list index and s0 is the resolved threat, after the
   // original AI-state floor. Remove only a proven wall-blocked bullet source
@@ -2115,7 +2221,9 @@ void LegacyGameplayVm::bindAgentDifficultyDamageHook(
     }
     const auto from = guestMotionPosition(context, instance);
     const auto to = guestMotionPosition(context, player);
-    if (from && to && !hostile_ballistic_visibility_(*from, *to)) {
+    if (from && to &&
+        !hostile_ballistic_visibility_(*from, *to,
+                                       guestActorCrouched(context, player))) {
       context.setRegister(16U, 0U);
     }
   });

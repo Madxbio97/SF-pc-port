@@ -2632,96 +2632,9 @@ GameplaySession::traceWorldSegment(double from_x, double from_y, double from_z,
   return nearest;
 }
 
-std::optional<bool>
-GameplaySession::park2GirdeuxFlameLineOfSight() const noexcept {
-  if (missionIndex() != 4U || !playerAlive()) {
-    return std::nullopt;
-  }
-
-  for (const auto object_index : active_objects_) {
-    if (object_index >= objects_.size() ||
-        legacyDedicatedActorWeapon(object_index) != WeaponId::flamethrower) {
-      continue;
-    }
-    const auto &object = objects_[object_index];
-    if (object.model >= object_models_.size()) {
-      continue;
-    }
-    const auto *model =
-        std::get_if<assets::HmdModel>(&object_models_[object.model].geometry);
-    if (model == nullptr) {
-      continue;
-    }
-    const auto hand =
-        std::ranges::find_if(model->parts(), [](const assets::HmdPart &part) {
-          return part.name.starts_with("RightHan");
-        });
-    if (hand == model->parts().end()) {
-      continue;
-    }
-    const auto hand_index =
-        static_cast<std::size_t>(std::distance(model->parts().begin(), hand));
-    if (hand_index >= object.legacy_hmd_bone_count) {
-      continue;
-    }
-
-    const auto *flamethrower = weaponModel(WeaponId::flamethrower);
-    if (flamethrower == nullptr || !flamethrower->bounds) {
-      continue;
-    }
-    const auto &hand_transform = object.legacy_hmd_bones[hand_index];
-    const auto &bounds = *flamethrower->bounds;
-    const auto local_x =
-        (static_cast<double>(bounds.minimum_x) + bounds.maximum_x) * 0.5;
-    const auto local_y = static_cast<double>(bounds.maximum_y);
-    const auto local_z =
-        (static_cast<double>(bounds.minimum_z) + bounds.maximum_z) * 0.5;
-    const auto component = [&](std::size_t row) {
-      return (static_cast<double>(hand_transform.rotation[row * 3U]) * local_x +
-              static_cast<double>(hand_transform.rotation[row * 3U + 1U]) *
-                  local_y +
-              static_cast<double>(hand_transform.rotation[row * 3U + 2U]) *
-                  local_z) /
-             4096.0;
-    };
-    const auto origin =
-        Point3{static_cast<double>(hand_transform.x) + component(0U),
-               -static_cast<double>(hand_transform.y) + component(1U),
-               static_cast<double>(hand_transform.z) + component(2U)};
-    const auto &target = player();
-    const auto origin_x = static_cast<double>(origin.x);
-    const auto origin_y = static_cast<double>(origin.y);
-    const auto origin_z = static_cast<double>(origin.z);
-    const auto delta_x = target.x - origin_x;
-    const auto delta_z = target.z - origin_z;
-    const auto horizontal_length = std::hypot(delta_x, delta_z);
-    constexpr auto shoulder_offset = 65.0;
-    const auto side_x = horizontal_length > 0.000001
-                            ? -delta_z / horizontal_length * shoulder_offset
-                            : shoulder_offset;
-    const auto side_z = horizontal_length > 0.000001
-                            ? delta_x / horizontal_length * shoulder_offset
-                            : 0.0;
-    const std::array targets{
-        Point3{target.x, target.y - actor_head_height, target.z},
-        Point3{target.x, target.y - 225.0, target.z},
-        Point3{target.x, target.y - actor_target_height, target.z},
-        Point3{target.x + side_x, target.y - 215.0, target.z + side_z},
-        Point3{target.x - side_x, target.y - 215.0, target.z - side_z},
-    };
-    std::array<bool, legacy_park2_flame_visibility_sample_count> visible{};
-    std::ranges::transform(targets, visible.begin(), [&](const Point3 &sample) {
-      return traceWorldSegment(origin_x, origin_y, origin_z, sample.x, sample.y,
-                               sample.z, true) >= 1.0;
-    });
-    return legacyPark2FlameDamageVisible(visible);
-  }
-  return std::nullopt;
-}
-
 bool GameplaySession::hostileBallisticLineOfSight(
-    const LegacyNativePoint &shooter,
-    const LegacyNativePoint &target) const noexcept {
+    const LegacyNativePoint &shooter, const LegacyNativePoint &target,
+    bool target_crouched) const noexcept {
   const Point3 origin{static_cast<double>(shooter.x), shooter.y - 225.0,
                       static_cast<double>(shooter.z)};
   const auto dx = static_cast<double>(target.x) - shooter.x;
@@ -2732,9 +2645,9 @@ bool GameplaySession::hostileBallisticLineOfSight(
   const auto side_z = length > 0.0 ? dx * player_radius / length : 0.0;
   const auto x = static_cast<double>(target.x);
   const auto z = static_cast<double>(target.z);
-  const auto crouched =
-      player_controller_.stance() == PlayerStanceState::kneeling;
-  const auto height = crouched ? actor_target_height : actor_head_height;
+  // Retail owns chase-mode crouching. The native controller can have been
+  // reset since the last guest update, so use the live PSX stance bit.
+  const auto height = target_crouched ? actor_target_height : actor_head_height;
   const std::array points{
       Point3{x, target.y - height, z}, Point3{x, target.y - height * 0.75, z},
       Point3{x, target.y - height * 0.5, z},
@@ -6305,9 +6218,11 @@ void GameplaySession::updateCinematic() {
   }
 
   if (legacy_first_mission_->ready() && !legacy_first_mission_->finished()) {
-    legacy_first_mission_->setPark2FlameLineOfSight(
-        park2GirdeuxFlameLineOfSight());
-    legacy_first_mission_->advanceHostUpdate();
+    legacy_first_mission_->advanceHostUpdate(
+        [this](const LegacyNativePoint &observer,
+               const LegacyNativePoint &target, bool crouched) {
+          return hostileBallisticLineOfSight(observer, target, crouched);
+        });
     syncLegacyGameplayBridge();
   }
   if (legacy_first_mission_->ready() &&
@@ -6445,12 +6360,10 @@ void GameplaySession::update(const GameplayInput &input) {
   }
 
   if (legacy_first_mission_->ready() && !legacy_first_mission_->finished()) {
-    legacy_first_mission_->setPark2FlameLineOfSight(
-        park2GirdeuxFlameLineOfSight());
     legacy_first_mission_->advanceHostUpdate(
         [this](const LegacyNativePoint &shooter,
-               const LegacyNativePoint &target) {
-          return hostileBallisticLineOfSight(shooter, target);
+               const LegacyNativePoint &target, bool crouched) {
+          return hostileBallisticLineOfSight(shooter, target, crouched);
         });
     syncLegacyGameplayBridge();
     refreshLegacyTargetFollowCameraState();

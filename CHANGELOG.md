@@ -5,6 +5,13 @@ pre-release tags rather than a stable semantic-versioning promise.
 
 ## Unreleased
 
+- Confirm current world cover before positive enemy visual acquisition so
+  retained target flags cannot reveal Gabe through a wall.
+- Resolve Girdeux flame contact from live actor roots at both original event
+  sites, independent of camera culling and previously rendered hand poses.
+- Use the live PSX crouch flag for cover sampling instead of stale native stance.
+  See [the cover/stealth audit](docs/PSX_OCCLUSION_FIXES.md).
+
 - Matched the original sprite rectangle/FT4 selection, pivot, UV flips and
   integer rotation input; preserved priority-zero camera-list UI.
 - Preserved inclusive retail sprite texture bounds and the final texture

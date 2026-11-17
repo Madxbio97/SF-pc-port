@@ -858,20 +858,6 @@ void testLegacyDynamicPresentationPolicy() {
       sf::assets::MissionTransform{{}, 120, -340, 560});
   require(hmd_bone_world == sf::game::LegacyNativePoint{120, 340, 560},
           "HMD bone translation did not restore native renderer Y");
-  constexpr std::array fully_occluded{false, false, false, false, false};
-  constexpr std::array one_sided_peek{false, false, false, true, false};
-  constexpr std::array exposed_upper_body{true, true, false, false, false};
-  constexpr std::array exposed_side{false, false, false, true, true};
-  constexpr std::array fully_visible{true, true, true, true, true};
-  constexpr std::array incomplete_sample{true, true, true, true};
-  require(!sf::game::legacyPark2FlameDamageVisible(fully_occluded) &&
-              sf::game::legacyPark2FlameDamageVisible(one_sided_peek) &&
-              sf::game::legacyPark2FlameDamageVisible(exposed_upper_body) &&
-              sf::game::legacyPark2FlameDamageVisible(exposed_side) &&
-              sf::game::legacyPark2FlameDamageVisible(fully_visible) &&
-              !sf::game::legacyPark2FlameDamageVisible(incomplete_sample),
-          "PARK2 flame LOS did not admit a one-sided peek or reject full "
-          "cover");
   require(
       dedicated_actor(false, 4U, 9U, 8U, sf::game::legacy_park2_hans_class,
                       sf::game::legacy_park2_hans_handler,

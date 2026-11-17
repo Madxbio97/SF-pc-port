@@ -601,16 +601,6 @@ legacyHmdBoneWorldTranslation(const assets::MissionTransform &bone) noexcept {
   return LegacyNativePoint{bone.x, -bone.y, bone.z};
 }
 
-inline constexpr std::size_t legacy_park2_flame_visibility_sample_count = 5U;
-inline constexpr std::size_t legacy_park2_flame_minimum_visible_samples = 1U;
-
-[[nodiscard]] constexpr bool
-legacyPark2FlameDamageVisible(std::span<const bool> visible_samples) noexcept {
-  return visible_samples.size() == legacy_park2_flame_visibility_sample_count &&
-         static_cast<std::size_t>(std::ranges::count(visible_samples, true)) >=
-             legacy_park2_flame_minimum_visible_samples;
-}
-
 enum class ObjectVisualEffect : std::uint8_t {
   none,
   police_lightbar,
@@ -1364,11 +1354,10 @@ private:
   traceWorldSegment(double from_x, double from_y, double from_z, double to_x,
                     double to_y, double to_z,
                     bool include_solid_objects = false) const noexcept;
-  [[nodiscard]] std::optional<bool>
-  park2GirdeuxFlameLineOfSight() const noexcept;
   [[nodiscard]] bool
   hostileBallisticLineOfSight(const LegacyNativePoint &shooter,
-                              const LegacyNativePoint &target) const noexcept;
+                              const LegacyNativePoint &target,
+                              bool target_crouched = false) const noexcept;
   void spawnCombatEffect(GameplayEffectType type, double x, double y, double z,
                          double direction_x, double direction_y,
                          double direction_z, double scale = 1.0) noexcept;

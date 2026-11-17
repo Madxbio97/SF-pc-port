@@ -4,6 +4,9 @@ Reference: the supported USA v1.1 image, executed through the integer R3000/GTE.
 This audit compares recovered presentation contracts. It does not certify an
 identical complete framebuffer or a complete mission playthrough.
 
+The [November 17 cover/stealth follow-up](PSX_OCCLUSION_FIXES.md) records the
+subsequent Girdeux, visual-acquisition and crouched-target corrections.
+
 ## Completed in this pass
 
 - ~~Recover all three sprite sorting paths, including the regular sorter's

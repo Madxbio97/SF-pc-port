@@ -7476,7 +7476,7 @@ void testLegacyGameplayVmAgentDamageHook() {
               vm.runtime().write32(shooter_motion, 100U) &&
               vm.runtime().write32(player_motion + 4U, 400U),
           "Could not prepare live ballistic positions");
-  vm.setHostileBallisticLineOfSight([](const auto &from, const auto &to) {
+  vm.setHostileBallisticLineOfSight([](const auto &from, const auto &to, bool) {
     return from.x != 100 || to.y != -400;
   });
   const auto blocked_hit = damage(player_slot, 5, shooter_slot, shooter_slot,
@@ -8631,6 +8631,177 @@ void testLegacyGameplayVmAgentDamageHook() {
           "Agent damage hook did not return to pass-through mode");
 }
 
+void testLegacyGameplayVmWorldVisibilityHooks() {
+  constexpr std::array initial_words{0x03e00008U, 0U};
+  const auto initial_code = instructionBytes(initial_words);
+  std::vector<std::byte> executable_bytes(2048U + initial_code.size());
+  constexpr std::string_view signature{"PS-X EXE"};
+  std::ranges::transform(signature, executable_bytes.begin(), [](char value) {
+    return static_cast<std::byte>(value);
+  });
+  writeLe32(executable_bytes, 0x10U, code_address);
+  writeLe32(executable_bytes, 0x18U, code_address);
+  writeLe32(executable_bytes, 0x1cU,
+            static_cast<std::uint32_t>(initial_code.size()));
+  std::ranges::copy(initial_code, executable_bytes.begin() + 2048);
+  sf::game::LegacyGameplayVm vm{sf::psx::Executable::parse(executable_bytes)};
+  auto &cpu = vm.runtime();
+  constexpr auto native =
+      sf::game::syphonFilterUsaV11NativeMissionBridgeProfile();
+  constexpr auto flame = sf::game::syphonFilterUsaV11Park2FlameLosProfile();
+  constexpr std::uint32_t records = 0x80028000U, definitions = 0x80029000U;
+  constexpr std::uint32_t actor = 0x8002a000U, player = 0x8002b000U;
+  constexpr std::uint32_t target = 0x8002c000U;
+  constexpr std::uint32_t actor_motion = 0x8002d000U,
+                          player_motion = 0x8002e000U;
+  constexpr std::uint32_t actor_slot = 9U, player_slot = 0x29aU;
+  const auto word = [&](std::uint32_t address, std::uint32_t value) {
+    require(cpu.write32(address, value), "Could not write LOS fixture word");
+  };
+  const auto half = [&](std::uint32_t address, std::uint16_t value) {
+    require(cpu.write16(address, value),
+            "Could not write LOS fixture halfword");
+  };
+  word(native.player_pointer, player);
+  word(native.object_records_pointer, records);
+  word(native.object_count, 10U);
+  word(native.object_definitions_pointer, definitions);
+  word(native.object_definition_count, 1U);
+  word(flame.current_player_slot, player_slot);
+  word(records + actor_slot * 0x4cU + 0x34U, actor);
+  half(definitions, 0x3cU);
+  half(actor + 2U, static_cast<std::uint16_t>(actor_slot));
+  half(player + 2U, static_cast<std::uint16_t>(player_slot));
+  word(actor + 0x0cU, actor_motion);
+  word(player + 0x0cU, player_motion);
+  word(actor + 0x14U, target);
+  word(player + 0x10U, 0x8002f000U);
+  word(actor_motion, 100U);
+  word(actor_motion + 4U, std::bit_cast<std::uint32_t>(-200));
+  word(actor_motion + 8U, 300U);
+  word(player_motion, 500U);
+  word(player_motion + 4U, std::bit_cast<std::uint32_t>(-600));
+  word(player_motion + 8U, 700U);
+  half(target, static_cast<std::uint16_t>(player_slot));
+  cpu.setRegister(29U, 0x801fff00U);
+
+  // Execute the original mask/branch and original last-known-position call.
+  // Only the prologue/epilogue are reduced for this isolated CPU fixture.
+  constexpr std::uint32_t vision_entry = 0x8005a624U;
+  constexpr std::array vision_words{
+      0x00c01021U, 0x00809021U, 0xafbf0010U, 0x00a08821U, 0x30420002U,
+      0x10400005U, 0U,          0x0c0167d3U, 0x02402021U, 0x08016996U,
+      0x02201021U, 0x00008821U, 0x02201021U, 0x8fbf0010U, 0U,
+      0x03e00008U, 0U,
+  };
+  require(vm.loadOverlay(vision_entry, instructionBytes(vision_words)),
+          "Could not load original vision branch");
+  std::size_t last_known_updates{}, queries{};
+  vm.bindHostCall(0x80059f4cU, [&](sf::game::LegacyHostCallContext &context) {
+    ++last_known_updates;
+    context.setReturnValue(0U);
+  });
+  bool clear{}, expected_crouch{};
+  vm.setHostileBallisticLineOfSight(
+      [&](const auto &from, const auto &to, bool crouched) {
+        require(from == sf::game::LegacyNativePoint{100, 200, 300} &&
+                    to == sf::game::LegacyNativePoint{500, 600, 700},
+                "LOS used camera/bone coordinates instead of live roots");
+        require(crouched == expected_crouch,
+                "LOS ignored the live PSX crouching bit");
+        ++queries;
+        return clear;
+      });
+  const auto vision = [&](std::uint32_t original_visible = 2U) {
+    word(target + 4U, 0x1236U);
+    const std::array arguments{actor, 1U, original_visible};
+    const auto result = vm.invoke(vision_entry, arguments, 1000U);
+    require(result.completed(), "Vision branch did not return");
+    return result.return_value;
+  };
+  for (const auto weapon : {0U, 1U, 15U}) {
+    require(cpu.write8(records + actor_slot * 0x4cU + 0x24U,
+                       static_cast<std::uint8_t>(weapon)),
+            "Could not set observer weapon");
+    for (const auto aim_mode : {0U, 1U, 2U, 3U, 4U}) {
+      word(0x80115e80U, aim_mode);
+      require(vision() == 0U && last_known_updates == 0U,
+              "Occluded visual acquisition refreshed last-known position");
+      std::uint32_t flags{};
+      require(cpu.read32(target + 4U, flags) && flags == 0x1234U,
+              "Blocked vision erased unrelated target state");
+    }
+  }
+  require(queries == 15U, "Vision did not confirm each positive result");
+  word(0x8002f000U, 0x00100002U);
+  expected_crouch = true;
+  require(vision() == 0U && last_known_updates == 0U,
+          "Crouched player bypassed cover confirmation");
+  word(0x8002f000U, 2U);
+  expected_crouch = false;
+  clear = true;
+  require(vision() == 1U && last_known_updates == 1U,
+          "Clear visual acquisition no longer followed original code");
+  clear = false;
+  const auto previous_queries = queries;
+  require(vision(0U) == 0U && queries == previous_queries,
+          "Original negative vision was promoted or unnecessarily traced");
+  half(target, 1U);
+  require(vision() == 1U && queries == previous_queries,
+          "An NPC-to-NPC target was changed by the player cover guard");
+  half(target, static_cast<std::uint16_t>(player_slot));
+  require(vm.invoke(0x80059f4cU, std::array{actor}, 100U).completed() &&
+              last_known_updates == 3U,
+          "Hearing/script last-known updates were intercepted");
+
+  // The two actual PARK2 call sites use eight stack/register event arguments.
+  // No model, hand pose, camera or previous rendered sample exists here.
+  constexpr std::array event_words{0x24020001U, 0x03e00008U, 0U};
+  require(vm.loadOverlay(flame.event_entry, instructionBytes(event_words)),
+          "Could not load contact event stub");
+  vm.bindSyphonFilterUsaV11Park2FlameLosHook();
+  for (const auto return_address : flame.return_addresses) {
+    const std::array caller_words{
+        0xafbf0014U,
+        0U,
+        flame.call_instruction,
+        flame.delay_instruction,
+        0x8fbf0014U,
+        0U,
+        0x03e00008U,
+        0U,
+    };
+    const auto entry = return_address - 16U;
+    require(vm.loadOverlay(entry, instructionBytes(caller_words)),
+            "Could not load original PARK2 contact call");
+    const auto event = [&](std::uint32_t id = 0x29aU,
+                           std::uint32_t victim = 0x29aU) {
+      const std::array arguments{
+          flame.event_type, flame.event_mode, id, victim, 0U, 0U, 0U, 0U};
+      const auto result = vm.invoke(entry, arguments, 1000U);
+      require(result.completed(), "PARK2 contact call did not return");
+      return result.return_value;
+    };
+    vm.setPark2FlameLineOfSight(true); // A stale rendered sample must not win.
+    clear = false;
+    require(event() == 0U,
+            "Blocked flame used a stale or missing rendered pose");
+    vm.setPark2FlameLineOfSight(false);
+    clear = true;
+    require(event() == 1U,
+            "Clear flame used stale occlusion from a prior frame");
+    clear = false;
+    const auto before_unrelated = queries;
+    require(event(flame.event_id + 1U) == 1U &&
+                event(flame.event_id, player_slot + 1U) == 1U &&
+                queries == before_unrelated,
+            "An unrelated contact/script event was suppressed");
+    half(definitions, 0x3dU);
+    require(event() == 1U, "Unknown PARK2 actor identity was suppressed");
+    half(definitions, 0x3cU);
+  }
+}
+
 void testLegacyPark2FlameLosPolicy() {
   constexpr auto profile = sf::game::syphonFilterUsaV11Park2FlameLosProfile();
   const auto suppressed =
@@ -8915,6 +9086,7 @@ int main() {
     testLegacyGameplayVmBoundary();
     testLegacyGameplayVmAgentMissionTimers();
     testLegacyGameplayVmAgentDamageHook();
+    testLegacyGameplayVmWorldVisibilityHooks();
     testLegacyPark2FlameLosPolicy();
     testLegacyGameplayVmContinuousPump();
     std::cout << "R3000 runtime tests passed\n";

@@ -15,6 +15,17 @@ namespace sf::game {
 // PsyCross.
 class G4CampaignTransitionProbeAccess final {
 public:
+  [[nodiscard]] static LegacyGameplayVm *
+  occlusionProbeVm(GameplaySession &gameplay) noexcept {
+    return gameplayVm(gameplay);
+  }
+
+  [[nodiscard]] static bool occlusionProbeVisible(
+      const GameplaySession &gameplay, const LegacyNativePoint &observer,
+      const LegacyNativePoint &target, bool crouched = false) noexcept {
+    return gameplay.hostileBallisticLineOfSight(observer, target, crouched);
+  }
+
   // Diagnostic-only access for observing and replaying original presentation.
   [[nodiscard]] static LegacyGameplayVm *
   presentationProbeVm(LegacyFirstMissionRuntime &runtime) noexcept {
