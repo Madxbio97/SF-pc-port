@@ -223,6 +223,9 @@ These checks stay open until observed; successful automated gates are not
 labelled as manual completion. PC mouse/control preferences, Agent rules,
 widescreen and interpolation remain explicit port features.
 
+The [November 18 pickup/menu follow-up](PSX_PICKUP_MENU_FIXES.md) records the
+weapon/armour/C4 box presentation and restored menu-opening sound.
+
 ## Reproduction
 
 ~~~powershell

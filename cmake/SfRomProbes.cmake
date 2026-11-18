@@ -36,6 +36,8 @@ if(SF_BUILD_ROM_PROBES)
         apps/sf_retail_occlusion_probe.cpp)
     sf_add_game_probe(sf_retail_prop_state_probe
         apps/sf_retail_prop_state_probe.cpp)
+    sf_add_game_probe(sf_retail_pickup_model_probe
+        apps/sf_retail_pickup_model_probe.cpp)
 endif()
 
 function(sf_add_supported_rom_test name target labels timeout)
@@ -50,6 +52,8 @@ function(sf_register_supported_rom_tests)
         return()
     endif()
 
+    sf_add_supported_rom_test(sf_h3_audio_rom sf_h3_audio_probe
+        "rom;audio;menu;checkpoint" 300)
     sf_add_supported_rom_test(sf_h5_bootability_rom sf_h5_bootability_probe
         "rom;h5;g1;g2.1" 300)
     sf_add_supported_rom_test(sf_h5_catalog_rom sf_h5_catalog_probe
@@ -93,4 +97,6 @@ function(sf_register_supported_rom_tests)
         sf_retail_grenade_probe "rom;gameplay;grenade;campaign" 900 all)
     sf_add_supported_rom_test(sf_retail_grenade_aftermath_rom
         sf_retail_grenade_probe "rom;gameplay;grenade;checkpoint" 300 13 aftermath)
+    sf_add_supported_rom_test(sf_retail_pickup_models_rom
+        sf_retail_pickup_model_probe "rom;rendering;pickups;checkpoint" 900)
 endfunction()

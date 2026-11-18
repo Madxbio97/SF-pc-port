@@ -165,15 +165,17 @@ inline constexpr std::uint32_t legacy_hmd_rendered_this_pass = 0x40U;
 inline constexpr std::uint8_t legacy_instance_dormant = 0x02U;
 inline constexpr std::uint8_t legacy_item_consumed_latch = 0x20U;
 
-// WEPCRATE/WEPCRATX are a retail state pair, not damage geometry. The item
+// Weapon/TNT closed/open pairs are item states, not damage geometry. The item
 // handler at FUN_8008cb5c latches instance byte +0x00 bit 5 after collection;
-// health and the generic destroyed bit remain untouched. KEYCARD class 0x63
+// health and the generic destroyed bit remain untouched. TNT class 0x57 uses
+// the same latch in FUN_80090624. KEYCARD class 0x63
 // sets the same latch in FUN_8008d990 but has no secondary model, so selecting
 // its consumed presentation deliberately resolves to no drawable model.
 [[nodiscard]] constexpr bool
 legacyGuestUsesSecondaryItemModel(std::uint32_t class_id,
                                   std::uint8_t instance_flags) noexcept {
-  return (class_id == 0x4fU || class_id == 0x50U || class_id == 0x63U) &&
+  return (class_id == 0x4fU || class_id == 0x50U || class_id == 0x57U ||
+          class_id == 0x63U) &&
          (instance_flags & legacy_item_consumed_latch) != 0U;
 }
 
@@ -183,16 +185,24 @@ legacyGuestUsesSecondaryItemModel(std::uint32_t class_id,
 [[nodiscard]] constexpr bool
 legacyWeaponCratePresentation(std::uint32_t class_id,
                               std::string_view model_name) noexcept {
-  return (class_id == 0x4fU || class_id == 0x50U) &&
-         (model_name == "WEPCRATE.GMD" || model_name == "WEPCRATX.GMD");
+  return ((class_id == 0x4fU || class_id == 0x50U) &&
+          (model_name == "WEPCRATE.GMD" || model_name == "WEPCRATX.GMD" ||
+           model_name == "WEPCRABE.GMD" || model_name == "WEPCRABX.GMD")) ||
+         (class_id == 0x57U &&
+          (model_name == "TNTCRATE.GMD" || model_name == "TNTCRATX.GMD"));
 }
 
-// SUBWAY2 guest slot/source 279 is the authored TNT-cache trigger prop. Its
-// closed/open model pair supplies placement metadata for linked source 224,
-// but retail does not submit either model for presentation. Require the exact
-// static guest slot as well as source identity because runtime clones retain
-// their definition template's source index.
-[[nodiscard]] constexpr bool legacyAuthoredObjectPresentationHidden(
+// Original INTRFACE atlas rectangles shared by both weapon-crate sizes and
+// the TNT/C4 cache. All use pages 12/13 and the same palette.
+inline constexpr std::array<std::string_view, 9U> legacy_crate_texture_names{
+    "WEPTRIM.TIM",  "WEPINNER.TIM", "WEPTOP.TIM",
+    "TNTINNER.TIM", "TNTSIDE.TIM",  "TNTTOPA.TIM",
+    "TNTTOPB.TIM",  "TNTTRIMA.TIM", "TNTTRIMB.TIM"};
+
+// SUBWAY2's C4 callout is attached to the authored TNT cache. Keep its
+// exact identity for the label anchor, independently from room streaming.
+// Both closed and open geometry remain ordinary visible crate models.
+[[nodiscard]] constexpr bool legacyAuthoredC4Cache(
     std::uint32_t mission_index, std::int32_t guest_slot,
     std::uint16_t source_index, std::optional<std::uint32_t> definition_index,
     std::uint32_t class_id, std::string_view model_name) noexcept {

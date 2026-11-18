@@ -54,6 +54,16 @@ public:
            runtime.publishPresentationFrame();
   }
 
+  // Re-publish controlled original-RAM fixtures through production decoding.
+  [[nodiscard]] static bool refreshPropPresentation(GameplaySession &gameplay) {
+    auto *runtime = gameplay.legacy_first_mission_.get();
+    if (!runtime || !runtime->ready_ || runtime->faulted_ || !runtime->vm_ ||
+        !runtime->publishPresentationFrame())
+      return false;
+    gameplay.syncLegacyGameplayBridge();
+    return !gameplay.runtimeFaulted();
+  }
+
   [[nodiscard]] static bool captureCheckpoint(GameplaySession &gameplay) {
     gameplay.checkpoint_pending_ = true;
     gameplay.captureCheckpoint();

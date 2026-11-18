@@ -1,26 +1,22 @@
 class RetailCrateTextureOverlay final {
 public:
-  explicit RetailCrateTextureOverlay(const game::MissionPackage &mission)
-      : trim_(assets::TimImage::parse(
-            mission.interfaceAssets().file("WEPTRIM.TIM"))),
-        inner_(assets::TimImage::parse(
-            mission.interfaceAssets().file("WEPINNER.TIM"))),
-        top_(assets::TimImage::parse(
-            mission.interfaceAssets().file("WEPTOP.TIM"))) {
-    const auto valid = [](const assets::TimImage &image) {
+  explicit RetailCrateTextureOverlay(const game::MissionPackage &mission) {
+    images_.reserve(game::legacy_crate_texture_names.size());
+    for (const auto name : game::legacy_crate_texture_names)
+      images_.push_back(
+          assets::TimImage::parse(mission.interfaceAssets().file(name)));
+    const auto valid = [&](const assets::TimImage &image) {
+      const auto page = timTexturePage(image);
       return image.mode() == assets::TimPixelMode::indexed8 && image.clut() &&
              image.clut()->x == mission_clut_source_x &&
              image.clut()->y == mission_clut_source_y + 3U &&
-             image.clut()->width_words == 256U && image.clut()->height == 1U;
+             image.clut()->width_words == 256U && image.clut()->height == 1U &&
+             image.clut()->words == images_.front().clut()->words &&
+             (page == 12U || page == 13U);
     };
-    if (!valid(trim_) || !valid(inner_) || !valid(top_) ||
-        trim_.clut()->words != inner_.clut()->words ||
-        trim_.clut()->words != top_.clut()->words ||
-        timTexturePage(trim_) != 12U || timTexturePage(inner_) != 13U ||
-        timTexturePage(top_) != 13U) {
+    if (!std::ranges::all_of(images_, valid))
       throw core::Error{core::ErrorCode::invalid_format,
-                        "Retail weapon-crate texture layout is invalid"};
-    }
+                        "Retail weapon/TNT-crate texture layout is invalid"};
   }
 
   [[nodiscard]] static constexpr std::size_t sourceClutRow() noexcept {
@@ -29,11 +25,10 @@ public:
 
   void copyClut(std::span<std::byte> destination) const {
     constexpr std::size_t row_bytes = 256U * 2U;
-    if (destination.size() != row_bytes) {
+    if (destination.size() != row_bytes)
       throw core::Error{core::ErrorCode::invalid_argument,
                         "Weapon-crate CLUT destination is invalid"};
-    }
-    const auto &words = trim_.clut()->words;
+    const auto &words = images_.front().clut()->words;
     for (std::size_t index = 0U; index < words.size(); ++index) {
       destination[index * 2U] = static_cast<std::byte>(words[index] & 0xffU);
       destination[index * 2U + 1U] = static_cast<std::byte>(words[index] >> 8U);
@@ -41,18 +36,16 @@ public:
   }
 
   void upload(unsigned int trim_page, unsigned int top_page) const {
-    uploadAt(trim_, trim_page);
-    uploadAt(inner_, top_page);
-    uploadAt(top_, top_page);
+    for (const auto &image : images_)
+      uploadAt(image, timTexturePage(image) == 12U ? trim_page : top_page);
   }
 
 private:
   static void uploadAt(const assets::TimImage &image,
                        unsigned int physical_page) {
-    if (physical_page >= resident_texture_page_count) {
+    if (physical_page >= resident_texture_page_count)
       throw core::Error{core::ErrorCode::invalid_argument,
                         "Weapon-crate texture page is invalid"};
-    }
     const auto source_page = timTexturePage(image);
     const auto source_page_x = (source_page & 15U) * 64U;
     const auto source_page_y = source_page > 15U ? 256U : 0U;
@@ -61,9 +54,7 @@ private:
                              image.pixels().y - source_page_y);
   }
 
-  assets::TimImage trim_;
-  assets::TimImage inner_;
-  assets::TimImage top_;
+  std::vector<assets::TimImage> images_;
 };
 
 struct EffectSpritePlacement {

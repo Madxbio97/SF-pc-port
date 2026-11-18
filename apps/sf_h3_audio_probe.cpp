@@ -386,8 +386,18 @@ int runProbe(const std::filesystem::path &cue_path) {
 
   constexpr std::uint32_t sampled_updates = 400U;
   AudioMetrics metrics;
+  // Host PCM is intentionally discarded on snapshot restore. Compare the
+  // next explicit hardware audio tick, not the already-submitted queue.
+  runtime->clearPcm();
+  if (!runtime->advanceAudioFrameClock()) {
+    return 15;
+  }
   const auto initial_boundary = takeAllPcm(*runtime);
   runtime->reset();
+  if (runtime->faulted() || !takeAllPcm(*runtime).empty() ||
+      !runtime->advanceAudioFrameClock()) {
+    return 15;
+  }
   const auto reset_boundary = takeAllPcm(*runtime);
   if (runtime->faulted() || initial_boundary.empty() ||
       reset_boundary != initial_boundary) {
@@ -425,7 +435,9 @@ int runProbe(const std::filesystem::path &cue_path) {
     return 17;
   }
   runtime->reset();
-  if (runtime->faulted() || takeAllPcm(*runtime) != initial_boundary) {
+  if (runtime->faulted() || !takeAllPcm(*runtime).empty() ||
+      !runtime->advanceAudioFrameClock() ||
+      takeAllPcm(*runtime) != initial_boundary) {
     std::cerr << "H3 reset after audio-only playback diverged\n";
     return 18;
   }
@@ -433,7 +445,8 @@ int runProbe(const std::filesystem::path &cue_path) {
   for (std::uint32_t update = 0U; update < sampled_updates; ++update) {
     runtime->setHostPadState({});
     runtime->advanceHostUpdate();
-    if (runtime->faulted() || runtime->finished()) {
+    if (runtime->faulted() || runtime->finished() ||
+        !runtime->advanceAudioFrameClock()) {
       std::cerr << "H3 audio runtime stopped at update " << update << '\n';
       return 3;
     }
@@ -462,8 +475,16 @@ int runProbe(const std::filesystem::path &cue_path) {
     std::cerr << "H3 audio checkpoint capture failed\n";
     return 6;
   }
+  // Retail checkpoint restore restarts the music sequence. Compare two
+  // restores of the same checkpoint, rather than its forward-playback PCM.
+  if (!runtime->restoreCheckpoint()) {
+    return 7;
+  }
   runtime->setHostPadState({});
   runtime->advanceHostUpdate();
+  if (!runtime->advanceAudioFrameClock()) {
+    return 8;
+  }
   const auto expected_replay = takeAllPcm(*runtime);
   if (runtime->faulted() || !runtime->restoreCheckpoint()) {
     std::cerr << "H3 audio checkpoint restore failed\n";
@@ -471,6 +492,9 @@ int runProbe(const std::filesystem::path &cue_path) {
   }
   runtime->setHostPadState({});
   runtime->advanceHostUpdate();
+  if (!runtime->advanceAudioFrameClock()) {
+    return 8;
+  }
   const auto replayed = takeAllPcm(*runtime);
   if (runtime->faulted() || expected_replay.empty() ||
       expected_replay != replayed ||

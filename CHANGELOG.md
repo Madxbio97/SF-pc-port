@@ -5,6 +5,12 @@ pre-release tags rather than a stable semantic-versioning promise.
 
 ## Unreleased
 
+- Restore visible small/large Weapon Boxes and the SUBWAY2 C4 cache, including
+  their open states, resident lifetimes and complete WEP/TNT texture atlas.
+- Restore the original BEEPSX opening cue when entering the gameplay menu.
+- Add a 20-mission pickup geometry/texture/lifecycle regression and update
+  the H3 audio gate for explicit audio ticks and checkpoint music restart.
+
 - Restore checkpoints after ordinary player death, including CATACOMB gas
   deaths with no failed-objective flag. Keep the original fade and protect
   successful state transitions; extend original-ROM death/restart coverage.

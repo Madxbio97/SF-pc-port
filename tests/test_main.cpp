@@ -828,6 +828,7 @@ void testLegacyDynamicPresentationPolicy() {
   require(sf::game::legacyGuestUsesSecondaryItemModel(0x4fU, 0x20U) &&
               sf::game::legacyGuestUsesSecondaryItemModel(0x50U, 0xa0U) &&
               sf::game::legacyGuestUsesSecondaryItemModel(0x63U, 0x20U) &&
+              sf::game::legacyGuestUsesSecondaryItemModel(0x57U, 0x20U) &&
               !sf::game::legacyGuestUsesSecondaryItemModel(0x50U, 0x80U) &&
               !sf::game::legacyGuestUsesSecondaryItemModel(0x63U, 0x80U) &&
               !sf::game::legacyGuestUsesSecondaryItemModel(0x4eU, 0x20U),
@@ -1266,32 +1267,35 @@ void testLegacyDynamicPresentationPolicy() {
   require(sf::game::resident_spfx_object_texture_bank == 0U,
           "Resident object effects must remain in their authored SPFX bank");
   require(sf::game::legacyWeaponCratePresentation(0x4fU, "WEPCRATE.GMD") &&
+              sf::game::legacyWeaponCratePresentation(0x4fU, "WEPCRABE.GMD") &&
+              sf::game::legacyWeaponCratePresentation(0x4fU, "WEPCRABX.GMD") &&
+              sf::game::legacyWeaponCratePresentation(0x57U, "TNTCRATE.GMD") &&
+              sf::game::legacyWeaponCratePresentation(0x57U, "TNTCRATX.GMD") &&
               sf::game::legacyWeaponCratePresentation(0x50U, "WEPCRATX.GMD") &&
               !sf::game::legacyWeaponCratePresentation(0x50U, "KEYCARD.GMD") &&
               !sf::game::legacyWeaponCratePresentation(0x63U, "WEPCRATE.GMD"),
           "Weapon-crate texture overlay accepted an unrelated object/model");
-  require(
-      sf::game::legacyAuthoredObjectPresentationHidden(
-          1U, 279, 279U, 20U, 0x57U, "TNTCRATE.GMD") &&
-          sf::game::legacyAuthoredObjectPresentationHidden(
-              1U, 279, 279U, 20U, 0x57U, "TNTCRATX.GMD") &&
-          !sf::game::legacyAuthoredObjectPresentationHidden(
-              0U, 279, 279U, 20U, 0x57U, "TNTCRATE.GMD") &&
-          !sf::game::legacyAuthoredObjectPresentationHidden(
-              1U, 278, 279U, 20U, 0x57U, "TNTCRATE.GMD") &&
-          !sf::game::legacyAuthoredObjectPresentationHidden(
-              1U, 280, 279U, 20U, 0x57U, "TNTCRATE.GMD") &&
-          !sf::game::legacyAuthoredObjectPresentationHidden(
-              1U, 279, 278U, 20U, 0x57U, "TNTCRATE.GMD") &&
-          !sf::game::legacyAuthoredObjectPresentationHidden(
-              1U, 279, 279U, 22U, 0x57U, "TNTCRATE.GMD") &&
-          !sf::game::legacyAuthoredObjectPresentationHidden(
-              1U, 279, 279U, std::nullopt, 0x57U, "TNTCRATE.GMD") &&
-          !sf::game::legacyAuthoredObjectPresentationHidden(
-              1U, 279, 279U, 20U, 0x50U, "TNTCRATE.GMD") &&
-          !sf::game::legacyAuthoredObjectPresentationHidden(
-              1U, 279, 279U, 20U, 0x57U, "WEPCRATE.GMD"),
-      "Authored invisible TNT-cache policy leaked to another object");
+  require(sf::game::legacyAuthoredC4Cache(1U, 279, 279U, 20U, 0x57U,
+                                          "TNTCRATE.GMD") &&
+              sf::game::legacyAuthoredC4Cache(1U, 279, 279U, 20U, 0x57U,
+                                              "TNTCRATX.GMD") &&
+              !sf::game::legacyAuthoredC4Cache(0U, 279, 279U, 20U, 0x57U,
+                                               "TNTCRATE.GMD") &&
+              !sf::game::legacyAuthoredC4Cache(1U, 278, 279U, 20U, 0x57U,
+                                               "TNTCRATE.GMD") &&
+              !sf::game::legacyAuthoredC4Cache(1U, 280, 279U, 20U, 0x57U,
+                                               "TNTCRATE.GMD") &&
+              !sf::game::legacyAuthoredC4Cache(1U, 279, 278U, 20U, 0x57U,
+                                               "TNTCRATE.GMD") &&
+              !sf::game::legacyAuthoredC4Cache(1U, 279, 279U, 22U, 0x57U,
+                                               "TNTCRATE.GMD") &&
+              !sf::game::legacyAuthoredC4Cache(1U, 279, 279U, std::nullopt,
+                                               0x57U, "TNTCRATE.GMD") &&
+              !sf::game::legacyAuthoredC4Cache(1U, 279, 279U, 20U, 0x50U,
+                                               "TNTCRATE.GMD") &&
+              !sf::game::legacyAuthoredC4Cache(1U, 279, 279U, 20U, 0x57U,
+                                               "WEPCRATE.GMD"),
+          "C4-cache callout identity leaked to another object");
   require(sf::game::legacyResidentSpfxObjectTexture("BOMB.GMD") &&
               sf::game::legacyResidentSpfxObjectTexture("BOMBD.GMD") &&
               sf::game::legacyResidentSpfxObjectTexture("BOMBSUB.GMD") &&

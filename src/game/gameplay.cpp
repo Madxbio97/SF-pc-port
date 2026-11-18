@@ -4859,15 +4859,23 @@ void GameplaySession::syncLegacyResidentObjects(
     // set, while moved/dynamic props may additionally enter through their live
     // position. Treating every resident record as visible retained the entire
     // mission's texture set and eventually exhausted native VRAM aliases.
+    // Item crates share two resident interface-texture pages. Keep their
+    // authored geometry while the guest lifetime is resident: DAT room
+    // membership can omit a working pickup even while its callout is active.
+    const auto resident_crate = objects_[scene].model < object_models_.size() &&
+                                legacyWeaponCratePresentation(
+                                    objects_[scene].class_id,
+                                    object_models_[objects_[scene].model].name);
     const auto stream_visible =
-        actor ? legacyGuestActorStreamVisible(
-                    source_streamed, live_position_streamed, guest.pose_flags,
-                    opening_actor, guest.simulated, retail_dormant,
-                    actor_pose_available)
-              : legacyGuestStaticPropStreamVisible(
-                    source_streamed, live_position_streamed,
-                    mission_.definition().index, objects_[scene].source_index,
-                    guest.class_id, bridge.player.resident);
+        (resident_crate && bridge.player.resident) ||
+        (actor ? legacyGuestActorStreamVisible(
+                     source_streamed, live_position_streamed, guest.pose_flags,
+                     opening_actor, guest.simulated, retail_dormant,
+                     actor_pose_available)
+               : legacyGuestStaticPropStreamVisible(
+                     source_streamed, live_position_streamed,
+                     mission_.definition().index, objects_[scene].source_index,
+                     guest.class_id, bridge.player.resident));
     // Destructible lights such as LIGHT/SPOTLT set both the generic destroyed
     // latch and the dormant bit, then retain the same object record to draw
     // their authored secondary (dark/broken) model. Treating dormant as an
@@ -5736,7 +5744,7 @@ void GameplaySession::syncLegacyUiProjection(
     }
     return scene;
   };
-  const auto authored_hidden_callout_scene_for_guest =
+  const auto authored_c4_callout_scene_for_guest =
       [this, &mapped_scene_for_guest](
           std::int16_t guest_slot) -> std::optional<std::uint16_t> {
     const auto scene = mapped_scene_for_guest(guest_slot);
@@ -5748,13 +5756,13 @@ void GameplaySession::syncLegacyUiProjection(
       return std::nullopt;
     }
     const auto &object = objects_[*scene];
-    if (!legacyAuthoredObjectPresentationHidden(
-            missionIndex(), guest_slot, object.source_index,
-            object.definition_index, object.class_id, model->name)) {
+    if (!legacyAuthoredC4Cache(missionIndex(), guest_slot, object.source_index,
+                               object.definition_index, object.class_id,
+                               model->name)) {
       return std::nullopt;
     }
-    // This exact authored prop is deliberately not submitted, but its bounds
-    // remain the retail anchor for the linked C4 interaction callout.
+    // The authored cache bounds anchor the linked C4 interaction callout.
+    // The label must not depend on a transient room rebuild.
     return scene;
   };
   const auto scene_for_guest =
@@ -5794,7 +5802,7 @@ void GameplaySession::syncLegacyUiProjection(
   for (const auto &callout : ui.world_callouts) {
     auto scene = presentation_scene_for_guest(callout.guest_slot);
     const auto authored_c4_scene =
-        authored_hidden_callout_scene_for_guest(callout.guest_slot);
+        authored_c4_callout_scene_for_guest(callout.guest_slot);
     if (!scene) {
       scene = authored_c4_scene;
     }
@@ -5810,7 +5818,7 @@ void GameplaySession::syncLegacyUiProjection(
   }
 
   if (!c4_callout_present && ui.target.proximity_target_slot == 279) {
-    if (const auto scene = authored_hidden_callout_scene_for_guest(279)) {
+    if (const auto scene = authored_c4_callout_scene_for_guest(279)) {
       // The retail proximity slot owns the lifetime. This fallback only
       // covers frames where its attached TEXT node has not materialized yet.
       legacy_world_callouts_.push_back(

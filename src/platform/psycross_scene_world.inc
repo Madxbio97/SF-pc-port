@@ -464,13 +464,6 @@ void collectWorldObjectShadows(
     }
     const auto *object_model = gameplay.displayedObjectModel(object_index);
     if (object_model == nullptr ||
-        game::legacyAuthoredObjectPresentationHidden(
-            gameplay.missionIndex(),
-            object_index < gameplay.legacyGuestSlotsBySceneObject().size()
-                ? gameplay.legacyGuestSlotsBySceneObject()[object_index]
-                : -1,
-            source_object.source_index, source_object.definition_index,
-            source_object.class_id, object_model->name) ||
         (object_model->visual_effect != game::ObjectVisualEffect::none &&
          object_model->visual_effect !=
              game::ObjectVisualEffect::lamp_fixture) ||
@@ -753,15 +746,6 @@ void renderObjects(const game::GameplaySession &gameplay,
       continue;
     }
     const auto &object_model = *displayed_model;
-    if (game::legacyAuthoredObjectPresentationHidden(
-            gameplay.missionIndex(),
-            object_index < gameplay.legacyGuestSlotsBySceneObject().size()
-                ? gameplay.legacyGuestSlotsBySceneObject()[object_index]
-                : -1,
-            source_object.source_index, source_object.definition_index,
-            source_object.class_id, object_model.name)) {
-      continue;
-    }
     if (objectUsesEmbeddedWorldGeometry(
             gameplay.missionIndex(), object.class_id, object_model.name)) {
       continue;
@@ -3697,19 +3681,6 @@ RenderStats renderWorld(
     };
     for (const auto object_index : gameplay.activeObjects()) {
       const auto *displayed_model = gameplay.displayedObjectModel(object_index);
-      if (displayed_model != nullptr &&
-          object_index < gameplay.objects().size()) {
-        const auto &object = gameplay.objects()[object_index];
-        if (game::legacyAuthoredObjectPresentationHidden(
-                gameplay.missionIndex(),
-                object_index < gameplay.legacyGuestSlotsBySceneObject().size()
-                    ? gameplay.legacyGuestSlotsBySceneObject()[object_index]
-                    : -1,
-                object.source_index, object.definition_index, object.class_id,
-                displayed_model->name)) {
-          continue;
-        }
-      }
       if (displayed_model == nullptr) {
         continue;
       }

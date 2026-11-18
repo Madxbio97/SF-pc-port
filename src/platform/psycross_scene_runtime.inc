@@ -1435,6 +1435,8 @@ SceneViewerResult PsyCrossSceneViewer::run(
       paused = true;
       gameplay_audio->setPaused(true);
       ui_audio.setVolumePercent(pause_settings.sound_effects_volume);
+      // MENU.OVL's initial Map callback (0x80140058) plays bank 5, sound 2.
+      ui_audio.play(PsyCrossUiCue::navigate);
       binding_capture = false;
       pause_analog_x = current_pause_x;
       pause_analog_y = current_pause_y;
