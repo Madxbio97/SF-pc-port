@@ -5,6 +5,12 @@ pre-release tags rather than a stable semantic-versioning promise.
 
 ## Unreleased
 
+## 0.2.0-beta.4 - 2026-11-18
+
+Changes since the packaged Beta.3 (69c0400). See the
+[release notes](docs/releases/0.2.0-beta.4.md) and
+[change inventory](docs/releases/2026-11-18-changes.md).
+
 - Restore visible small/large Weapon Boxes and the SUBWAY2 C4 cache, including
   their open states, resident lifetimes and complete WEP/TNT texture atlas.
 - Restore the original BEEPSX opening cue when entering the gameplay menu.
